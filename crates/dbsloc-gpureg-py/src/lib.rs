@@ -5,18 +5,74 @@
 //! i.e. exactly what an `ANTsImage` holds; the Python wrapper does the flattening.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
-use dbsloc_gpu::{BackendSelect, WgpuBackend};
+use dbsloc_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
 use dbsloc_reg::recipe::SynRecipe;
-use dbsloc_reg::register::{register_full, write_linear_output, write_outputs, LinearPlan};
+use dbsloc_reg::register::{
+    register_full, write_linear_output, write_outputs, LinearPlan, RegisterTimings,
+};
 use dbsloc_reg::syn::SynOptions;
 use dbsloc_reg::transform::write_composite_pair;
-use dbsloc_reg::{Grid, Mat3, Vec3, Volume};
+use dbsloc_reg::{Grid, Mat3, RegError, Vec3, Volume};
 use numpy::PyReadonlyArray1;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+
+create_exception!(
+    _core,
+    GpuUnavailableError,
+    PyRuntimeError,
+    "No usable hardware GPU adapter (software adapters are refused unless DBSLOC_GPU_ALLOW_SOFTWARE=1)."
+);
+create_exception!(
+    _core,
+    GpuCapacityError,
+    PyRuntimeError,
+    "The registration grid does not fit the GPU's memory budget or binding limit."
+);
+create_exception!(
+    _core,
+    RegistrationError,
+    PyRuntimeError,
+    "The registration failed."
+);
+create_exception!(
+    _core,
+    RegistrationCancelled,
+    PyException,
+    "The registration was cancelled through its CancelToken."
+);
+
+/// A flag another thread sets to stop a running registration at its next iteration.
+#[pyclass(module = "dbsloc_gpureg", frozen)]
+struct CancelToken {
+    flag: Arc<AtomicBool>,
+}
+
+#[pymethods]
+impl CancelToken {
+    #[new]
+    fn new() -> Self {
+        CancelToken {
+            flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Asks the registration using this token to stop; it raises `RegistrationCancelled`.
+    fn cancel(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+    }
+
+    #[getter]
+    fn cancelled(&self) -> bool {
+        self.flag.load(Ordering::SeqCst)
+    }
+}
 
 /// One image as handed over from Python: flat data (x fastest), size, spacing, origin, direction.
 type ImageArgs<'py> = (PyReadonlyArray1<'py, f64>, [usize; 3], Vec3, Vec3, Mat3);
@@ -25,8 +81,42 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
     let (data, size, spacing, origin, direction) = img;
     let grid = Grid::new(*size, *spacing, *origin, *direction)
         .map_err(|e| PyValueError::new_err(format!("bad image geometry: {e}")))?;
-    let flat = data.as_slice().map_err(|_| PyValueError::new_err("image data must be contiguous"))?;
-    Volume::from_vec(grid, flat.to_vec()).map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
+    let flat = data
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("image data must be contiguous"))?;
+    Volume::from_vec(grid, flat.to_vec())
+        .map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
+}
+
+/// Voxels per axis of the registration grid: `resample_isotropic`'s rule on the first fixed image.
+fn iso_dims(grid: &Grid, mm: f64) -> [usize; 3] {
+    let (size, spacing) = (grid.size(), grid.spacing());
+    let mut out = [1usize; 3];
+    for a in 0..3 {
+        if (spacing[a] - mm).abs() < 1e-6 {
+            out[a] = size[a];
+        } else {
+            let last = size[a].saturating_sub(1) as f64;
+            out[a] = (((last * spacing[a] / mm) + 1e-9).floor() as usize + 1).max(1);
+        }
+    }
+    out
+}
+
+fn open_gpu(adapter_substring: Option<String>) -> PyResult<WgpuBackend> {
+    let mut sel =
+        BackendSelect::from_env().map_err(|e| GpuUnavailableError::new_err(e.to_string()))?;
+    if adapter_substring.is_some() {
+        sel.adapter_substring = adapter_substring;
+    }
+    WgpuBackend::new(&sel).map_err(|e| GpuUnavailableError::new_err(e.to_string()))
+}
+
+fn reg_err(e: RegError) -> PyErr {
+    match e {
+        RegError::Cancelled => RegistrationCancelled::new_err("registration cancelled"),
+        other => RegistrationError::new_err(other.to_string()),
+    }
 }
 
 struct Run {
@@ -34,17 +124,12 @@ struct Run {
     grid: [usize; 3],
     total_s: f64,
     write_s: f64,
-    timings: dbsloc_reg::register::RegisterTimings,
+    timings: RegisterTimings,
     levels: Vec<(usize, [usize; 3], usize, bool, f64)>,
     affine_parameters: Option<[f64; 12]>,
-}
-
-fn gpu(adapter_substring: Option<String>) -> PyResult<WgpuBackend> {
-    let mut sel = BackendSelect::from_env().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    if adapter_substring.is_some() {
-        sel.adapter_substring = adapter_substring;
-    }
-    WgpuBackend::new(&sel).map_err(|e| PyRuntimeError::new_err(format!("no usable GPU: {e}")))
+    affine_center: Option<[f64; 3]>,
+    peak_gpu_bytes: u64,
+    memory_budget_bytes: u64,
 }
 
 fn adapter_name(g: &WgpuBackend) -> String {
@@ -53,10 +138,12 @@ fn adapter_name(g: &WgpuBackend) -> String {
 }
 
 /// Registers `moving` to `fixed` (1 or 2 channels each) with the dbs-localizer cohort recipe on
-/// the GPU and writes `<out_prefix>Composite.h5`, `<out_prefix>InverseComposite.h5` (and, with
-/// `write_warped`, `<out_prefix>_Warped.nii.gz`). Returns a dict of timings and diagnostics.
+/// the GPU and writes `<out_prefix>Composite.h5`, `<out_prefix>InverseComposite.h5` and
+/// `<out_prefix>0GenericAffine.mat` (and, with `write_warped`, `<out_prefix>_Warped.nii.gz`).
+/// Returns a dict of timings and diagnostics. The GIL is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None))]
+#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None))]
+#[allow(clippy::too_many_arguments)]
 fn register_syn<'py>(
     py: Python<'py>,
     fixed: Vec<ImageArgs<'py>>,
@@ -65,20 +152,34 @@ fn register_syn<'py>(
     iso_mm: f64,
     write_warped: bool,
     adapter: Option<String>,
+    cancel: Option<PyRef<'py, CancelToken>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     if fixed.is_empty() || fixed.len() > 2 || fixed.len() != moving.len() {
-        return Err(PyValueError::new_err("give 1 or 2 fixed images and as many moving images"));
+        return Err(PyValueError::new_err(
+            "give 1 or 2 fixed images and as many moving images",
+        ));
+    }
+    if !(iso_mm.is_finite() && iso_mm > 0.0) {
+        return Err(PyValueError::new_err("iso_mm must be a positive number"));
     }
     let fixed: Vec<Volume<f64>> = fixed.iter().map(to_volume).collect::<PyResult<_>>()?;
     let moving: Vec<Volume<f64>> = moving.iter().map(to_volume).collect::<PyResult<_>>()?;
+    let flag = cancel.map(|c| Arc::clone(&c.flag));
 
     let run = py.detach(move || -> PyResult<Run> {
         let t_all = Instant::now();
-        let g = gpu(adapter)?;
+        let g = open_gpu(adapter)?;
+        let caps = CapacityCaps::from_context(g.context());
+        let dims = iso_dims(fixed[0].grid(), iso_mm);
+        plan_capacity(dims, fixed.len(), &caps)
+            .map_err(|e| GpuCapacityError::new_err(format!("{e} (at {iso_mm} mm)")))?;
         let recipe = if fixed.len() == 2 {
             SynRecipe::cohort_multispectral()
         } else {
             SynRecipe::cohort()
+        };
+        let options = SynOptions {
+            cancel: flag.as_deref(),
         };
         let out = register_full(
             &g,
@@ -88,12 +189,12 @@ fn register_syn<'py>(
             &fixed,
             &moving,
             Some(iso_mm),
-            &SynOptions::default(),
+            &options,
         )
-        .map_err(|e| PyRuntimeError::new_err(format!("registration failed: {e}")))?;
+        .map_err(reg_err)?;
         drop((fixed, moving));
         let t = Instant::now();
-        let io = |e: dbsloc_reg::RegError| PyRuntimeError::new_err(format!("writing outputs: {e}"));
+        let io = |e: RegError| RegistrationError::new_err(format!("writing outputs: {e}"));
         if write_warped {
             write_outputs(&out_prefix, &out).map_err(io)?;
         } else {
@@ -118,6 +219,9 @@ fn register_syn<'py>(
                 })
                 .collect(),
             affine_parameters: out.linear.as_ref().map(|c| c.total.parameters()),
+            affine_center: out.linear.as_ref().map(|c| c.total.center),
+            peak_gpu_bytes: g.peak_allocated_bytes(),
+            memory_budget_bytes: caps.memory_budget,
         })
     })?;
 
@@ -133,20 +237,69 @@ fn register_syn<'py>(
     d.set_item("write_s", run.write_s)?;
     d.set_item("levels", run.levels)?;
     d.set_item("affine_parameters", run.affine_parameters)?;
+    d.set_item("affine_center", run.affine_center)?;
+    d.set_item("peak_gpu_bytes", run.peak_gpu_bytes)?;
+    d.set_item("memory_budget_bytes", run.memory_budget_bytes)?;
     Ok(d)
 }
 
-/// Opens the GPU the engine would use and returns its description; raises when there is none.
+/// Opens the GPU the engine would use and describes it; raises `GpuUnavailableError` when there
+/// is none.
 #[pyfunction]
 #[pyo3(signature = (adapter=None))]
-fn gpu_info(py: Python<'_>, adapter: Option<String>) -> PyResult<String> {
-    py.detach(move || gpu(adapter).map(|g| adapter_name(&g)))
+fn gpu_info<'py>(py: Python<'py>, adapter: Option<String>) -> PyResult<Bound<'py, PyDict>> {
+    let (name, backend, device_type, driver, budget) = py.detach(move || {
+        open_gpu(adapter).map(|g| {
+            let i = &g.context().info;
+            let caps = CapacityCaps::from_context(g.context());
+            (
+                i.name.clone(),
+                i.backend.clone(),
+                i.device_type.clone(),
+                i.driver.clone(),
+                caps.memory_budget,
+            )
+        })
+    })?;
+    let d = PyDict::new(py);
+    d.set_item("name", name)?;
+    d.set_item("backend", backend)?;
+    d.set_item("device_type", device_type)?;
+    d.set_item("driver", driver)?;
+    d.set_item("memory_budget_bytes", budget)?;
+    Ok(d)
+}
+
+/// Whether a registration grid of `dims` voxels and `channels` channels fits the GPU.
+#[pyfunction]
+#[pyo3(signature = (dims, channels, adapter=None))]
+fn fits_gpu(
+    py: Python<'_>,
+    dims: [usize; 3],
+    channels: usize,
+    adapter: Option<String>,
+) -> PyResult<bool> {
+    py.detach(move || {
+        let g = open_gpu(adapter)?;
+        Ok(plan_capacity(dims, channels, &CapacityCaps::from_context(g.context())).is_ok())
+    })
 }
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
     m.add_function(wrap_pyfunction!(register_syn, m)?)?;
     m.add_function(wrap_pyfunction!(gpu_info, m)?)?;
-    m.add("ENGINE_SOURCE", "dbs-localizer 00faf42 (Wyss Center for Bio and Neuroengineering)")?;
+    m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
+    m.add_class::<CancelToken>()?;
+    m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
+    m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;
+    m.add("RegistrationError", py.get_type::<RegistrationError>())?;
+    m.add(
+        "RegistrationCancelled",
+        py.get_type::<RegistrationCancelled>(),
+    )?;
+    m.add("ENGINE_SOURCE", "dbs-localizer 00faf42")?;
+    m.add("VERSION", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
