@@ -101,7 +101,7 @@ cargo nextest run --workspace --exclude dbsloc-gpureg-py --features dbsloc-gpu/d
 
 CI (`ci.yml`) runs both on Linux with Mesa's software Vulkan driver. `wheels.yml` builds all
 wheels on a `v*` tag (and creates the GitHub release) or by hand (`gh workflow run wheels`).
-Release: bump `version` in `pyproject.toml`, add a `CHANGELOG.md` section, tag `v<version>`.
+Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes it from there), add a `CHANGELOG.md` section, tag `v<version>`.
 
 ## Source and credit
 

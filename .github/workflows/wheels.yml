@@ -75,8 +75,8 @@ jobs:
           merge-multiple: true
       - name: Check the tag matches the package version
         run: |
-          v=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != pyproject $v"; exit 1; }
+          v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != Cargo.toml $v"; exit 1; }
       - name: GitHub release with wheels
         env:
           GH_TOKEN: ${{ github.token }}

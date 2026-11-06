@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "dbsloc-gpureg"
-version = "0.1.0"
+dynamic = ["version"]  # from Cargo.toml [workspace.package]
 description = "GPU (wgpu: Vulkan / Metal / DX12) SyN registration from Wyss DBS Localizer, with ANTs-compatible outputs"
 readme = "README.md"
 requires-python = ">=3.10"
