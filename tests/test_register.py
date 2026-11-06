@@ -151,3 +151,63 @@ def test_ants_reads_the_transforms(result):
     assert after > 0.99 > before
     back = ants.apply_transforms(fixed=m, moving=w, transformlist=[f"{out}InverseComposite.h5"])
     assert np.corrcoef(m.numpy().ravel(), back.numpy().ravel())[0, 1] > 0.98
+
+
+def _hashes(prefix: Path) -> tuple[str, str]:
+    import hashlib
+
+    return tuple(  # type: ignore[return-value]
+        hashlib.sha256(Path(f"{prefix}{s}").read_bytes()).hexdigest()
+        for s in ("Composite.h5", "InverseComposite.h5")
+    )
+
+
+@needs_gpu
+def test_runs_are_deterministic(tmp_path):
+    g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "a_", iso_mm=SPACING)
+    g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "b_", iso_mm=SPACING)
+    assert _hashes(tmp_path / "a_") == _hashes(tmp_path / "b_")
+
+
+@needs_gpu
+def test_float32_input_equals_the_same_values_as_float64(tmp_path):
+    def as_dtype(img: tuple, dtype) -> tuple:
+        return (img[0].astype(np.float32).astype(dtype), *img[1:])
+
+    f, m = phantom(), phantom(SHIFT_MM)
+    g.register_syn(as_dtype(f, np.float32), as_dtype(m, np.float32), tmp_path / "f32_", iso_mm=2.0)
+    g.register_syn(as_dtype(f, np.float64), as_dtype(m, np.float64), tmp_path / "f64_", iso_mm=2.0)
+    assert _hashes(tmp_path / "f32_") == _hashes(tmp_path / "f64_")
+
+
+def test_float32_fortran_data_is_passed_without_a_copy():
+    arr = np.asfortranarray(np.zeros((4, 5, 6), dtype=np.float32))
+    flat = g._image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0]
+    assert flat.dtype == np.float32 and np.shares_memory(flat, arr)
+
+
+@needs_gpu
+def test_non_finite_voxels_are_refused(tmp_path):
+    bad = phantom()
+    bad[0][3, 3, 3] = np.nan
+    with pytest.raises(g.RegistrationError, match="non-finite"):
+        g.register_syn(bad, phantom(SHIFT_MM), tmp_path / "n_", iso_mm=SPACING)
+
+
+def test_a_missing_output_folder_is_refused_before_any_work(tmp_path):
+    from dbsloc_gpureg import _core
+
+    args = g._image_args(phantom())
+    with pytest.raises(ValueError, match="does not exist"):
+        _core.register_syn([args], [args], str(tmp_path / "missing" / "x_"))
+
+
+@needs_gpu
+def test_the_wrapper_creates_the_output_folder(tmp_path):
+    g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "new" / "dir" / "x_", iso_mm=3.0)
+    assert (tmp_path / "new" / "dir" / "x_Composite.h5").is_file()
+
+
+def test_integer_images_are_accepted():
+    arr = np.ones((4, 5, 6), dtype=np.int16)
+    assert g._image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0].dtype == np.float32
