@@ -1,0 +1,20 @@
+# GPU (wgpu) SyN registration from Wyss DBS Localizer, packaged as a Python extension.
+# crates/dbsloc-{core,niftiio,matfile,reg,gpu} are copies of dbs-localizer 00faf42 (2026-10-26);
+# changes: the VAT solver (and with it the dbsloc-vat dependency) is removed from dbsloc-gpu.
+[workspace]
+resolver = "2"
+members = [
+    "crates/dbsloc-core",
+    "crates/dbsloc-niftiio",
+    "crates/dbsloc-matfile",
+    "crates/dbsloc-reg",
+    "crates/dbsloc-gpu",
+    "crates/dbsloc-gpureg-py",
+]
+
+[workspace.package]
+version = "0.1.0"
+
+[profile.release]
+# Same as a plain dbs-localizer release build; the wheel is built with --release.
+debug = false

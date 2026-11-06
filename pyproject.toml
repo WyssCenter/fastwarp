@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dbsloc-gpureg"
+version = "0.1.0.dev0"
+description = "GPU (wgpu: Vulkan / Metal / DX12) SyN registration from Wyss DBS Localizer, with ANTs-compatible outputs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+authors = [{ name = "Richard Köhler" }, { name = "Wyss Center for Bio and Neuroengineering" }]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Private :: Do Not Upload",
+]
+
+[tool.maturin]
+manifest-path = "crates/dbsloc-gpureg-py/Cargo.toml"
+python-source = "python"
+module-name = "dbsloc_gpureg._core"
+features = ["pyo3/extension-module"]
