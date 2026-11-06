@@ -31,7 +31,7 @@ Apple Silicon (Metal) timings: pending.
 From a release (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):
 
 ```bash
-gh release download v0.1.0 -R JPPayonk/dbsloc-gpureg -p '*.whl' -D wheels   # private repo: needs access
+gh release download v0.1.0 -R JPPayonk/dbsloc-gpureg -p "*.whl" -D wheels   # private repo: needs gh access
 pip install --no-index --find-links wheels dbsloc-gpureg
 ```
 
