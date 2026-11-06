@@ -18,7 +18,7 @@ class CancelToken:
     def cancelled(self) -> bool: ...
 
 _Image = tuple[
-    npt.NDArray[np.float64],
+    npt.NDArray[np.float32] | npt.NDArray[np.float64],
     tuple[int, int, int],
     tuple[float, float, float],
     tuple[float, float, float],

@@ -1,9 +1,11 @@
 //! Python extension `dbsloc_gpureg._core`: the dbs-localizer cohort registration (centre of mass,
 //! Rigid, Affine, SyN) on the GPU, with ANTs-compatible `Composite.h5` / `InverseComposite.h5`.
 //!
-//! Images arrive as flat `float64` arrays in ITK voxel order (x fastest) with ITK (LPS) geometry,
-//! i.e. exactly what an `ANTsImage` holds; the Python wrapper does the flattening.
+//! Images arrive as flat `float32` or `float64` arrays in ITK voxel order (x fastest) with ITK
+//! (LPS) geometry, i.e. exactly what an `ANTsImage` holds; the Python wrapper does the flattening
+//! (a view, no copy, for an `ANTsImage`). They are converted to the engine's `f64` once, here.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -74,18 +76,48 @@ impl CancelToken {
     }
 }
 
-/// One image as handed over from Python: flat data (x fastest), size, spacing, origin, direction.
-type ImageArgs<'py> = (PyReadonlyArray1<'py, f64>, [usize; 3], Vec3, Vec3, Mat3);
+/// One image as handed over from Python: flat data (x fastest, `float32` or `float64`), size,
+/// spacing, origin, direction.
+type ImageArgs<'py> = (Bound<'py, PyAny>, [usize; 3], Vec3, Vec3, Mat3);
+
+fn contiguous_err() -> PyErr {
+    PyValueError::new_err("image data must be a contiguous 1-D array")
+}
 
 fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
     let (data, size, spacing, origin, direction) = img;
     let grid = Grid::new(*size, *spacing, *origin, *direction)
         .map_err(|e| PyValueError::new_err(format!("bad image geometry: {e}")))?;
-    let flat = data
-        .as_slice()
-        .map_err(|_| PyValueError::new_err("image data must be contiguous"))?;
-    Volume::from_vec(grid, flat.to_vec())
-        .map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
+    let values: Vec<f64> = if let Ok(a) = data.extract::<PyReadonlyArray1<'_, f32>>() {
+        let s = a.as_slice().map_err(|_| contiguous_err())?;
+        s.iter().map(|&v| f64::from(v)).collect()
+    } else if let Ok(a) = data.extract::<PyReadonlyArray1<'_, f64>>() {
+        a.as_slice().map_err(|_| contiguous_err())?.to_vec()
+    } else {
+        let what = data
+            .getattr("dtype")
+            .map(|d| d.to_string())
+            .unwrap_or_else(|_| data.get_type().to_string());
+        return Err(PyValueError::new_err(format!(
+            "image data must be a 1-D float32 or float64 array, got {what}"
+        )));
+    };
+    Volume::from_vec(grid, values).map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
+}
+
+/// Runs engine code, turning a panic (a bug, never expected) into `RegistrationError`, so a
+/// caller's `except Exception` can still fall back to another engine.
+fn guarded<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        Err(RegistrationError::new_err(format!(
+            "internal engine error (panic): {msg}"
+        )))
+    })
 }
 
 /// Voxels per axis of the registration grid: `resample_isotropic`'s rule on the first fixed image.
@@ -162,66 +194,78 @@ fn register_syn<'py>(
     if !(iso_mm.is_finite() && iso_mm > 0.0) {
         return Err(PyValueError::new_err("iso_mm must be a positive number"));
     }
+    // Checked up front: otherwise a missing folder only shows when the outputs are written.
+    match out_prefix.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() && !dir.is_dir() => {
+            return Err(PyValueError::new_err(format!(
+                "output folder {} does not exist",
+                dir.display()
+            )));
+        }
+        _ => {}
+    }
     let fixed: Vec<Volume<f64>> = fixed.iter().map(to_volume).collect::<PyResult<_>>()?;
     let moving: Vec<Volume<f64>> = moving.iter().map(to_volume).collect::<PyResult<_>>()?;
     let flag = cancel.map(|c| Arc::clone(&c.flag));
 
-    let run = py.detach(move || -> PyResult<Run> {
-        let t_all = Instant::now();
-        let g = open_gpu(adapter)?;
-        let caps = CapacityCaps::from_context(g.context());
-        let dims = iso_dims(fixed[0].grid(), iso_mm);
-        plan_capacity(dims, fixed.len(), &caps)
-            .map_err(|e| GpuCapacityError::new_err(format!("{e} (at {iso_mm} mm)")))?;
-        let recipe = if fixed.len() == 2 {
-            SynRecipe::cohort_multispectral()
-        } else {
-            SynRecipe::cohort()
-        };
-        let options = SynOptions {
-            cancel: flag.as_deref(),
-        };
-        let out = register_full(
-            &g,
-            &g,
-            &LinearPlan::cohort(),
-            &recipe,
-            &fixed,
-            &moving,
-            Some(iso_mm),
-            &options,
-        )
-        .map_err(reg_err)?;
-        drop((fixed, moving));
-        let t = Instant::now();
-        let io = |e: RegError| RegistrationError::new_err(format!("writing outputs: {e}"));
-        if write_warped {
-            write_outputs(&out_prefix, &out).map_err(io)?;
-        } else {
-            write_composite_pair(&out_prefix, &out.pair).map_err(io)?;
-        }
-        if let Some(chain) = &out.linear {
-            write_linear_output(&out_prefix, &chain.total).map_err(io)?;
-        }
-        let write_s = t.elapsed().as_secs_f64();
-        Ok(Run {
-            adapter: adapter_name(&g),
-            grid: out.grid.size(),
-            total_s: t_all.elapsed().as_secs_f64(),
-            write_s,
-            timings: out.timings,
-            levels: out
-                .levels
-                .iter()
-                .map(|l| {
-                    let e = l.iterations.last().map(|i| i.energy).unwrap_or(0.0);
-                    (l.level, l.grid_size, l.iterations.len(), l.converged, e)
-                })
-                .collect(),
-            affine_parameters: out.linear.as_ref().map(|c| c.total.parameters()),
-            affine_center: out.linear.as_ref().map(|c| c.total.center),
-            peak_gpu_bytes: g.peak_allocated_bytes(),
-            memory_budget_bytes: caps.memory_budget,
+    let run = py.detach(move || {
+        guarded(move || -> PyResult<Run> {
+            let t_all = Instant::now();
+            let g = open_gpu(adapter)?;
+            let caps = CapacityCaps::from_context(g.context());
+            let dims = iso_dims(fixed[0].grid(), iso_mm);
+            plan_capacity(dims, fixed.len(), &caps)
+                .map_err(|e| GpuCapacityError::new_err(format!("{e} (at {iso_mm} mm)")))?;
+            let recipe = if fixed.len() == 2 {
+                SynRecipe::cohort_multispectral()
+            } else {
+                SynRecipe::cohort()
+            };
+            let options = SynOptions {
+                cancel: flag.as_deref(),
+            };
+            let out = register_full(
+                &g,
+                &g,
+                &LinearPlan::cohort(),
+                &recipe,
+                &fixed,
+                &moving,
+                Some(iso_mm),
+                &options,
+            )
+            .map_err(reg_err)?;
+            drop((fixed, moving));
+            let t = Instant::now();
+            let io = |e: RegError| RegistrationError::new_err(format!("writing outputs: {e}"));
+            if write_warped {
+                write_outputs(&out_prefix, &out).map_err(io)?;
+            } else {
+                write_composite_pair(&out_prefix, &out.pair).map_err(io)?;
+            }
+            if let Some(chain) = &out.linear {
+                write_linear_output(&out_prefix, &chain.total).map_err(io)?;
+            }
+            let write_s = t.elapsed().as_secs_f64();
+            Ok(Run {
+                adapter: adapter_name(&g),
+                grid: out.grid.size(),
+                total_s: t_all.elapsed().as_secs_f64(),
+                write_s,
+                timings: out.timings,
+                levels: out
+                    .levels
+                    .iter()
+                    .map(|l| {
+                        let e = l.iterations.last().map(|i| i.energy).unwrap_or(0.0);
+                        (l.level, l.grid_size, l.iterations.len(), l.converged, e)
+                    })
+                    .collect(),
+                affine_parameters: out.linear.as_ref().map(|c| c.total.parameters()),
+                affine_center: out.linear.as_ref().map(|c| c.total.center),
+                peak_gpu_bytes: g.peak_allocated_bytes(),
+                memory_budget_bytes: caps.memory_budget,
+            })
         })
     })?;
 

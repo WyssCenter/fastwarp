@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 from os import PathLike
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -64,10 +65,13 @@ def _image_args(img: Any) -> tuple:
         arr, spacing, origin, direction = img
     else:
         arr, spacing, origin, direction = img.numpy(), img.spacing, img.origin, img.direction
-    arr = np.asarray(arr, dtype=np.float64)
+    arr = np.asarray(arr)
+    if arr.dtype not in (np.float32, np.float64):
+        arr = arr.astype(np.float32)
     if arr.ndim != 3:
         raise ValueError(f"expected a 3-D image, got shape {arr.shape}")
-    flat = np.ascontiguousarray(arr.ravel(order="F"))
+    # A view for the x-fastest (Fortran-ordered) arrays ANTs returns; copied only otherwise.
+    flat = arr.ravel(order="F")
     d = np.asarray(direction, dtype=np.float64).reshape(3, 3)
     return (
         flat,
@@ -80,6 +84,12 @@ def _image_args(img: Any) -> tuple:
 
 def _as_list(x: Any) -> list[Any]:
     return x if isinstance(x, list) else [x]
+
+
+def _prepared_prefix(out_prefix: str | PathLike[str]) -> str:
+    """``out_prefix`` as a string, its folder created (checked before the registration runs)."""
+    Path(out_prefix).parent.mkdir(parents=True, exist_ok=True)
+    return str(out_prefix)
 
 
 def register_syn(
@@ -110,7 +120,7 @@ def register_syn(
     return _register_syn(
         [_image_args(i) for i in _as_list(fixed)],
         [_image_args(i) for i in _as_list(moving)],
-        str(out_prefix),
+        _prepared_prefix(out_prefix),
         iso_mm=float(iso_mm),
         write_warped=write_warped,
         adapter=adapter,
