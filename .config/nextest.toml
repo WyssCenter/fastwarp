@@ -1,0 +1,6 @@
+# nextest runs every test in its own process. The copied dbsloc-niftiio tests share scratch
+# folders by name (compat.rs: "big"), which races under `cargo test`'s threads; upstream uses
+# nextest for the same reason.
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
