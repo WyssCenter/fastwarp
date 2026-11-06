@@ -22,3 +22,13 @@ manifest-path = "crates/dbsloc-gpureg-py/Cargo.toml"
 python-source = "python"
 module-name = "dbsloc_gpureg._core"
 features = ["pyo3/extension-module"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "W605"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
