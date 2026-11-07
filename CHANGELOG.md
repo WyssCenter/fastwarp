@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `compose_field` and `apply_transforms`: what a caller does with the composites after the
+  registration (`antsApplyTransforms --compose`, and resampling with the linear, nearest or
+  Lanczos windowed-sinc interpolator), in parallel Rust: about 10x faster than ANTs, equal to
+  `float32` rounding. `compression_level=0` writes the field as stored gzip, which ANTs reads back
+  about 7x faster than its own compressed `float64` field.
+
 ## 0.1.1 (2026-11-07)
 
 - float32 images are passed to the engine without copies (a view) and converted to float64

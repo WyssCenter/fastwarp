@@ -24,7 +24,16 @@ T1w + T2w to the MNI 2009b template (0.5 mm), 1 mm registration grid, Lead-Tutor
 | NVIDIA RTX A4000 (Vulkan) | – | – | ≈ 13 s |
 | ANTs on 16 CPU threads, same recipe | | | 1000–1500 s |
 
-Apple Silicon (Metal) timings: pending.
+Intel iMac (AMD Radeon Pro 5500 XT, Metal): 24 s. Apple Silicon timings: pending.
+
+After the registration, turning the composites into displacement fields on the 0.5 mm template
+and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-py do next):
+
+| Laptop, 8 threads | ANTs (ITK) | `compose_field` / `apply_transforms` |
+| --- | --- | --- |
+| Forward field (69 M voxels) | 36.5 s | 1.4 s |
+| Inverse field (37 M voxels) | 20.9 s | 0.95 s |
+| Lanczos re-warp | 31.0 s | 2.7 s |
 
 ## Install
 
@@ -66,6 +75,15 @@ else:
   registration grid, per-level SyN diagnostics, the affine and peak GPU memory. Releases the GIL.
 - `CancelToken()`: pass as `cancel=`, call `.cancel()` from another thread; the run stops at
   the next iteration with `RegistrationCancelled`.
+- `compose_field(transforms, reference, out_path, *, compression_level=None)`: the transforms as
+  one displacement field on `reference`'s grid, the file `antsApplyTransforms --compose` writes
+  (`float32`, parallel gzip; `compression_level=0` stores the data as valid gzip without
+  compressing it, which suits displacement fields).
+- `apply_transforms(moving, reference, transforms, *, interpolation="linear", default_value=0.0)`:
+  `antsApplyTransforms` with `linear`, `nearestNeighbor` or `lanczosWindowedSinc`; returns an
+  `ANTsImage` like `reference` (or an array for a tuple reference). `transforms` is a list as
+  `ants.apply_transforms` takes it. Both run on all CPU cores and need no GPU; they equal ANTs
+  to `float32` rounding (`tests/test_post.py`).
 - `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, iso_mm=, channels=)`,
   `iso_grid_dims(img, iso_mm)`.
 - Errors: `GpuUnavailableError` and `GpuCapacityError` (checked before any work: fall back to

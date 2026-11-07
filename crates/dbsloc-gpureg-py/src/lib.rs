@@ -11,15 +11,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+mod post;
+
 use dbsloc_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
 use dbsloc_reg::recipe::SynRecipe;
 use dbsloc_reg::register::{
     register_full, write_linear_output, write_outputs, LinearPlan, RegisterTimings,
 };
 use dbsloc_reg::syn::SynOptions;
-use dbsloc_reg::transform::write_composite_pair;
+use dbsloc_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
 use dbsloc_reg::{Grid, Mat3, RegError, Vec3, Volume};
-use numpy::PyReadonlyArray1;
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -329,12 +331,95 @@ fn fits_gpu(
     })
 }
 
+/// A reference grid from Python: size, spacing, origin, direction (ITK / LPS).
+type GridArgs = ([usize; 3], Vec3, Vec3, Mat3);
+
+fn to_grid(g: &GridArgs) -> PyResult<Grid> {
+    Grid::new(g.0, g.1, g.2, g.3)
+        .map_err(|e| PyValueError::new_err(format!("bad reference geometry: {e}")))
+}
+
+/// The chain `ants.apply_transforms(transformlist=transforms)` applies: a reference point goes
+/// through `transforms[0]` first (measured against ANTsPy, see `tests/test_post.py`). The queue
+/// applies its last element first, so the files are pushed in reverse.
+fn read_chain(transforms: &[PathBuf]) -> PyResult<TransformChain> {
+    if transforms.is_empty() {
+        return Err(PyValueError::new_err("give at least one transform file"));
+    }
+    let mut chain = TransformChain::new();
+    for path in transforms.iter().rev() {
+        let part = read_transform_file(path)
+            .map_err(|e| RegistrationError::new_err(format!("reading {}: {e}", path.display())))?;
+        chain.extend(part);
+    }
+    Ok(chain)
+}
+
+/// Writes the transforms as one displacement field on `reference` (`antsApplyTransforms
+/// --compose`: `float32` vectors, intent `NIFTI_INTENT_VECTOR`, parallel gzip for `.nii.gz` at
+/// `compression_level`, 0 to 9).
+#[pyfunction]
+#[pyo3(signature = (transforms, reference, out_path, compression_level=None))]
+fn compose_field(
+    py: Python<'_>,
+    transforms: Vec<PathBuf>,
+    reference: GridArgs,
+    out_path: PathBuf,
+    compression_level: Option<u32>,
+) -> PyResult<()> {
+    if compression_level.is_some_and(|l| l > 9) {
+        return Err(PyValueError::new_err("compression_level must be 0 to 9"));
+    }
+    let grid = to_grid(&reference)?;
+    py.detach(move || {
+        guarded(move || {
+            let chain = read_chain(&transforms)?;
+            let field = post::compose_field(&chain, &grid).map_err(reg_err)?;
+            post::write_field(&out_path, &field, compression_level).map_err(|e| {
+                RegistrationError::new_err(format!("writing {}: {e}", out_path.display()))
+            })
+        })
+    })
+}
+
+/// Resamples `moving` onto `reference` through the transforms (`antsApplyTransforms`), with the
+/// ANTs interpolator `linear`, `nearestNeighbor` or `lanczosWindowedSinc`. Returns the voxels as
+/// a flat `float32` array, x fastest.
+#[pyfunction]
+#[pyo3(signature = (moving, reference, transforms, interpolation="linear", default_value=0.0))]
+fn apply_transforms<'py>(
+    py: Python<'py>,
+    moving: ImageArgs<'py>,
+    reference: GridArgs,
+    transforms: Vec<PathBuf>,
+    interpolation: &str,
+    default_value: f64,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    let interp = post::Interp::from_ants_name(interpolation).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "interpolation {interpolation:?} is not supported (linear, nearestNeighbor, \
+             lanczosWindowedSinc)"
+        ))
+    })?;
+    let grid = to_grid(&reference)?;
+    let image = to_volume(&moving)?;
+    let out = py.detach(move || {
+        guarded(move || {
+            let chain = read_chain(&transforms)?;
+            post::resample(&image, &grid, &chain, interp, default_value).map_err(reg_err)
+        })
+    })?;
+    Ok(PyArray1::from_vec(py, out))
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     m.add_function(wrap_pyfunction!(register_syn, m)?)?;
     m.add_function(wrap_pyfunction!(gpu_info, m)?)?;
     m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
+    m.add_function(wrap_pyfunction!(compose_field, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;

@@ -310,9 +310,12 @@ name = "dbsloc-gpureg-py"
 version = "0.1.1"
 dependencies = [
  "dbsloc-gpu",
+ "dbsloc-niftiio",
  "dbsloc-reg",
+ "ndarray",
  "numpy",
  "pyo3",
+ "rayon",
 ]
 
 [[package]]

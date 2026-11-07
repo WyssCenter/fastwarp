@@ -23,6 +23,8 @@ from ._core import (
     RegistrationError,
     gpu_info,
 )
+from ._core import apply_transforms as _apply_transforms
+from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
 
@@ -36,10 +38,13 @@ __all__ = [
     "ENGINE_SOURCE",
     "CancelToken",
     "GpuCapacityError",
+    "INTERPOLATORS",
     "GpuUnavailableError",
     "RegistrationCancelled",
     "RegistrationError",
     "__version__",
+    "apply_transforms",
+    "compose_field",
     "gpu_available",
     "gpu_info",
     "iso_grid_dims",
@@ -159,3 +164,89 @@ def gpu_available(adapter: str | None = None) -> bool:
     except GpuUnavailableError:
         return False
     return True
+
+
+#: Interpolators :func:`apply_transforms` runs (ANTs names).
+INTERPOLATORS = ("linear", "nearestNeighbor", "lanczosWindowedSinc")
+
+
+def _grid_args(ref: Any) -> tuple:
+    """(size, spacing, origin, direction) of an ``ANTsImage`` or of a tuple
+    ``(shape, spacing, origin, direction)``."""
+    if isinstance(ref, tuple):
+        shape, spacing, origin, direction = ref
+    else:
+        shape, spacing, origin, direction = ref.shape, ref.spacing, ref.origin, ref.direction
+    if len(shape) != 3:
+        raise ValueError(f"expected a 3-D reference, got shape {tuple(shape)}")
+    d = np.asarray(direction, dtype=np.float64).reshape(3, 3)
+    return (
+        tuple(int(n) for n in shape),
+        tuple(float(v) for v in spacing),
+        tuple(float(v) for v in origin),
+        tuple(tuple(float(v) for v in row) for row in d),
+    )
+
+
+def _transform_paths(transforms: Any) -> list[str]:
+    items = [transforms] if isinstance(transforms, (str, PathLike)) else list(transforms)
+    for t in items:
+        if not Path(t).is_file():
+            raise FileNotFoundError(f"transform file {t} does not exist")
+    return [str(t) for t in items]
+
+
+def compose_field(
+    transforms: str | PathLike[str] | list[str | PathLike[str]],
+    reference: Any,
+    out_path: str | PathLike[str],
+    *,
+    compression_level: int | None = None,
+) -> Path:
+    """Write the transforms as one displacement field on ``reference``'s grid.
+
+    The file ``antsApplyTransforms --compose`` / ``ants.apply_transforms(compose=...)`` writes
+    (vectors in LPS mm, ``float32``), computed in parallel and written with parallel gzip when
+    ``out_path`` ends in ``.nii.gz``. ``transforms`` is a list as ``ants.apply_transforms`` takes
+    it, with the same meaning.
+    ``compression_level`` (0 to 9) sets the gzip level; 0 stores the data in valid gzip without
+    compressing it, which suits displacement fields (they barely compress).
+    """
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _compose_field(
+        _transform_paths(transforms),
+        _grid_args(reference),
+        str(out),
+        compression_level=compression_level,
+    )
+    return out
+
+
+def apply_transforms(
+    moving: Any,
+    reference: Any,
+    transforms: str | PathLike[str] | list[str | PathLike[str]],
+    *,
+    interpolation: str = "linear",
+    default_value: float = 0.0,
+) -> Any:
+    """Resample ``moving`` onto ``reference`` through ``transforms`` (``antsApplyTransforms``).
+
+    ``transforms`` is a list as ``ants.apply_transforms`` takes it, with the same meaning.
+    ``interpolation`` is one of :data:`INTERPOLATORS`. Returns an ``ANTsImage`` like
+    ``reference`` when it is one, else a ``float32`` array of the reference's shape. Points that
+    map outside ``moving`` take ``default_value``.
+    """
+    size, spacing, origin, direction = _grid_args(reference)
+    flat = _apply_transforms(
+        _image_args(moving),
+        (size, spacing, origin, direction),
+        _transform_paths(transforms),
+        interpolation=interpolation,
+        default_value=float(default_value),
+    )
+    arr = flat.reshape(size, order="F")
+    if hasattr(reference, "new_image_like"):
+        return reference.new_image_like(arr)
+    return arr

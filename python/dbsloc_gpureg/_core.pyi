@@ -36,3 +36,26 @@ def register_syn(
 ) -> dict[str, Any]: ...
 def gpu_info(adapter: str | None = None) -> dict[str, Any]: ...
 def fits_gpu(dims: tuple[int, int, int], channels: int, adapter: str | None = None) -> bool: ...
+def compose_field(
+    transforms: list[str],
+    reference: tuple[
+        tuple[int, int, int],
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    ],
+    out_path: str,
+    compression_level: int | None = None,
+) -> None: ...
+def apply_transforms(
+    moving: _Image,
+    reference: tuple[
+        tuple[int, int, int],
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    ],
+    transforms: list[str],
+    interpolation: str = "linear",
+    default_value: float = 0.0,
+) -> npt.NDArray[np.float32]: ...
