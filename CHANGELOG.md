@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-11-07)
 
+- `register_syn(recipe=...)`: the caller sets the whole schedule (Rigid, Affine, SyN: iterations,
+  shrink factors, smoothing, metric parameters, channel weights) instead of the built-in cohort
+  recipe; `cohort_recipe(channels)` returns that recipe in the same form, and the result reports
+  the recipe that ran. Left out, it is the cohort recipe as before, bit for bit. A recipe is
+  checked before any work, including the GPU limits (32 MI bins, CC radius at most 8).
 - `compose_field` and `apply_transforms`: what a caller does with the composites after the
   registration (`antsApplyTransforms --compose`, and resampling with the linear, nearest or
   Lanczos windowed-sinc interpolator), in parallel Rust: about 10x faster than ANTs, equal to

@@ -68,7 +68,7 @@ else:
 ```
 
 - `register_syn(fixed, moving, out_prefix, *, iso_mm=1.0, write_warped=False, adapter=None,
-  cancel=None)`: one image or a list of two (T1w + T2w) on each side; images are `ANTsImage`s
+  cancel=None, recipe=None)`: one image or a list of two (T1w + T2w) on each side; images are `ANTsImage`s
   or `(array, spacing, origin, direction)` tuples in ITK (LPS) geometry. Writes
   `<out_prefix>Composite.h5` (`[Affine, Warp]`), `<out_prefix>InverseComposite.h5`
   (`[InverseWarp, Affine⁻¹]`) and `<out_prefix>0GenericAffine.mat`. Returns timings, the
@@ -103,12 +103,24 @@ The capacity check uses the device memory the graphics API reports, halved on in
 
 ## Recipe
 
-dbs-localizer cohort recipe: centre-of-mass initialisation; Rigid and Affine with
-`MI[32 bins, regular 25 %]`, `1000x500x250x100`, shrink `8x4x2x1`, smoothing `3x2x1x0 vox`;
-SyN `[0.1, 3, 0]` with `CC[radius 4]` (T1w + T2w: two CC terms of weight 0.5),
-`100x70x50x20`; winsorize `[0.005, 0.995]`, no histogram matching; all on an isotropic grid
-(`iso_mm`) built from the fixed image. Equivalent `antsRegistration` arguments are in
-`THIRD_PARTY_PORTS.md`'s source project, `specs/04_normalization.md` §5.1–5.2.
+The schedule is the caller's: `register_syn(..., recipe={"rigid": {...}, "affine": {...},
+"syn": {...}})`. The structure:
+
+- centre-of-mass initialisation, then `rigid` and `affine` on Mattes MI over the first channel
+  (fields `gradient_step`, `iterations`, `convergence_threshold`, `convergence_window`,
+  `shrink_factors`, `smoothing_sigmas`, `sigma_units` (`"vox"` / `"mm"`), `bins`,
+  `sampling_percentage`, `seed`; regular sampling),
+- then `syn` on CC over every channel (`gradient_step`, `update_field_variance`,
+  `total_field_variance`, `cc_radius`, `channel_weights`, and the same schedule fields),
+- winsorize `[0.005, 0.995]`, no histogram matching, all on an isotropic grid (`iso_mm`) built
+  from the fixed image.
+
+A stage or field left out keeps the dbs-localizer cohort value, which `cohort_recipe(channels)`
+returns in full: Rigid and Affine `MI[32 bins, regular 25 %]`, `1000x500x250x100`; SyN
+`[0.1, 3, 0]` with `CC[radius 4]` (T1w + T2w: weight 0.5 each), `100x70x50x20`; shrink
+`8x4x2x1`, smoothing `3x2x1x0 vox`. An unknown key, a value of the wrong type, mismatched level
+counts, or what the GPU kernels do not support (MI bins other than 32, a CC radius above 8) is a
+`ValueError` before any work. The result's `"recipe"` is the full recipe that ran.
 
 ## Development
 

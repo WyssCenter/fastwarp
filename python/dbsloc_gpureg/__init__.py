@@ -7,6 +7,7 @@ Affine, SyN on an isotropic grid) and writes ANTs-compatible composite transform
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from os import PathLike
 from pathlib import Path
@@ -24,6 +25,7 @@ from ._core import (
     gpu_info,
 )
 from ._core import apply_transforms as _apply_transforms
+from ._core import cohort_recipe as _cohort_recipe
 from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
@@ -44,6 +46,7 @@ __all__ = [
     "RegistrationError",
     "__version__",
     "apply_transforms",
+    "cohort_recipe",
     "compose_field",
     "gpu_available",
     "gpu_info",
@@ -106,14 +109,22 @@ def register_syn(
     write_warped: bool = False,
     adapter: str | None = None,
     cancel: CancelToken | None = None,
+    recipe: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Register ``moving`` to ``fixed`` on the GPU (dbs-localizer cohort recipe).
+    """Register ``moving`` to ``fixed`` on the GPU: Rigid and Affine (Mattes MI, first channel),
+    then SyN (CC, every channel), from a centre-of-mass start.
 
     ``fixed`` / ``moving``: one image, or a list of two (T1w + T2w) for the multispectral SyN
     stage, the moving T2w already in the moving T1w's space. Writes
     ``<out_prefix>Composite.h5`` and ``<out_prefix>InverseComposite.h5`` (ANTs layout:
     ``[Affine, Warp]`` and ``[InverseWarp, Affine^-1]``) plus ``<out_prefix>0GenericAffine.mat``.
     Returns timings and per-level diagnostics.
+
+    ``recipe`` sets the schedule: ``{"rigid": {...}, "affine": {...}, "syn": {...}}`` with the
+    fields :func:`cohort_recipe` returns. A stage or field left out keeps the dbs-localizer cohort
+    value; an unknown key or a value the GPU kernels do not support (MI bins other than 32, a CC
+    radius above 8) raises ``ValueError`` before any work. The result's ``"recipe"`` is the full
+    recipe that ran.
 
     ``adapter`` picks a GPU by a substring of its name. ``cancel`` stops the run at the next
     iteration when another thread calls ``cancel.cancel()``; the GIL is released while it runs.
@@ -130,7 +141,20 @@ def register_syn(
         write_warped=write_warped,
         adapter=adapter,
         cancel=cancel,
+        recipe=None if recipe is None else {k: _as_dict(v) for k, v in recipe.items()},
     )
+
+
+def _as_dict(stage: Any) -> Any:
+    return dict(stage) if isinstance(stage, Mapping) else stage
+
+
+def cohort_recipe(channels: int = 1) -> dict[str, dict[str, Any]]:
+    """The dbs-localizer cohort recipe for 1 or 2 channels as :func:`register_syn` takes it:
+    ``MI[32, Regular 0.25]`` Rigid and Affine at ``1000x500x250x100``, then ``SyN[0.1,3,0]``
+    with ``CC`` radius 4 at ``100x70x50x20`` (weights 0.5 each for two channels); shrink
+    ``8x4x2x1``, smoothing ``3x2x1x0`` voxels."""
+    return _cohort_recipe(channels)
 
 
 def iso_grid_dims(img: Any, iso_mm: float = 1.0) -> tuple[int, int, int]:

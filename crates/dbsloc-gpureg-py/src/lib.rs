@@ -12,12 +12,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod post;
+mod recipe;
 
 use dbsloc_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
-use dbsloc_reg::recipe::SynRecipe;
-use dbsloc_reg::register::{
-    register_full, write_linear_output, write_outputs, LinearPlan, RegisterTimings,
-};
+use dbsloc_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
 use dbsloc_reg::syn::SynOptions;
 use dbsloc_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
 use dbsloc_reg::{Grid, Mat3, RegError, Vec3, Volume};
@@ -154,6 +152,7 @@ fn reg_err(e: RegError) -> PyErr {
 }
 
 struct Run {
+    recipe: recipe::Recipe,
     adapter: String,
     grid: [usize; 3],
     total_s: f64,
@@ -176,7 +175,7 @@ fn adapter_name(g: &WgpuBackend) -> String {
 /// `<out_prefix>0GenericAffine.mat` (and, with `write_warped`, `<out_prefix>_Warped.nii.gz`).
 /// Returns a dict of timings and diagnostics. The GIL is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None))]
+#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None))]
 #[allow(clippy::too_many_arguments)]
 fn register_syn<'py>(
     py: Python<'py>,
@@ -187,12 +186,15 @@ fn register_syn<'py>(
     write_warped: bool,
     adapter: Option<String>,
     cancel: Option<PyRef<'py, CancelToken>>,
+    recipe: Option<Bound<'py, PyDict>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     if fixed.is_empty() || fixed.len() > 2 || fixed.len() != moving.len() {
         return Err(PyValueError::new_err(
             "give 1 or 2 fixed images and as many moving images",
         ));
     }
+    // Checked before any work, like everything a caller can get wrong.
+    let recipe = recipe::Recipe::from_dict(recipe.as_ref(), fixed.len())?;
     if !(iso_mm.is_finite() && iso_mm > 0.0) {
         return Err(PyValueError::new_err("iso_mm must be a positive number"));
     }
@@ -218,19 +220,14 @@ fn register_syn<'py>(
             let dims = iso_dims(fixed[0].grid(), iso_mm);
             plan_capacity(dims, fixed.len(), &caps)
                 .map_err(|e| GpuCapacityError::new_err(format!("{e} (at {iso_mm} mm)")))?;
-            let recipe = if fixed.len() == 2 {
-                SynRecipe::cohort_multispectral()
-            } else {
-                SynRecipe::cohort()
-            };
             let options = SynOptions {
                 cancel: flag.as_deref(),
             };
             let out = register_full(
                 &g,
                 &g,
-                &LinearPlan::cohort(),
-                &recipe,
+                &recipe.linear,
+                &recipe.syn,
                 &fixed,
                 &moving,
                 Some(iso_mm),
@@ -250,6 +247,7 @@ fn register_syn<'py>(
             }
             let write_s = t.elapsed().as_secs_f64();
             Ok(Run {
+                recipe,
                 adapter: adapter_name(&g),
                 grid: out.grid.size(),
                 total_s: t_all.elapsed().as_secs_f64(),
@@ -286,6 +284,7 @@ fn register_syn<'py>(
     d.set_item("affine_center", run.affine_center)?;
     d.set_item("peak_gpu_bytes", run.peak_gpu_bytes)?;
     d.set_item("memory_budget_bytes", run.memory_budget_bytes)?;
+    d.set_item("recipe", run.recipe.to_dict(py)?)?;
     Ok(d)
 }
 
@@ -412,6 +411,17 @@ fn apply_transforms<'py>(
     Ok(PyArray1::from_vec(py, out))
 }
 
+/// The dbs-localizer cohort recipe for 1 or 2 channels, in the form `register_syn(recipe=...)`
+/// takes; every field present.
+#[pyfunction]
+#[pyo3(signature = (channels=1))]
+fn cohort_recipe(py: Python<'_>, channels: usize) -> PyResult<Bound<'_, PyDict>> {
+    if !(1..=2).contains(&channels) {
+        return Err(PyValueError::new_err("channels must be 1 or 2"));
+    }
+    recipe::Recipe::cohort(channels).to_dict(py)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
@@ -420,6 +430,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
+    m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;
