@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 (2026-11-07)
+
+- float32 images are passed to the engine without copies (a view) and converted to float64
+  once: about 130 MB instead of 660 MB extra memory per 0.5 mm template.
+- An internal engine panic is raised as `RegistrationError` instead of `PanicException`, so
+  callers that catch `Exception` can fall back.
+- A missing output folder is reported before the registration runs; the Python wrapper creates
+  it.
+- The package version is read from `Cargo.toml` only; CI runs a RustSec dependency audit.
+- New tests: determinism, float32 vs float64, NaN input, output folder, integer input.
+
 ## 0.1.0 (2026-11-06)
 
 - First version: the dbs-localizer GPU registration engine (commit `00faf42`) as a Python
