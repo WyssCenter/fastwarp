@@ -17,3 +17,4 @@ ndarray = "0.16"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 numpy = "0.30"
 rayon = "1.10"
+wgpu = "29"

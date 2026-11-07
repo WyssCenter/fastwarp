@@ -211,3 +211,11 @@ def test_the_wrapper_creates_the_output_folder(tmp_path):
 def test_integer_images_are_accepted():
     arr = np.ones((4, 5, 6), dtype=np.int16)
     assert g._image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0].dtype == np.float32
+
+
+@needs_gpu
+def test_the_gpu_survives_many_opens_in_one_process():
+    """Every call opens and closes a device. NVIDIA's Linux Vulkan driver used to vanish after the
+    tenth (the loader could not load it again); a process-wide idle instance keeps it loaded."""
+    names = {g.gpu_info()["name"] for _ in range(15)}
+    assert len(names) == 1

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 (2026-11-07)
+
+- Fix: on Linux with an NVIDIA GPU, the GPU disappeared after ten registrations (or `gpu_info`
+  calls) in one process: every call created and destroyed a Vulkan instance, the loader unloaded
+  NVIDIA's driver library each time, and from the eleventh load on it no longer provided
+  `vkCreateInstance`. A cohort run in one process fell back to the CPU after ten subjects. One idle
+  Vulkan instance now lives for the whole process, so the driver stays loaded (no device, no GPU
+  memory). Measured on an RTX A4000, driver 580: 30 `gpu_info` calls and 25 registrations in one
+  process, all on the GPU.
+
 ## 0.2.0 (2026-11-07)
 
 - `register_syn(recipe=...)`: the caller sets the whole schedule (Rigid, Affine, SyN: iterations,
