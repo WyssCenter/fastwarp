@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 (2026-11-08)
+
+- `rigid_session` / `RigidSession` and `register_rigid`: rigid registration on the GPU (one
+  `Rigid` stage on Mattes MI from any start, an optional fixed-image mask, winsorizing), for
+  coregistration. A session prepares and uploads the image pair once and keeps its smoothed
+  copies between fits, so a multi-start of five coarse and two full fits costs little more than
+  one: a post-op CT onto a T1w anchor in 17 s on a laptop GPU where ANTs takes 32 s, the fits
+  within 0.7 mm of ANTs' over a head-sized cube. `check_rigid_stage` checks a stage without a GPU.
+
 ## 0.2.1 (2026-11-07)
 
 - Fix: on Linux with an NVIDIA GPU, the GPU disappeared after ten registrations (or `gpu_info`

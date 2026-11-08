@@ -82,20 +82,8 @@ impl Recipe {
     }
 
     fn check(&self, channels: usize) -> PyResult<()> {
-        for (name, l) in [
-            ("rigid", &self.linear.rigid),
-            ("affine", &self.linear.affine),
-        ] {
-            l.validate()
-                .map_err(|e| PyValueError::new_err(format!("recipe['{name}']: {e}")))?;
-            if l.bins != GPU_MI_BINS {
-                return Err(PyValueError::new_err(format!(
-                    "recipe['{name}']['bins']: the GPU MI kernels support {GPU_MI_BINS} bins, \
-                     not {}",
-                    l.bins
-                )));
-            }
-        }
+        check_linear("recipe['rigid']", &self.linear.rigid)?;
+        check_linear("recipe['affine']", &self.linear.affine)?;
         self.syn
             .validate()
             .map_err(|e| PyValueError::new_err(format!("recipe['syn']: {e}")))?;
@@ -136,6 +124,36 @@ impl Recipe {
         d.set_item("syn", s)?;
         Ok(d)
     }
+}
+
+/// One `Rigid` stage: the cohort's, with the fields `d` names replaced, checked like a recipe.
+pub fn rigid_stage(d: Option<&Bound<'_, PyDict>>) -> PyResult<LinearRecipe> {
+    let mut stage = LinearRecipe::cohort_rigid();
+    if let Some(d) = d {
+        linear_from(d, &mut stage, "stage")?;
+    }
+    check_linear("stage", &stage)?;
+    Ok(stage)
+}
+
+/// The rigid stage as the dict [`rigid_stage`] reads.
+pub fn rigid_stage_dict<'py>(
+    py: Python<'py>,
+    stage: &LinearRecipe,
+) -> PyResult<Bound<'py, PyDict>> {
+    linear_dict(py, stage)
+}
+
+fn check_linear(what: &str, l: &LinearRecipe) -> PyResult<()> {
+    l.validate()
+        .map_err(|e| PyValueError::new_err(format!("{what}: {e}")))?;
+    if l.bins != GPU_MI_BINS {
+        return Err(PyValueError::new_err(format!(
+            "{what}['bins']: the GPU MI kernels support {GPU_MI_BINS} bins, not {}",
+            l.bins
+        )));
+    }
+    Ok(())
 }
 
 fn linear_dict<'py>(py: Python<'py>, l: &LinearRecipe) -> PyResult<Bound<'py, PyDict>> {

@@ -285,14 +285,14 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dbsloc-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "nifti",
 ]
 
 [[package]]
 name = "dbsloc-gpu"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "clap",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "dbsloc-gpureg-py"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "dbsloc-gpu",
  "dbsloc-niftiio",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "dbsloc-matfile"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "miniz_oxide 0.8.9",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "dbsloc-niftiio"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "crc32fast",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "dbsloc-reg"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "dbsloc-core",
  "dbsloc-matfile",

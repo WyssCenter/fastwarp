@@ -84,6 +84,14 @@ else:
   `ANTsImage` like `reference` (or an array for a tuple reference). `transforms` is a list as
   `ants.apply_transforms` takes it. Both run on all CPU cores and need no GPU; they equal ANTs
   to `float32` rounding (`tests/test_post.py`).
+- `rigid_session(fixed, moving, *, fixed_mask=None, winsorize=None, adapter=None)`: rigid fits of
+  one image pair (Mattes MI, regular sampling, `Rigid` stage from any start), the pair prepared,
+  winsorized and uploaded once and its smoothed copies kept between fits, for a multi-start.
+  `session.register(stage=None, initial=None, use_mask=True, out_prefix=None)` returns the
+  collapsed affine (`parameters`, `center`) and the final MI value; `initial` is
+  `(12 parameters, centre)` of an ITK affine (`None` = centres of intensity mass); `stage` the
+  fields of `cohort_recipe()["rigid"]`; `out_prefix` writes `<prefix>0GenericAffine.mat`. Use
+  it in a `with` block. `register_rigid(...)` does one fit in one call.
 - `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, iso_mm=, channels=)`,
   `iso_grid_dims(img, iso_mm)`.
 - Errors: `GpuUnavailableError` and `GpuCapacityError` (checked before any work: fall back to

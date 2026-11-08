@@ -8,15 +8,20 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 mod post;
 mod recipe;
+mod rigid;
 
 use dbsloc_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
+use dbsloc_reg::init::{initial_transform, InitFeature};
+use dbsloc_reg::mask::MaskVolume;
+use dbsloc_reg::preprocess::preprocess_volume;
 use dbsloc_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
 use dbsloc_reg::syn::SynOptions;
+use dbsloc_reg::transform::AffineTransform;
 use dbsloc_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
 use dbsloc_reg::{Grid, Mat3, RegError, Vec3, Volume};
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -430,6 +435,189 @@ fn apply_transforms<'py>(
     Ok(PyArray1::from_vec(py, out))
 }
 
+/// Rigid fits of one image pair on the GPU (one `Rigid` stage on Mattes MI with regular
+/// sampling per fit). The images are converted, winsorized (`(lower, upper)` quantiles, rescaled
+/// to [0, 1] as ANTs does) and uploaded once; smoothed copies are kept between fits, so a
+/// multi-start pays the preparation once. `fixed_mask`: its non-zero voxels are where the metric
+/// samples, in fits that ask for it. Holds the GPU until `close()` (or the `with` block ends).
+#[pyclass(module = "dbsloc_gpureg", frozen)]
+struct RigidSession {
+    inner: Mutex<Option<rigid::Session>>,
+    com: AffineTransform,
+    adapter: String,
+}
+
+fn closed() -> PyErr {
+    PyValueError::new_err("the session is closed")
+}
+
+#[pymethods]
+impl RigidSession {
+    #[new]
+    #[pyo3(signature = (fixed, moving, fixed_mask=None, winsorize=None, adapter=None))]
+    fn new(
+        py: Python<'_>,
+        fixed: ImageArgs<'_>,
+        moving: ImageArgs<'_>,
+        fixed_mask: Option<ImageArgs<'_>>,
+        winsorize: Option<(f32, f32)>,
+        adapter: Option<String>,
+    ) -> PyResult<Self> {
+        if let Some((lo, hi)) = winsorize {
+            if !(0.0 <= lo && lo < hi && hi <= 1.0) {
+                return Err(PyValueError::new_err(
+                    "winsorize must be (lower, upper) quantiles with 0 <= lower < upper <= 1",
+                ));
+            }
+        }
+        let fixed = to_volume(&fixed)?;
+        let moving = to_volume(&moving)?;
+        let mask = fixed_mask
+            .map(|m| to_volume(&m).map(MaskVolume::from_volume))
+            .transpose()?;
+        let (session, com, name) = py.detach(move || {
+            guarded(move || {
+                let gpu = open_gpu(adapter)?;
+                // ANTs initialises on the images as given, before winsorizing.
+                let com = initial_transform(&fixed, &moving, InitFeature::CentreOfMass)
+                    .map_err(reg_err)?;
+                let (fixed, moving) = match winsorize {
+                    Some((lo, hi)) => (
+                        preprocess_volume(&fixed, lo, hi, 0.0, 1.0).map_err(reg_err)?,
+                        preprocess_volume(&moving, lo, hi, 0.0, 1.0).map_err(reg_err)?,
+                    ),
+                    None => (fixed, moving),
+                };
+                let name = adapter_name(&gpu);
+                let session = rigid::Session {
+                    gpu,
+                    fixed,
+                    moving,
+                    mask,
+                    cache: Default::default(),
+                };
+                Ok((session, com, name))
+            })
+        })?;
+        Ok(Self {
+            inner: Mutex::new(Some(session)),
+            com,
+            adapter: name,
+        })
+    }
+
+    /// The GPU in use.
+    #[getter]
+    fn adapter(&self) -> String {
+        self.adapter.clone()
+    }
+
+    /// The centre-of-mass start (`parameters`, `center`), what `initial=None` uses.
+    #[getter]
+    fn com_initial(&self) -> ([f64; 12], [f64; 3]) {
+        (self.com.parameters(), self.com.center)
+    }
+
+    /// One fit from `initial` (`(parameters, center)` of an ITK affine mapping fixed points to
+    /// moving ones; `None` = centres of intensity mass), with `stage`'s schedule (the fields of
+    /// `cohort_recipe()['rigid']`). Writes `<out_prefix>0GenericAffine.mat` when given. Returns
+    /// the collapsed affine (`parameters`, `center`), the final MI value (`metric`, lower is
+    /// better; `None` when the last level ran no iteration), the start, iterations per level and
+    /// the time. The GIL is released while it runs.
+    #[pyo3(signature = (stage=None, initial=None, use_mask=true, out_prefix=None, cancel=None))]
+    fn register<'py>(
+        &self,
+        py: Python<'py>,
+        stage: Option<Bound<'py, PyDict>>,
+        initial: Option<([f64; 12], [f64; 3])>,
+        use_mask: bool,
+        out_prefix: Option<PathBuf>,
+        cancel: Option<PyRef<'py, CancelToken>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let recipe = recipe::rigid_stage(stage.as_ref())?;
+        let stage_out = recipe::rigid_stage_dict(py, &recipe)?;
+        let start = match initial {
+            Some((params, center)) => AffineTransform::from_parameters(&params, &center)
+                .map_err(|e| PyValueError::new_err(format!("bad initial transform: {e}")))?,
+            None => self.com,
+        };
+        if let Some(dir) = out_prefix.as_ref().and_then(|p| p.parent()) {
+            if !dir.as_os_str().is_empty() && !dir.is_dir() {
+                return Err(PyValueError::new_err(format!(
+                    "output folder {} does not exist",
+                    dir.display()
+                )));
+            }
+        }
+        let flag = cancel.map(|c| Arc::clone(&c.flag));
+        // Taken out for the fit (it runs without the GIL) and put back after, so a second
+        // thread using the same session meanwhile is told so instead of waiting on a lock.
+        let mut session = self
+            .inner
+            .lock()
+            .map_err(|_| closed())?
+            .take()
+            .ok_or_else(|| PyValueError::new_err("the session is closed or busy"))?;
+        let t = Instant::now();
+        let (session, fit) = py.detach(move || {
+            let fit = guarded(|| {
+                session
+                    .fit(&recipe, start, use_mask, flag.as_deref())
+                    .map_err(reg_err)
+            });
+            (session, fit)
+        });
+        *self.inner.lock().map_err(|_| closed())? = Some(session);
+        let fit = fit?;
+        if let Some(prefix) = &out_prefix {
+            write_linear_output(prefix, &fit.total)
+                .map_err(|e| RegistrationError::new_err(format!("writing outputs: {e}")))?;
+        }
+        let d = PyDict::new(py);
+        d.set_item("adapter", &self.adapter)?;
+        d.set_item("parameters", fit.total.parameters())?;
+        d.set_item("center", fit.total.center)?;
+        d.set_item("initial_parameters", start.parameters())?;
+        d.set_item("initial_center", start.center)?;
+        d.set_item("metric", fit.metric)?;
+        d.set_item("iterations", fit.iterations)?;
+        d.set_item("total_s", t.elapsed().as_secs_f64())?;
+        d.set_item("stage", stage_out)?;
+        Ok(d)
+    }
+
+    /// Releases the GPU and the kept images.
+    fn close(&self) -> PyResult<()> {
+        *self.inner.lock().map_err(|_| closed())? = None;
+        Ok(())
+    }
+
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &self,
+        _exc_type: Option<Bound<'_, PyAny>>,
+        _exc: Option<Bound<'_, PyAny>>,
+        _tb: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        self.close()?;
+        Ok(false)
+    }
+}
+
+/// `stage` checked as `RigidSession.register` checks it (unknown keys, types, level counts, the
+/// GPU's 32 MI bins), returned complete; raises `ValueError` without touching the GPU.
+#[pyfunction]
+#[pyo3(signature = (stage=None))]
+fn check_rigid_stage<'py>(
+    py: Python<'py>,
+    stage: Option<Bound<'py, PyDict>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    recipe::rigid_stage_dict(py, &recipe::rigid_stage(stage.as_ref())?)
+}
+
 /// The dbs-localizer cohort recipe for 1 or 2 channels, in the form `register_syn(recipe=...)`
 /// takes; every field present.
 #[pyfunction]
@@ -450,6 +638,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;
+    m.add_class::<RigidSession>()?;
+    m.add_function(wrap_pyfunction!(check_rigid_stage, m)?)?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;
