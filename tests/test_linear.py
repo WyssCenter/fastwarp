@@ -93,7 +93,8 @@ def test_a_rigid_then_affine_fit_recovers_scaling(pair, tmp_path):
         np.asarray(affine["parameters"][:9]).reshape(3, 3), MATRIX, atol=0.01
     )
     pts = _corners(fixed)
-    assert _gap(rigid, tx, pts) > 1.0 > 0.3 > _gap(affine, tx, pts)
+    # The affine lands 0.09 (Intel), 0.3 (Metal, Radeon) mm from T; ANTs' Affine 1.1-1.3 mm.
+    assert _gap(rigid, tx, pts) > 1.0 > 0.5 > _gap(affine, tx, pts)
     # The affine starts as the identity where the rigid fit ended, centred like it.
     np.testing.assert_allclose(affine["initial_parameters"], rigid["parameters"], atol=1e-12)
     np.testing.assert_allclose(affine["center"], rigid["center"], atol=1e-12)
