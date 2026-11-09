@@ -17,21 +17,32 @@ Licence: [Apache-2.0](LICENSE). The files ported from ANTs/ITK carry their Apach
 
 ## Speed
 
-T1w + T2w to the MNI 2009b template (0.5 mm), 1 mm registration grid, Lead-Tutor sub-57245:
+T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the MNI
+2009b template (0.5 mm), 1 mm registration grid, default recipe, `dbsloc-gpureg` 0.4.0; median
+of three runs, the engine's own `linear_s` / `syn_s` / `total_s` (2026-11-09):
 
 | Hardware | Linear | SyN | Registration total |
 | --- | --- | --- | --- |
-| NVIDIA RTX A4000 (Linux, Vulkan) | 2.9 s | 5.7 s | 10.3 s |
-| Intel Lunar Lake integrated GPU (laptop, Vulkan) | 3.5 s | 14.0 s | 19.9 s |
-| AMD Radeon Pro 5500 XT (Intel iMac, Metal) | | | 24 s |
+| NVIDIA RTX A4000 (Linux, Vulkan) | 3.5 s | 6.4 s | 12.4 s |
+| Apple M5 Pro (MacBook Pro, Metal) | 4.1 s | 9.4 s | 13.7 s |
+| Intel Lunar Lake integrated GPU (Linux laptop, Vulkan) | 3.5 s | 16.4 s | 21.0 s |
+| AMD Radeon Pro 5500 XT (Intel iMac, Metal) | 6.1 s | 16.7 s | 23.5 s |
+| NVIDIA Quadro K620, 2 GB (Windows Server 2022, Vulkan), T1w only¹ | 10.6 s | 54.7 s | 67.3 s |
 | ANTs on 16 CPU threads, same recipe | | | 1000–1500 s |
 
-The total includes preparing and uploading the images. On the RTX A4000 the median over the ten
-Lead-Tutor subjects is 10.2 s. Apple Silicon has not been measured yet.
+The total includes preparing and uploading the images. The A4000 machine was under heavy CPU
+load (load average about 110 on 48 cores) during its runs.
 
-Linear sessions: a post-op CT onto the T1w anchor, five coarse and two full rigid fits, takes
-17 s on the laptop GPU where ANTs takes 32 s. The masked affine brain-shift fit takes 2.4–4.8 s
-on the RTX A4000 (Lead-Tutor cohort) where ANTs takes 5–11 s.
+¹ 2 GB is too little for T1w + T2w at 1 mm (1.6 GB): the capacity check refuses it up front
+(`GpuCapacityError`), so a caller falls back to ANTs. T1w alone needs 1.4 GB and ran only with
+`DBSLOC_GPU_MEMORY_BUDGET_MB=1900`, since the default budget keeps 1 GB free for the desktop.
+
+Linear sessions: one rigid fit of the T2w onto the T1w (the default rigid stage) takes 1.2 s on
+the M5 Pro, 1.6 s on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and
+2.7 s on the Quadro K620. As leaddbs-py runs them on the Lead-Tutor cohort: a post-op CT onto
+the T1w anchor, five coarse and two full rigid fits, takes 17 s on the laptop GPU where ANTs
+takes 32 s; the masked affine brain-shift fit takes 2.4–4.8 s on the RTX A4000 where ANTs takes
+5–11 s.
 
 After the registration, turning the composites into displacement fields on the 0.5 mm template
 and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-py do next):

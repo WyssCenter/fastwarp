@@ -4,6 +4,9 @@
 
 - Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
   `LICENSE` and `NOTICE`.
+- The `Private :: Do Not Upload` classifier is gone, so the wheels can go to PyPI.
+- README timings measured on five GPUs (NVIDIA RTX A4000, Apple M5 Pro, Intel Lunar Lake, AMD
+  Radeon Pro 5500 XT, NVIDIA Quadro K620 on Windows).
 
 ## 0.4.0 (2026-11-09)
 

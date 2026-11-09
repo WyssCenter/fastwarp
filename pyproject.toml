@@ -16,7 +16,6 @@ classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
-    "Private :: Do Not Upload",
 ]
 
 [tool.maturin]
