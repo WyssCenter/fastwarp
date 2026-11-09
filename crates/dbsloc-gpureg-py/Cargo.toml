@@ -1,6 +1,7 @@
 [package]
 name = "dbsloc-gpureg-py"
 version.workspace = true
+license.workspace = true
 edition = "2021"
 description = "Python bindings (PyO3) for the dbs-localizer GPU registration engine"
 publish = false

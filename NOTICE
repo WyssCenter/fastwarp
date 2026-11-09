@@ -1,10 +1,12 @@
 dbsloc-gpureg
 Copyright 2026 Wyss Center for Bio and Neuroengineering
+Copyright 2026 the dbsloc-gpureg contributors
+
+Licensed under the Apache License, Version 2.0 (LICENSE).
 
 The registration engine (crates/dbsloc-core, dbsloc-niftiio, dbsloc-matfile, dbsloc-reg,
-dbsloc-gpu) is copied from Wyss DBS Localizer (https://github.com/WyssCenter/dbs-localizer),
-written by Richard Köhler. Licence terms for redistribution are pending agreement with the
-Wyss Center.
+dbsloc-gpu) is copied from Wyss DBS Localizer, an internal Wyss Center repository, written by
+Richard Köhler.
 
 Portions of dbsloc-reg and dbsloc-gpu are derived from ANTs (https://github.com/ANTsX/ANTs,
 Copyright the ANTs developers) and the Insight Toolkit (https://itk.org/, Copyright 1999-2019

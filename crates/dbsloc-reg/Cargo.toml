@@ -1,6 +1,7 @@
 [package]
 name = "dbsloc-reg"
 version.workspace = true
+license.workspace = true
 edition = "2021"
 description = "Wyss DBS Localizer registration engine: grids, volumes, ITK-compatible transform I/O and point mapping (CPU)"
 

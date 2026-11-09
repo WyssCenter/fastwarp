@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
+  `LICENSE` and `NOTICE`.
+
 ## 0.4.0 (2026-11-09)
 
 - `linear_session` / `LinearSession` (was `rigid_session` / `RigidSession`, still available under

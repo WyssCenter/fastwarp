@@ -1,7 +1,9 @@
 # dbsloc-gpureg
 
-GPU image registration for Python: the SyN normalization engine of **Wyss DBS Localizer** by
-**Richard Köhler** (Wyss Center for Bio and Neuroengineering), packaged as a wheel.
+GPU image registration for Python: the registration engine of **Wyss DBS Localizer** by
+**Richard Köhler** (Wyss Center for Bio and Neuroengineering), packaged as a wheel. It runs a
+full Rigid → Affine → SyN normalization in one call, and rigid or affine fits (coregistration,
+template alignment, brain-shift refinement) in a session that keeps the image pair on the GPU.
 
 The engine is a port of ANTs/ITK's registration (Mattes mutual information and
 cross-correlation metrics, conjugate-gradient linear stages, SyN with Gaussian field
@@ -10,9 +12,8 @@ on **Metal** (macOS), **Vulkan** (Linux, Windows) and **DX12** (Windows), from o
 platform for every Python ≥ 3.10. Outputs are ANTs files (`Composite.h5`,
 `InverseComposite.h5`, `0GenericAffine.mat`) that ANTsPy and `antsApplyTransforms` read as is.
 
-> **Status: private.** The licence for the engine crates is being agreed with the Wyss Center
-> (planned: Apache-2.0). Do not redistribute until `LICENSE` is in place. The files ported from
-> ANTs/ITK carry their Apache-2.0 notices (`THIRD_PARTY_PORTS.md`).
+Licence: [Apache-2.0](LICENSE). The files ported from ANTs/ITK carry their Apache-2.0 notices
+(`NOTICE`, `THIRD_PARTY_PORTS.md`). The repository is still private.
 
 ## Speed
 
@@ -20,11 +21,17 @@ T1w + T2w to the MNI 2009b template (0.5 mm), 1 mm registration grid, Lead-Tutor
 
 | Hardware | Linear | SyN | Registration total |
 | --- | --- | --- | --- |
+| NVIDIA RTX A4000 (Linux, Vulkan) | 2.9 s | 5.7 s | 10.3 s |
 | Intel Lunar Lake integrated GPU (laptop, Vulkan) | 3.5 s | 14.0 s | 19.9 s |
-| NVIDIA RTX A4000 (Vulkan) | – | – | ≈ 13 s |
+| AMD Radeon Pro 5500 XT (Intel iMac, Metal) | | | 24 s |
 | ANTs on 16 CPU threads, same recipe | | | 1000–1500 s |
 
-Intel iMac (AMD Radeon Pro 5500 XT, Metal): 24 s. Apple Silicon timings: pending.
+The total includes preparing and uploading the images. On the RTX A4000 the median over the ten
+Lead-Tutor subjects is 10.2 s. Apple Silicon has not been measured yet.
+
+Linear sessions: a post-op CT onto the T1w anchor, five coarse and two full rigid fits, takes
+17 s on the laptop GPU where ANTs takes 32 s. The masked affine brain-shift fit takes 2.4–4.8 s
+on the RTX A4000 (Lead-Tutor cohort) where ANTs takes 5–11 s.
 
 After the registration, turning the composites into displacement fields on the 0.5 mm template
 and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-py do next):
@@ -40,7 +47,7 @@ and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-
 From a release (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):
 
 ```bash
-gh release download v0.1.0 -R JPPayonk/dbsloc-gpureg -p "*.whl" -D wheels   # private repo: needs gh access
+gh release download v0.4.0 -R JPPayonk/dbsloc-gpureg -p "*.whl" -D wheels   # private repo: needs gh access
 pip install --no-index --find-links wheels dbsloc-gpureg
 ```
 
@@ -150,7 +157,7 @@ Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes 
 ## Source and credit
 
 `crates/dbsloc-{core,niftiio,matfile,reg,gpu}` are copies of
-[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer) at commit `00faf42`
+Wyss DBS Localizer (an internal Wyss Center repository) at commit `00faf42`
 (2026-10-26); the only change is the removal of the VAT solver (and its `dbsloc-vat`
 dependency) from `dbsloc-gpu`. `crates/dbsloc-gpureg-py` is the Python binding (PyO3). Please
 cite the engine as in `CITATION.cff`.

@@ -14,6 +14,7 @@ members = [
 
 [workspace.package]
 version = "0.4.0"
+license = "Apache-2.0"
 
 [profile.release]
 # Same as a plain dbs-localizer release build; the wheel is built with --release.
