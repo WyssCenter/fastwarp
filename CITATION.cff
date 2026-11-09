@@ -6,11 +6,12 @@ authors:
   - family-names: "Köhler"
     given-names: "Richard"
     affiliation: "Wyss Center for Bio and Neuroengineering"
-version: "0.1.0"
-repository-code: "https://github.com/WyssCenter/dbs-localizer"
+version: "0.4.0"
+license: Apache-2.0
+repository-code: "https://github.com/JPPayonk/dbsloc-gpureg"
 abstract: >-
-  A wgpu (Metal / Vulkan / DX12) port of the ANTs SyN registration with ANTs-compatible
-  transform outputs.
+  A wgpu (Metal / Vulkan / DX12) port of the ANTs registration (Rigid, Affine, SyN) with
+  ANTs-compatible transform outputs.
 references:
   - type: article
     title: "Symmetric diffeomorphic image registration with cross-correlation: evaluating automated labeling of elderly and neurodegenerative brain"

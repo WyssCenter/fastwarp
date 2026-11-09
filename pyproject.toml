@@ -5,9 +5,11 @@ build-backend = "maturin"
 [project]
 name = "dbsloc-gpureg"
 dynamic = ["version"]  # from Cargo.toml [workspace.package]
-description = "GPU (wgpu: Vulkan / Metal / DX12) SyN registration from Wyss DBS Localizer, with ANTs-compatible outputs"
+description = "GPU (wgpu: Vulkan / Metal / DX12) image registration from Wyss DBS Localizer (Rigid, Affine, SyN), with ANTs-compatible outputs"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = ["numpy"]
 authors = [{ name = "Richard Köhler" }, { name = "Wyss Center for Bio and Neuroengineering" }]
 classifiers = [
