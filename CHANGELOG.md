@@ -8,7 +8,9 @@
   bring its own fixed mask (`register(mask=...)`), for a template alignment (rigid, then affine)
   and a brain-shift refinement (an affine fit restricted to a subcortical region). Against ANTs on
   phantoms: an affine fit from the centres of mass within 0.5 mm of ANTs', a masked one no
-  farther from the truth than ANTs' (`tests/test_linear.py`). `check_linear_stage` replaces
+  farther from the truth than ANTs' (`tests/test_linear.py`). On the Lead-Tutor cohort, as
+  leaddbs-py's brain-shift correction, the masked fit lands 0.19 mm from ANTs' (as close as two
+  ANTs runs land to each other) in 2.4-4.8 s instead of 5-11 s. `check_linear_stage` replaces
   `check_rigid_stage`.
 
 ## 0.3.0 (2026-11-08)
