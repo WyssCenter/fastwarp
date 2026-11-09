@@ -126,9 +126,18 @@ impl Recipe {
     }
 }
 
-/// One `Rigid` stage: the cohort's, with the fields `d` names replaced, checked like a recipe.
-pub fn rigid_stage(d: Option<&Bound<'_, PyDict>>) -> PyResult<LinearRecipe> {
-    let mut stage = LinearRecipe::cohort_rigid();
+/// One `Rigid` (`transform = "rigid"`) or `Affine` (`"affine"`) stage: the cohort's, with the
+/// fields `d` names replaced, checked like a recipe.
+pub fn linear_stage(d: Option<&Bound<'_, PyDict>>, transform: &str) -> PyResult<LinearRecipe> {
+    let mut stage = match transform {
+        "rigid" => LinearRecipe::cohort_rigid(),
+        "affine" => LinearRecipe::cohort_affine(),
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "transform must be 'rigid' or 'affine', not {other:?}"
+            )))
+        }
+    };
     if let Some(d) = d {
         linear_from(d, &mut stage, "stage")?;
     }
@@ -136,8 +145,8 @@ pub fn rigid_stage(d: Option<&Bound<'_, PyDict>>) -> PyResult<LinearRecipe> {
     Ok(stage)
 }
 
-/// The rigid stage as the dict [`rigid_stage`] reads.
-pub fn rigid_stage_dict<'py>(
+/// The stage as the dict [`linear_stage`] reads.
+pub fn linear_stage_dict<'py>(
     py: Python<'py>,
     stage: &LinearRecipe,
 ) -> PyResult<Bound<'py, PyDict>> {

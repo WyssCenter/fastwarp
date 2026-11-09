@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+- `linear_session` / `LinearSession` (was `rigid_session` / `RigidSession`, still available under
+  those names): a fit can be an `Affine` stage (`register(transform="affine")`), started as the
+  identity centred on `initial`, as ANTs centres a stage after its initial transform, and can
+  bring its own fixed mask (`register(mask=...)`), for a template alignment (rigid, then affine)
+  and a brain-shift refinement (an affine fit restricted to a subcortical region). Against ANTs on
+  phantoms: an affine fit from the centres of mass within 0.5 mm of ANTs', a masked one no
+  farther from the truth than ANTs' (`tests/test_linear.py`). `check_linear_stage` replaces
+  `check_rigid_stage`.
+
 ## 0.3.0 (2026-11-08)
 
 - `rigid_session` / `RigidSession` and `register_rigid`: rigid registration on the GPU (one

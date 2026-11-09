@@ -13,7 +13,7 @@ use std::time::Instant;
 
 mod post;
 mod recipe;
-mod rigid;
+mod session;
 
 use dbsloc_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
 use dbsloc_reg::init::{initial_transform, InitFeature};
@@ -435,14 +435,15 @@ fn apply_transforms<'py>(
     Ok(PyArray1::from_vec(py, out))
 }
 
-/// Rigid fits of one image pair on the GPU (one `Rigid` stage on Mattes MI with regular
-/// sampling per fit). The images are converted, winsorized (`(lower, upper)` quantiles, rescaled
-/// to [0, 1] as ANTs does) and uploaded once; smoothed copies are kept between fits, so a
-/// multi-start pays the preparation once. `fixed_mask`: its non-zero voxels are where the metric
-/// samples, in fits that ask for it. Holds the GPU until `close()` (or the `with` block ends).
+/// Linear fits of one image pair on the GPU (one `Rigid` or `Affine` stage on Mattes MI with
+/// regular sampling per fit). The images are converted, winsorized (`(lower, upper)` quantiles,
+/// rescaled to [0, 1] as ANTs does) and uploaded once; smoothed copies are kept between fits, so
+/// a multi-start, or a rigid fit followed by an affine one, pays the preparation once.
+/// `fixed_mask`: its non-zero voxels are where the metric samples, in fits that ask for it (a fit
+/// can bring its own mask instead). Holds the GPU until `close()` (or the `with` block ends).
 #[pyclass(module = "dbsloc_gpureg", frozen)]
-struct RigidSession {
-    inner: Mutex<Option<rigid::Session>>,
+struct LinearSession {
+    inner: Mutex<Option<session::Session>>,
     com: AffineTransform,
     adapter: String,
 }
@@ -452,7 +453,7 @@ fn closed() -> PyErr {
 }
 
 #[pymethods]
-impl RigidSession {
+impl LinearSession {
     #[new]
     #[pyo3(signature = (fixed, moving, fixed_mask=None, winsorize=None, adapter=None))]
     fn new(
@@ -489,7 +490,7 @@ impl RigidSession {
                     None => (fixed, moving),
                 };
                 let name = adapter_name(&gpu);
-                let session = rigid::Session {
+                let session = session::Session {
                     gpu,
                     fixed,
                     moving,
@@ -520,11 +521,17 @@ impl RigidSession {
 
     /// One fit from `initial` (`(parameters, center)` of an ITK affine mapping fixed points to
     /// moving ones; `None` = centres of intensity mass), with `stage`'s schedule (the fields of
-    /// `cohort_recipe()['rigid']`). Writes `<out_prefix>0GenericAffine.mat` when given. Returns
-    /// the collapsed affine (`parameters`, `center`), the final MI value (`metric`, lower is
-    /// better; `None` when the last level ran no iteration), the start, iterations per level and
-    /// the time. The GIL is released while it runs.
-    #[pyo3(signature = (stage=None, initial=None, use_mask=true, out_prefix=None, cancel=None))]
+    /// `cohort_recipe()['rigid']`) and `transform` `"rigid"` or `"affine"`. With `use_mask` the
+    /// metric samples only inside `mask` (an image on any grid; `None` = the session's
+    /// `fixed_mask`). Writes `<out_prefix>0GenericAffine.mat` when given. Returns the collapsed
+    /// affine (`parameters`, `center`), the final MI value (`metric`, lower is better; `None` when
+    /// the last level ran no iteration), the start, iterations per level and the time. The GIL is
+    /// released while it runs.
+    #[pyo3(signature = (
+        stage=None, initial=None, use_mask=true, out_prefix=None, cancel=None,
+        transform="rigid", mask=None
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn register<'py>(
         &self,
         py: Python<'py>,
@@ -533,9 +540,19 @@ impl RigidSession {
         use_mask: bool,
         out_prefix: Option<PathBuf>,
         cancel: Option<PyRef<'py, CancelToken>>,
+        transform: &str,
+        mask: Option<ImageArgs<'py>>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let recipe = recipe::rigid_stage(stage.as_ref())?;
-        let stage_out = recipe::rigid_stage_dict(py, &recipe)?;
+        let recipe = recipe::linear_stage(stage.as_ref(), transform)?;
+        let stage_out = recipe::linear_stage_dict(py, &recipe)?;
+        if mask.is_some() && !use_mask {
+            return Err(PyValueError::new_err(
+                "a mask was given with use_mask=False; pass one or the other",
+            ));
+        }
+        let call_mask = mask
+            .map(|m| to_volume(&m).map(MaskVolume::from_volume))
+            .transpose()?;
         let start = match initial {
             Some((params, center)) => AffineTransform::from_parameters(&params, &center)
                 .map_err(|e| PyValueError::new_err(format!("bad initial transform: {e}")))?,
@@ -561,8 +578,13 @@ impl RigidSession {
         let t = Instant::now();
         let (session, fit) = py.detach(move || {
             let fit = guarded(|| {
+                let mask = match (use_mask, call_mask) {
+                    (false, _) => None,
+                    (true, Some(m)) => Some(m),
+                    (true, None) => session.mask.clone(),
+                };
                 session
-                    .fit(&recipe, start, use_mask, flag.as_deref())
+                    .fit(&recipe, start, mask, flag.as_deref())
                     .map_err(reg_err)
             });
             (session, fit)
@@ -582,6 +604,7 @@ impl RigidSession {
         d.set_item("metric", fit.metric)?;
         d.set_item("iterations", fit.iterations)?;
         d.set_item("total_s", t.elapsed().as_secs_f64())?;
+        d.set_item("transform", transform)?;
         d.set_item("stage", stage_out)?;
         Ok(d)
     }
@@ -607,15 +630,17 @@ impl RigidSession {
     }
 }
 
-/// `stage` checked as `RigidSession.register` checks it (unknown keys, types, level counts, the
-/// GPU's 32 MI bins), returned complete; raises `ValueError` without touching the GPU.
+/// `stage` checked as `LinearSession.register` checks it for `transform` (unknown keys, types,
+/// level counts, the GPU's 32 MI bins), returned complete; raises `ValueError` without touching
+/// the GPU.
 #[pyfunction]
-#[pyo3(signature = (stage=None))]
-fn check_rigid_stage<'py>(
+#[pyo3(signature = (stage=None, transform="rigid"))]
+fn check_linear_stage<'py>(
     py: Python<'py>,
     stage: Option<Bound<'py, PyDict>>,
+    transform: &str,
 ) -> PyResult<Bound<'py, PyDict>> {
-    recipe::rigid_stage_dict(py, &recipe::rigid_stage(stage.as_ref())?)
+    recipe::linear_stage_dict(py, &recipe::linear_stage(stage.as_ref(), transform)?)
 }
 
 /// The dbs-localizer cohort recipe for 1 or 2 channels, in the form `register_syn(recipe=...)`
@@ -638,8 +663,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;
-    m.add_class::<RigidSession>()?;
-    m.add_function(wrap_pyfunction!(check_rigid_stage, m)?)?;
+    m.add_class::<LinearSession>()?;
+    m.add_function(wrap_pyfunction!(check_linear_stage, m)?)?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;
