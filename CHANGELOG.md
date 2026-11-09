@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0 (2026-11-09)
 
 - `linear_session` / `LinearSession` (was `rigid_session` / `RigidSession`, still available under
   those names): a fit can be an `Affine` stage (`register(transform="affine")`), started as the
