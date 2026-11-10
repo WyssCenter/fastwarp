@@ -18,6 +18,14 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
+[dependency-groups]
+dev = ["maturin>=1.9,<2", "pytest", "ruff"]
+ants = ["antspyx>=0.6.1"]
+
+[tool.uv]
+environments = ["python_full_version >= '3.12' and python_full_version < '3.15'"]
+constraint-dependencies = ["scipy>=1.15"]
+
 [tool.maturin]
 manifest-path = "crates/dbsloc-gpureg-py/Cargo.toml"
 python-source = "python"
