@@ -13,6 +13,11 @@
 - Licence labels in REUSE form: an SPDX header in every source file, `REUSE.toml` for the rest,
   `LICENSES/Apache-2.0.txt`; `NOTICE` carries the ITK notice; `THIRD_PARTY_PORTS.md` moved to
   `docs/`.
+- Development on Python 3.14 (`.python-version`); the CI tests run on 3.13, the newest Python
+  ANTsPy ships wheels for. The lock covers 3.13 and 3.14; the wheel still supports 3.10+.
+- The PyO3 `extension-module` feature is gone (deprecated in PyO3 0.30; maturin >= 1.9.4 sets
+  `PYO3_BUILD_EXTENSION_MODULE` itself), so the binding's Rust unit tests link on Linux and run
+  in CI. `wheels.yml` pins maturin 1.16.0.
 
 ## 0.4.0 (2026-11-09)
 

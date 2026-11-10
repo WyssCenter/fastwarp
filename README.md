@@ -162,14 +162,20 @@ counts, or what the GPU kernels do not support (MI bins other than 32, a CC radi
 The Python tools (maturin, pytest, ruff; ANTsPy in the `ants` group) are locked in `uv.lock`:
 
 ```bash
+export UV_PYTHON=3.13   # ANTsPy has no Python 3.14 wheels yet; see below
 uv sync --locked --no-install-project --group ants
 uv run --no-sync maturin develop --uv --release && uv run --no-sync pytest   # Python tests (skip without a GPU)
-cargo nextest run --locked --workspace --exclude dbsloc-gpureg-py --features dbsloc-gpu/dev-tools
+PYO3_PYTHON=.venv/bin/python cargo nextest run --locked --workspace --features dbsloc-gpu/dev-tools   # Windows: .venv/Scripts/python.exe
 cargo clippy --locked --workspace --all-targets --features dbsloc-gpu/dev-tools -- -D warnings
 ```
 
-The lock covers Python 3.12 to 3.14 (`[tool.uv] environments`); the wheel itself supports 3.10
-and later. `constraint-dependencies = ["scipy>=1.15"]` keeps the resolver from trading SciPy
+Development uses Python 3.14 (`.python-version`). ANTsPy, which the comparisons with ANTs need,
+has no 3.14 wheels yet, so work with the `ants` group sets `UV_PYTHON=3.13`, as CI does;
+without it a later `uv sync` rebuilds the environment on 3.14 and drops ANTsPy. The lock covers
+Python 3.13 and 3.14 (`[tool.uv] environments`); the wheel itself supports 3.10 and later.
+`PYO3_PYTHON` is the Python the binding's Rust tests are built against.
+
+`constraint-dependencies = ["scipy>=1.15"]` keeps the resolver from trading SciPy
 down to 1.6 (no wheels, open advisories) for a newer NumPy; drop it once ANTsPy's dependencies
 resolve to a current SciPy without it.
 
