@@ -131,6 +131,7 @@ else:
 | `DBSLOC_GPU_ADAPTER` | pick the adapter whose name contains this text |
 | `DBSLOC_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |
 | `DBSLOC_GPU_MEMORY_BUDGET_MB` | override the memory budget of the capacity check |
+| `DBSLOC_GPU_WAIT_TIMEOUT_S` | seconds to wait for the GPU before failing (default 300) |
 
 The capacity check uses the device memory the graphics API reports, halved on integrated GPUs
 (they share memory with the host, e.g. Apple Silicon).
@@ -158,13 +159,39 @@ counts, or what the GPU kernels do not support (MI bins other than 32, a CC radi
 
 ## Development
 
+The Python tools (maturin, pytest, ruff; ANTsPy in the `ants` group) are locked in `uv.lock`:
+
 ```bash
-maturin develop --release && pytest            # Python tests (skip without a GPU)
-cargo nextest run --workspace --exclude dbsloc-gpureg-py --features dbsloc-gpu/dev-tools
+uv sync --locked --no-install-project --group ants
+uv run --no-sync maturin develop --release && uv run --no-sync pytest   # Python tests (skip without a GPU)
+cargo nextest run --locked --workspace --exclude dbsloc-gpureg-py --features dbsloc-gpu/dev-tools
+cargo clippy --locked --workspace --all-targets --features dbsloc-gpu/dev-tools -- -D warnings
 ```
 
-CI (`ci.yml`) runs both on Linux with Mesa's software Vulkan driver. `wheels.yml` builds all
-wheels on a `v*` tag (and creates the GitHub release) or by hand (`gh workflow run wheels`).
+The lock covers Python 3.12 to 3.14 (`[tool.uv] environments`); the wheel itself supports 3.10
+and later. `constraint-dependencies = ["scipy>=1.15"]` keeps the resolver from trading SciPy
+down to 1.6 (no wheels, open advisories) for a newer NumPy; drop it once ANTsPy's dependencies
+resolve to a current SciPy without it.
+
+Test variables:
+
+| Variable | Effect |
+| --- | --- |
+| `DBSLOC_GPU_REQUIRE_ADAPTER=1` | a missing GPU adapter fails the Rust and Python GPU tests instead of skipping them |
+| `DBSLOC_REQUIRE_ANTSPY=1` | ANTsPy failing to import fails the Python tests instead of skipping the comparisons with ANTs |
+| `WGPU_FORCE_FALLBACK_ADAPTER=1` | select software adapters only (with `DBSLOC_GPU_ALLOW_SOFTWARE=1`) |
+| `DBSLOC_ATLAS_INDEX_MAT` | path to an atlas index `.mat` for a `dbsloc-matfile` test; unset skips it, a missing file fails it |
+| `DBSLOC_UIPREFS_DIR` | folder of real `.mat` files for an `#[ignore]`d `dbsloc-matfile` test |
+| `DBSLOC_REG_AB_DIR` | folder of a real subject (ANTs outputs) for the `#[ignore]`d A/B tests in `dbsloc-gpu` |
+| `DBSLOC_REG_PROTO_DIR` | folder of prototype composite transforms for a `dbsloc-reg` test; unset skips it |
+| `DBSLOC_REG_ANTS_COMPOSITE` | path of a real ANTs composite `.h5` for a `dbsloc-reg` test; unset skips it |
+| `DBSLOC_GPU_BENCH` | enables the `#[ignore]`d GPU benchmarks in `syn_bench` |
+
+CI (`ci.yml`) runs the Rust and Python tests on Linux with Mesa's software Vulkan driver, and
+fails when the adapter or ANTsPy is missing. `audit.yml` runs `cargo deny` and `uv audit` when a
+lockfile or manifest changes and weekly; Dependabot opens one combined monthly PR. `wheels.yml`
+builds all wheels on a `v*` tag (and creates the GitHub release) or by hand
+(`gh workflow run wheels`).
 Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes it from there), add a `CHANGELOG.md` section, tag `v<version>`.
 
 ## Source and credit
