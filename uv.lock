@@ -6,14 +6,11 @@ resolution-markers = [
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 supported-markers = [
-    "python_full_version >= '3.12' and python_full_version < '3.15'",
+    "python_full_version >= '3.13' and python_full_version < '3.15'",
 ]
 
 [manifest]
@@ -357,7 +354,7 @@ requires-dist = [{ name = "numpy" }]
 [package.metadata.requires-dev]
 ants = [{ name = "antspyx", specifier = ">=0.6.1" }]
 dev = [
-    { name = "maturin", specifier = ">=1.9,<2" },
+    { name = "maturin", specifier = ">=1.9.4,<2" },
     { name = "pytest" },
     { name = "ruff" },
 ]

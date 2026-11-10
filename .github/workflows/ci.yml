@@ -48,6 +48,7 @@ jobs:
       DBSLOC_GPU_ALLOW_SOFTWARE: "1"
       DBSLOC_GPU_REQUIRE_ADAPTER: "1"
       DBSLOC_REQUIRE_ANTSPY: "1"
+      UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Mesa Vulkan software driver (lavapipe)
@@ -60,16 +61,16 @@ jobs:
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-nextest@0.9.150
-      - name: Rust tests (engine crates)
-        run: >-
-          cargo nextest run --locked --workspace --exclude dbsloc-gpureg-py
-          --features dbsloc-gpu/dev-tools --profile ci
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.13.7"
+      - run: uv sync --locked --no-install-project --group ants
+      - name: Rust tests (engine crates and the Python binding)
+        run: |
+          export PYO3_PYTHON="$PWD/.venv/bin/python"
+          cargo nextest run --locked --workspace --features dbsloc-gpu/dev-tools --profile ci
       - name: Build and install the wheel
         run: |
-          uv sync --locked --no-install-project --group ants
           uv run --no-sync maturin build --locked --release -o dist
           uv pip install --no-deps dist/*.whl
       - name: Python tests

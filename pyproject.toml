@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.9,<2"]
+requires = ["maturin>=1.9.4,<2"]
 build-backend = "maturin"
 
 [project]
@@ -19,18 +19,17 @@ classifiers = [
 ]
 
 [dependency-groups]
-dev = ["maturin>=1.9,<2", "pytest", "ruff"]
+dev = ["maturin>=1.9.4,<2", "pytest", "ruff"]
 ants = ["antspyx>=0.6.1"]
 
 [tool.uv]
-environments = ["python_full_version >= '3.12' and python_full_version < '3.15'"]
+environments = ["python_full_version >= '3.13' and python_full_version < '3.15'"]
 constraint-dependencies = ["scipy>=1.15"]
 
 [tool.maturin]
 manifest-path = "crates/dbsloc-gpureg-py/Cargo.toml"
 python-source = "python"
 module-name = "dbsloc_gpureg._core"
-features = ["pyo3/extension-module"]
 
 [tool.ruff]
 line-length = 100
