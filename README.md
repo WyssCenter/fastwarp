@@ -163,7 +163,7 @@ The Python tools (maturin, pytest, ruff; ANTsPy in the `ants` group) are locked 
 
 ```bash
 uv sync --locked --no-install-project --group ants
-uv run --no-sync maturin develop --release && uv run --no-sync pytest   # Python tests (skip without a GPU)
+uv run --no-sync maturin develop --uv --release && uv run --no-sync pytest   # Python tests (skip without a GPU)
 cargo nextest run --locked --workspace --exclude dbsloc-gpureg-py --features dbsloc-gpu/dev-tools
 cargo clippy --locked --workspace --all-targets --features dbsloc-gpu/dev-tools -- -D warnings
 ```
@@ -187,8 +187,21 @@ Test variables:
 | `DBSLOC_REG_ANTS_COMPOSITE` | path of a real ANTs composite `.h5` for a `dbsloc-reg` test; unset skips it |
 | `DBSLOC_GPU_BENCH` | enables the `#[ignore]`d GPU benchmarks in `syn_bench` |
 
+The Rust tests that compare the engine with the real ANTs programs (`antsRegistration`,
+`antsApplyTransforms`, `N4BiasFieldCorrection`) are `#[ignore]`d. Run them with
+`DBSLOC_ANTS_DIR` set to the folder holding ANTs 2.6.5; unset, they skip, and a folder without
+the program fails them:
+
+```bash
+DBSLOC_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p dbsloc-reg --run-ignored only \
+  -E 'binary_id(dbsloc-reg::ants_compat) | binary_id(dbsloc-reg::coreg_metric) | binary_id(dbsloc-reg::n4_ants)'
+```
+
 CI (`ci.yml`) runs the Rust and Python tests on Linux with Mesa's software Vulkan driver, and
-fails when the adapter or ANTsPy is missing. `audit.yml` runs `cargo deny` and `uv audit` when a
+fails when the adapter or ANTsPy is missing. `full.yml` runs the ANTs comparison tests on
+non-draft PRs, nightly when main moved and by hand, with the three programs from the official
+ANTs 2.6.5 Ubuntu 24.04 release, checked against the SHA256 sums in
+`.github/ants-2.6.5-ubuntu-24.04.sha256` and cached. `audit.yml` runs `cargo deny` and `uv audit` when a
 lockfile or manifest changes and weekly; Dependabot opens one combined monthly PR. `wheels.yml`
 builds all wheels on a `v*` tag (and creates the GitHub release) or by hand
 (`gh workflow run wheels`).
