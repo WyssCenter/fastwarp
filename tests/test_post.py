@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
 """compose_field / apply_transforms against ANTs (antsApplyTransforms through ANTsPy).
 
 The affine tests need no GPU, so they also run on the wheel jobs; the composite tests use a

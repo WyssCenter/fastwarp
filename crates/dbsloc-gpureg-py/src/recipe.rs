@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! The registration recipe as a Python dict: `{"rigid": {...}, "affine": {...}, "syn": {...}}`,
 //! each field of [`LinearRecipe`] / [`SynRecipe`] under its own name. A missing stage or field
 //! keeps the dbs-localizer cohort value, an unknown one is an error, so a caller (leaddbs-py) can

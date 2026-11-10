@@ -1,3 +1,9 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: ANTs developers
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //
@@ -17,7 +23,7 @@
 // `LanczosWindowFunction`, the weight table indexed from offset `1 - VRadius` and the exact-grid
 // special case) as `antsApplyTransforms -n LanczosWindowedSinc` runs it, taps outside the image
 // reading zero (measured against ANTsPy's antsApplyTransforms), and from `antsApplyTransforms --compose` (the displacement
-// `T(x) - x` sampled at every reference voxel). See `THIRD_PARTY_PORTS.md`.
+// `T(x) - x` sampled at every reference voxel). See `docs/THIRD_PARTY_PORTS.md`.
 
 //! What a caller does with the transforms after the registration, in parallel Rust instead of
 //! single-threaded ITK: the composite as a dense displacement field on a reference grid

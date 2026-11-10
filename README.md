@@ -13,7 +13,9 @@ platform for every Python ≥ 3.10. Outputs are ANTs files (`Composite.h5`,
 `InverseComposite.h5`, `0GenericAffine.mat`) that ANTsPy and `antsApplyTransforms` read as is.
 
 Licence: [Apache-2.0](LICENSE). The files ported from ANTs/ITK carry their Apache-2.0 notices
-(`NOTICE`, `THIRD_PARTY_PORTS.md`). The repository is still private.
+(`NOTICE`, [`docs/THIRD_PARTY_PORTS.md`](docs/THIRD_PARTY_PORTS.md)). Every file states its
+licence in an SPDX header or through `REUSE.toml` ([REUSE](https://reuse.software/)). The
+repository is still private.
 
 ## Speed
 
@@ -167,8 +169,8 @@ Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes 
 
 ## Source and credit
 
-`crates/dbsloc-{core,niftiio,matfile,reg,gpu}` are copies of
-Wyss DBS Localizer (an internal Wyss Center repository) at commit `00faf42`
-(2026-10-26); the only change is the removal of the VAT solver (and its `dbsloc-vat`
-dependency) from `dbsloc-gpu`. `crates/dbsloc-gpureg-py` is the Python binding (PyO3). Please
+`crates/dbsloc-{core,niftiio,matfile,reg,gpu}` are copies of the registration engine of
+Wyss DBS Localizer (an internal Wyss Center repository), taken from its standalone copy
+WyssCenter/fastwarp at commit `90c1df3` (2026-11-10), unchanged apart from the project name
+in the crate `NOTICE` files. `crates/dbsloc-gpureg-py` is the Python binding (PyO3). Please
 cite the engine as in `CITATION.cff`.
