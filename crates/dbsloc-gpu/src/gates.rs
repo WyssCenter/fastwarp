@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Go / no-go classification of plan section 8.4 and the SyN time extrapolation.
 
 use serde::Serialize;

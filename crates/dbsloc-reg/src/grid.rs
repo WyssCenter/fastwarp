@@ -1,8 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Image grids in ITK conventions.
 //!
 //! A [`Grid`] is `(size, spacing, origin, direction)` in ITK's LPS physical space (millimetres):
 //! `p = origin + direction * diag(spacing) * index`. `+x` points to the patient's left, `+y` to
-//! posterior, `+z` to superior. NIfTI and the rest of Wyss DBS Localizer use RAS; [`ras_to_lps`] and
+//! posterior, `+z` to superior. NIfTI and the rest of this repository use RAS; [`ras_to_lps`] and
 //! [`lps_to_ras`] convert at the boundary.
 
 use dbsloc_core::Mat4;

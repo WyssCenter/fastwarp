@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! wgpu compute device layer for the GPU registration engine, plus the WP1 go/no-go probe.
 
 #[cfg(feature = "dev-tools")]

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Operation-level parity of the wgpu backend against the `f64` CPU reference.
 //!
 //! The same checks run as the known-answer test at device creation (small case) and as the

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! MATLAB Level-5 MAT files (v6 / v7): writer and a reader for the same subset.
 //!
 //! Written from the public MAT-File Level 5 format description: a 128-byte header, then one data

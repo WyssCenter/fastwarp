@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //
@@ -18,7 +23,7 @@
 // `itkMattesMutualInformationImageToImageMetricv4.hxx` (`ComputeResults`: derivative as the sum over
 // joint cells of the Jacobian-weighted PDF derivative times `log(p(f,m) / p_M(m))`) and
 // `itkCentralDifferenceImageFunction.hxx`. The GPU evaluation (fixed-point integer histogram,
-// per-workgroup partials, ratio table, per-sample derivative reduction) is Wyss DBS Localizer' own. See
+// per-workgroup partials, ratio table, per-sample derivative reduction) is this crate's own. See
 // `docs/THIRD_PARTY_PORTS.md`.
 
 //! Mattes mutual information on the GPU for the linear stages (`k_mi_hist`, `k_mi_merge`,

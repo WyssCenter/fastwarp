@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //
@@ -22,7 +27,7 @@
 //! The host keeps the `f64` control-point lattice and runs the histogram sharpening (512-point
 //! FFT); the device runs the B-spline evaluation and the per-control-point gathered fit, the
 //! `log(input) - log(bias)` step, the sharpening table lookup and `input / exp(field)`.
-//! Deviations from `specs/02` are the `f32` kernels and the gather order (both shared with the
+//! The deviations from the ITK / ANTs algorithm are the `f32` kernels and the gather order (both shared with the
 //! CPU reference, which is the parity oracle).
 
 use bytemuck::Pod;

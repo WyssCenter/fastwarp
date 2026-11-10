@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! MATLAB v7.3 reader, re-exported from `dbsloc_matfile`. Character variables of files with
 //! superblock version 2 or 3 (not written by MATLAB) are read through the crate's own HDF5
 //! reader.

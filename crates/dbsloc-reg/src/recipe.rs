@@ -1,10 +1,12 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! The SyN stage of the cohort `antsRegistration` recipe as data.
 //!
-//! [`SynRecipe`] holds the parameters of the `--transform SyN[...]` stage that
-//! `dbsloc-pipeline` (`ants_argv.rs`: `build_ants_syn_argv`, `build_ants_syn_multispectral_argv`)
-//! passes to ANTs, so the in-process engine runs exactly what the cohort is scored with.
-//! [`SynRecipe::to_ants_args`] renders the stage back to the argument strings; a pipeline-side
-//! test can compare them with the builder output.
+//! [`SynRecipe`] holds the parameters of the `--transform SyN[...]` stage that the
+//! cohort pipeline passes to ANTs, so the in-process engine runs exactly the same recipe.
+//! [`SynRecipe::to_ants_args`] renders the stage back to the argument strings; a test can compare them with the
+//! argument list a caller builds.
 
 use crate::error::{invalid, Result};
 use crate::pyramid::SigmaUnits;

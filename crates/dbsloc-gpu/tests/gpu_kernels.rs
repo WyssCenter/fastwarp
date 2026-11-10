@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
 
 use dbsloc_gpu::parity::{check_mi, check_mi_chunked, Case};
 use dbsloc_gpu::probe::{ProbeOptions, Probes, Tolerances};

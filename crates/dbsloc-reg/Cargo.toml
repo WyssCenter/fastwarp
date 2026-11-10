@@ -1,9 +1,10 @@
 [package]
 name = "dbsloc-reg"
 version.workspace = true
-license.workspace = true
+publish = false
 edition = "2021"
 description = "Wyss DBS Localizer registration engine: grids, volumes, ITK-compatible transform I/O and point mapping (CPU)"
+license = "Apache-2.0"
 
 [lib]
 name = "dbsloc_reg"
@@ -13,10 +14,10 @@ path = "src/lib.rs"
 dbsloc-core = { path = "../dbsloc-core", features = ["nifti"] }
 dbsloc-niftiio = { path = "../dbsloc-niftiio" }
 dbsloc-matfile = { path = "../dbsloc-matfile" }
-nifti = "0.17"
-ndarray = "0.16"
-thiserror = "1.0"
-miniz_oxide = "0.8"
+nifti = "0.18"
+ndarray = "0.17"
+thiserror = "2"
+miniz_oxide = "0.9"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 rayon = "1.10"
 

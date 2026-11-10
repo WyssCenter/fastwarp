@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Real-subject A/B harness: our SyN outputs against the ANTs outputs of the same stage.
 //!
 //! A subject folder holds `moving_t1_N4.nii.gz`, optionally `moving_t2_in_t1.nii.gz`,
@@ -509,7 +512,7 @@ pub struct AbReport {
     pub points_vs_ants_reader: Vec<PointDiff>,
 }
 
-/// Maps points (RAS) the way `dbsloc-pipeline` `point_warp.rs` does: the chain is evaluated on the
+/// Maps points (RAS) the way the cohort pipeline does: the chain is evaluated on the
 /// integer-millimetre lattice around each point (`f32` coordinates, as the written coordinate
 /// image holds them) and the corner values are interpolated trilinearly.
 pub fn map_ras_pipeline_style(chain: &TransformChain, pts: &[[f64; 3]]) -> Vec<[f64; 3]> {

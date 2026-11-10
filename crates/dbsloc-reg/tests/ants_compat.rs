@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,23 +19,20 @@ use nifti::{IntoNdArray, NiftiHeader, NiftiObject, ReaderOptions};
 
 const TOL_MM: f64 = 1e-3;
 
-fn ants_exe() -> PathBuf {
-    let sub = if cfg!(windows) {
-        "win/antsApplyTransforms.exe"
-    } else if cfg!(target_os = "macos") {
-        "mac/antsApplyTransforms"
+fn ants_exe() -> Option<PathBuf> {
+    let dir = std::env::var_os("DBSLOC_ANTS_DIR")?;
+    let exe = if cfg!(windows) {
+        "antsApplyTransforms.exe"
     } else {
-        "linux/antsApplyTransforms"
+        "antsApplyTransforms"
     };
-    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../resources/ants")
-        .join(sub);
+    let p = Path::new(&dir).join(exe);
     assert!(
         p.is_file(),
-        "bundled antsApplyTransforms missing: {}",
+        "DBSLOC_ANTS_DIR is set but {} is missing",
         p.display()
     );
-    p
+    Some(p)
 }
 
 fn tmp(name: &str) -> PathBuf {
@@ -105,7 +104,7 @@ fn make_probe(dir: &Path) -> Probe {
 
 fn run_ants(probe: &Probe, dir: &Path, tag: &str, tokens: &[String]) -> PathBuf {
     let out = dir.join(format!("out_{tag}.nii.gz"));
-    let mut cmd = Command::new(ants_exe());
+    let mut cmd = Command::new(ants_exe().unwrap());
     cmd.args(["-d", "3", "-e", "3", "-i"])
         .arg(&probe.coords)
         .arg("-r")
@@ -189,8 +188,12 @@ fn t_inv(path: &Path) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "runs the bundled antsApplyTransforms (CI runs it by name; not run locally while the PC is busy)"]
+#[ignore = "runs antsApplyTransforms from DBSLOC_ANTS_DIR; slow, run with --ignored"]
 fn ants_consumes_our_composite_pair_and_map_points_agrees() {
+    let Some(_) = ants_exe() else {
+        eprintln!("skipped: set DBSLOC_ANTS_DIR to the directory holding antsApplyTransforms");
+        return;
+    };
     let dir = tmp("pair");
     let (a, w, iw) = pieces();
     let pair = CompositePair::new(&a, w, iw).unwrap();
@@ -217,8 +220,12 @@ fn ants_consumes_our_composite_pair_and_map_points_agrees() {
 }
 
 #[test]
-#[ignore = "runs the bundled antsApplyTransforms (CI runs it by name; not run locally while the PC is busy)"]
+#[ignore = "runs antsApplyTransforms from DBSLOC_ANTS_DIR; slow, run with --ignored"]
 fn ants_reads_a_collapsed_coregistration_affine_mat() {
+    let Some(_) = ants_exe() else {
+        eprintln!("skipped: set DBSLOC_ANTS_DIR to the directory holding antsApplyTransforms");
+        return;
+    };
     use dbsloc_reg::linalg::IDENTITY3;
     use dbsloc_reg::linear::{run_rigid_registration_from, CpuLinearEngine, LinearRecipe};
     use dbsloc_reg::Volume;
@@ -266,8 +273,12 @@ fn ants_reads_a_collapsed_coregistration_affine_mat() {
 }
 
 #[test]
-#[ignore = "runs the bundled antsApplyTransforms (CI runs it by name; not run locally while the PC is busy)"]
+#[ignore = "runs antsApplyTransforms from DBSLOC_ANTS_DIR; slow, run with --ignored"]
 fn ants_reads_our_mat_affine() {
+    let Some(_) = ants_exe() else {
+        eprintln!("skipped: set DBSLOC_ANTS_DIR to the directory holding antsApplyTransforms");
+        return;
+    };
     let dir = tmp("affine");
     let (a, _, _) = pieces();
     let probe = make_probe(&dir);

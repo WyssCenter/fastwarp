@@ -1,9 +1,12 @@
-//! Pre-flight capacity check for a registration grid (`specs/04` §5.4).
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
+//! Pre-flight capacity check for a registration grid.
 //!
 //! Pure and device-free: given the finest level's grid, the channel count and the device's
-//! binding limit and memory budget, decide whether the level fits before any image is loaded. The
-//! pipeline calls this under `--reg-backend wgpu`/`auto` so a grid that cannot fit falls back to
-//! ANTs (or fails with a remedy) instead of dying at the finest SyN level mid-run.
+//! binding limit and memory budget, decide whether the level fits before any image is loaded. A
+//! caller uses this to fall back to another backend (or fail with a remedy) instead of dying at
+//! the finest SyN level mid-run.
 
 use crate::caps::GpuCaps;
 use crate::device::GpuContext;

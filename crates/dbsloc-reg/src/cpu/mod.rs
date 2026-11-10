@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! The `f64` CPU reference backend.
 //!
 //! Every kernel is data-parallel over voxels with rayon; reductions sum in a fixed chunk order

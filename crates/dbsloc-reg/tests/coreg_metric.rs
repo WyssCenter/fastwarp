@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,17 +35,20 @@ fn last_diagnostic_metric(stdout: &str) -> Option<f64> {
     last
 }
 
-fn ants_registration_exe() -> PathBuf {
-    let sub = if cfg!(windows) {
-        "win/antsRegistration.exe"
-    } else if cfg!(target_os = "macos") {
-        "mac/antsRegistration"
+fn ants_registration_exe() -> Option<PathBuf> {
+    let dir = std::env::var_os("DBSLOC_ANTS_DIR")?;
+    let exe = if cfg!(windows) {
+        "antsRegistration.exe"
     } else {
-        "linux/antsRegistration"
+        "antsRegistration"
     };
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../resources/ants")
-        .join(sub)
+    let p = Path::new(&dir).join(exe);
+    assert!(
+        p.is_file(),
+        "DBSLOC_ANTS_DIR is set but {} is missing",
+        p.display()
+    );
+    Some(p)
 }
 
 fn blob(g: Grid, centre: f64, shift: [f64; 3]) -> Volume<f64> {
@@ -62,14 +67,12 @@ fn blob(g: Grid, centre: f64, shift: [f64; 3]) -> Volume<f64> {
 }
 
 #[test]
-#[ignore = "runs the bundled antsRegistration (CI runs it by name; not run locally while the PC is busy)"]
+#[ignore = "runs antsRegistration from DBSLOC_ANTS_DIR; slow, run with --ignored"]
 fn the_final_metric_matches_the_ants_diagnostic_line() {
-    let exe = ants_registration_exe();
-    assert!(
-        exe.is_file(),
-        "bundled antsRegistration missing: {}",
-        exe.display()
-    );
+    let Some(exe) = ants_registration_exe() else {
+        eprintln!("skipped: set DBSLOC_ANTS_DIR to the directory holding antsRegistration");
+        return;
+    };
     let dir = std::env::temp_dir().join(format!("dbsloc_coreg_metric_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

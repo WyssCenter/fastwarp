@@ -1,9 +1,12 @@
 #![allow(clippy::unwrap_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 use std::collections::HashMap;
 
 use super::*;
 
-const UIPREFS: &[u8] = include_bytes!("../../../dbsloc-reg/tests/data/uiprefs_contiguous.mat");
+const UIPREFS: &[u8] = include_bytes!("../../tests/data/uiprefs_contiguous.mat");
 
 struct Mock {
     values: HashMap<u64, (Option<String>, MatValue)>,

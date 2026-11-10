@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 use std::time::Instant;
 
 use serde::Serialize;
@@ -172,9 +175,9 @@ impl GpuContext {
             Ok(Err(e)) => return Err(GpuError::Readback(e.to_string())),
             Err(e) => return Err(GpuError::Readback(e.to_string())),
         }
-        let data = slice.get_mapped_range().to_vec();
+        let data = slice.get_mapped_range().map(|view| view.to_vec());
         buffer.unmap();
-        Ok(data)
+        data.map_err(|e| GpuError::Readback(e.to_string()))
     }
 
     /// Creates a host-readable staging buffer of `len` bytes for [`Self::read_bytes_staged`].

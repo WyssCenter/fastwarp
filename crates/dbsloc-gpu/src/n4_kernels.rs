@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //

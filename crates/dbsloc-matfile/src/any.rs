@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! One entry point for every MAT file: sniffs the header and returns [`Mat5Value`] trees.
 
 use std::collections::HashSet;

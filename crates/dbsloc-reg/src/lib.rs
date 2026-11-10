@@ -1,4 +1,7 @@
-//! Wyss DBS Localizer registration engine, CPU foundation: image grids and volumes in ITK conventions,
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
+//! Registration engine, CPU foundation: image grids and volumes in ITK conventions,
 //! ITK / ANTs-compatible transform I/O, and point mapping.
 //!
 //! Module map:
