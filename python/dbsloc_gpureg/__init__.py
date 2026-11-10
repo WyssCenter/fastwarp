@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
 """GPU SyN registration from Wyss DBS Localizer (Richard Köhler, Wyss Center), for Python.
 
 The engine is a wgpu port of ANTs/ITK's SyN with the CC and Mattes MI metrics (Vulkan, Metal,

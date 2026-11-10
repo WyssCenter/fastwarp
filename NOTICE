@@ -7,8 +7,20 @@ The registration engine (crates/dbsloc-core, dbsloc-niftiio, dbsloc-matfile, dbs
 dbsloc-gpu) is copied from Wyss DBS Localizer, an internal Wyss Center repository, written by
 Richard Köhler.
 
-Portions of dbsloc-reg and dbsloc-gpu are derived from ANTs (https://github.com/ANTsX/ANTs,
-Copyright the ANTs developers) and the Insight Toolkit (https://itk.org/, Copyright 1999-2019
-Insight Software Consortium, Copyright 2020-present NumFOCUS), both licensed under the Apache
-License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Each derived file carries
-the upstream notice; THIRD_PARTY_PORTS.md lists the upstream files and the changes.
+Portions of dbsloc-reg, dbsloc-gpu and dbsloc-gpureg-py are derived from the Insight Toolkit
+(ITK) v5.4.4 and from ANTs (Advanced Normalization Tools) v2.6.5, both licensed under the
+Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Each derived file
+carries the upstream copyright line and the Apache header and states what was changed;
+docs/THIRD_PARTY_PORTS.md lists the upstream files and the changes.
+
+ITK Software Licenses
+The copyright of the Insight Toolkit (ITK) is held by:
+  Copyright 1999-2019    Insight Software Consortium
+  Copyright 2020-present NumFOCUS
+This software is distributed under the Apache 2.0 License.
+
+ANTs: Copyright the ANTs developers, https://github.com/ANTsX/ANTs,
+licensed under the Apache License, Version 2.0.
+
+dbsloc-gpureg is an independent implementation. It is not affiliated with or
+endorsed by the ITK or ANTs projects.

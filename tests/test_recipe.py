@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
 """register_syn(recipe=...): the schedule as data, checked before any work."""
 
 from __future__ import annotations

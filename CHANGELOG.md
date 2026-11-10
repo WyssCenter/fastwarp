@@ -7,6 +7,12 @@
 - The `Private :: Do Not Upload` classifier is gone, so the wheels can go to PyPI.
 - README timings measured on five GPUs (NVIDIA RTX A4000, Apple M5 Pro, Intel Lunar Lake, AMD
   Radeon Pro 5500 XT, NVIDIA Quadro K620 on Windows).
+- Engine updated to WyssCenter/fastwarp `90c1df3`: wgpu 30, ndarray 0.17, nifti 0.18; the
+  `dbsloc-matfile` tests carry their own data; the ANTs comparison tests read the programs from
+  `DBSLOC_ANTS_DIR`. `ENGINE_SOURCE` is now `"fastwarp 90c1df3"`.
+- Licence labels in REUSE form: an SPDX header in every source file, `REUSE.toml` for the rest,
+  `LICENSES/Apache-2.0.txt`; `NOTICE` carries the ITK notice; `THIRD_PARTY_PORTS.md` moved to
+  `docs/`.
 
 ## 0.4.0 (2026-11-09)
 

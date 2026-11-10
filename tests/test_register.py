@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
 """End-to-end tests on a synthetic phantom (no patient data).
 
 GPU tests skip without a usable adapter; CI runs them on Mesa's lavapipe with

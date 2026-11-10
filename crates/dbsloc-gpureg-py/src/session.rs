@@ -1,3 +1,9 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: ANTs developers
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //
@@ -16,7 +22,7 @@
 // A fit is one stage of dbsloc-reg's `run_linear_chain_cached` (itself after ANTs'
 // `--initial-moving-transform <start> --transform Rigid[...]` or `Affine[...]`: the start in the
 // moving initial composite, a fresh transform optimised on top, both collapsed into one affine),
-// with its smoothing cache kept across calls instead of made per call. See `THIRD_PARTY_PORTS.md`.
+// with its smoothing cache kept across calls instead of made per call. See `docs/THIRD_PARTY_PORTS.md`.
 
 //! Several linear (rigid or affine) fits of one image pair on one device: the images are
 //! converted, winsorized and uploaded once, and their smoothed copies are reused by every fit that

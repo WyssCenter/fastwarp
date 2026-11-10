@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
 """LinearSession: affine fits and per-fit masks (the rigid fits are in test_rigid.py)."""
 
 from __future__ import annotations
