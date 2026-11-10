@@ -1,4 +1,6 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::needless_range_loop)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
 
 use dbsloc_gpu::{BackendSelect, GpuError, WgpuBackend};
 use dbsloc_reg::apply::{apply_chain, Interpolation};

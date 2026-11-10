@@ -1,3 +1,9 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: ANTs developers
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //
@@ -23,9 +29,9 @@
 // shrink factor and the full-resolution reconstruction). See `docs/THIRD_PARTY_PORTS.md`.
 
 //! N4 bias-field correction in `f64` on the CPU: the parity oracle and the fallback of the
-//! in-process preprocess stage (`specs/02` §4.3).
+//! in-process preprocessing step.
 //!
-//! The algorithm reproduces the ANTs CLI defaults Wyss DBS Localizer runs today
+//! The algorithm reproduces the ANTs CLI defaults
 //! (`N4BiasFieldCorrection -d 3 -i <raw anchor> -o <stem>_N4.nii.gz`): all-ones mask, shrink
 //! factor 4, four fitting levels of 50 iterations with convergence threshold 0, cubic B-splines
 //! from one initial mesh element (`[1x1x1]`, 4 control points per axis), histogram sharpening

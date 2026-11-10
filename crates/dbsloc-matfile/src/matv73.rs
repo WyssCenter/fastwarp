@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! MATLAB v7.3 values on top of the HDF5 subset in `h5`.
 //!
-//! MATLAB conventions (`specs/11` §3.1): arrays are column-major, so an HDF5 dataset of shape
+//! MATLAB conventions: arrays are column-major, so an HDF5 dataset of shape
 //! (a, b) is the MATLAB array (b, a); `MATLAB_class` names the class; cells are datasets of
 //! object references into `#refs#`; structs are groups with one member per field (a struct array
 //! stores one reference per element in each field); empty arrays carry `MATLAB_empty = 1`.

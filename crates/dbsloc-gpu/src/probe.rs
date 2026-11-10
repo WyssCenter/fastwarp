@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! The WP1 probes: streaming bandwidth, CC chain, composite gather, dispatch cost, limits.
 
 use std::time::Instant;
@@ -737,8 +740,9 @@ impl<'a> Probes<'a> {
                 Ok(Err(e)) => return Err(GpuError::Readback(e.to_string())),
                 Err(e) => return Err(GpuError::Readback(e.to_string())),
             }
-            let _bytes = slice.get_mapped_range().len();
+            let mapped = slice.get_mapped_range().map(|view| view.len());
             staging.unmap();
+            mapped.map_err(|e| GpuError::Readback(e.to_string()))?;
             if i >= 10 {
                 rb.push(t0.elapsed().as_secs_f64() * 1e6);
             }

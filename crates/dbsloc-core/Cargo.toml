@@ -1,9 +1,10 @@
 [package]
 name = "dbsloc-core"
 version.workspace = true
-license.workspace = true
+publish = false
 edition = "2021"
 description = "Shared math (affine, vectors) for Wyss DBS Localizer Rust crates"
+license = "Apache-2.0"
 
 [lib]
 name = "dbsloc_core"
@@ -14,7 +15,7 @@ default = []
 nifti = ["dep:nifti"]
 
 [dependencies]
-nifti = { version = "0.17", optional = true }
+nifti = { version = "0.18", optional = true }
 
 [lints.clippy]
 unwrap_used = "warn"

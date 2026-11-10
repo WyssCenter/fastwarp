@@ -14,8 +14,8 @@ crate-type = ["cdylib"]
 dbsloc-reg = { path = "../dbsloc-reg" }
 dbsloc-gpu = { path = "../dbsloc-gpu" }
 dbsloc-niftiio = { path = "../dbsloc-niftiio" }
-ndarray = "0.16"
+ndarray = "0.17"
 pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }
 numpy = "0.30"
 rayon = "1.10"
-wgpu = "29"
+wgpu = "30"

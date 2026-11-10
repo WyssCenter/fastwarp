@@ -1,13 +1,15 @@
 #![allow(clippy::unwrap_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 
 const MODEL: &str = "Boston Scientific Vercise Directed";
-const CONTIGUOUS: &[u8] = include_bytes!("../../../dbsloc-reg/tests/data/uiprefs_contiguous.mat");
-const COMPACT: &[u8] = include_bytes!("../../../dbsloc-reg/tests/data/uiprefs_compact.mat");
-const CHUNKED: &[u8] = include_bytes!("../../../dbsloc-reg/tests/data/uiprefs_chunked.mat");
-const CHUNKED_SHUFFLE: &[u8] =
-    include_bytes!("../../../dbsloc-reg/tests/data/uiprefs_chunked_shuffle.mat");
-const ITK_H5: &[u8] = include_bytes!("../../../dbsloc-reg/tests/data/ctest.h5");
+const CONTIGUOUS: &[u8] = include_bytes!("../../tests/data/uiprefs_contiguous.mat");
+const COMPACT: &[u8] = include_bytes!("../../tests/data/uiprefs_compact.mat");
+const CHUNKED: &[u8] = include_bytes!("../../tests/data/uiprefs_chunked.mat");
+const CHUNKED_SHUFFLE: &[u8] = include_bytes!("../../tests/data/uiprefs_chunked_shuffle.mat");
+const ITK_H5: &[u8] = include_bytes!("../../tests/data/ctest.h5");
 
 fn all() -> [(&'static str, &'static [u8]); 4] {
     [
@@ -103,8 +105,7 @@ fn values_decode_with_their_matlab_class() {
 
 #[test]
 fn a_file_on_disk_reads_like_its_bytes() {
-    let p =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../dbsloc-reg/tests/data/uiprefs_chunked.mat");
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/uiprefs_chunked.mat");
     let f = MatFile::open(&p).unwrap();
     assert_eq!(f.get("elmodel").unwrap().unwrap().as_text(), Some(MODEL));
     assert_eq!(
@@ -247,12 +248,15 @@ fn real_files_match_the_python_reader() {
 }
 
 fn distal_index() -> Option<MatFile> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../resources/atlases/leaddbs/DISTAL Minimal (Ewert 2017)/atlas_index.mat");
-    if !p.is_file() {
-        eprintln!("skipped: {} is absent", p.display());
+    let Some(p) = std::env::var_os("DBSLOC_ATLAS_INDEX_MAT").map(std::path::PathBuf::from) else {
+        eprintln!("skipped: DBSLOC_ATLAS_INDEX_MAT is not set");
         return None;
-    }
+    };
+    assert!(
+        p.is_file(),
+        "DBSLOC_ATLAS_INDEX_MAT is set but {} is not a file",
+        p.display()
+    );
     Some(MatFile::open(&p).unwrap())
 }
 

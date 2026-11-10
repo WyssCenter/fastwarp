@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Transforms and their ITK / ANTs file formats.
 
 pub mod affine;

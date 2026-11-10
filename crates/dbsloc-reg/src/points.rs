@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Point mapping through transform chains.
 //!
 //! A chain maps points of its *output space* to its *input space*, like every ITK transform:
@@ -7,14 +10,13 @@
 //!   chain `antsApplyTransforms -r template -t Composite.h5` evaluates for each template voxel
 //!   to resample a native image into the template.
 //! * `InverseComposite.h5` = `[W^-1, A^-1]` maps **native points to template points**. This is
-//!   the direction of `dbsloc-pipeline`'s `point_warp.rs` (reconstruction contacts, native to
-//!   template): the pipeline resamples a coordinate image through `InverseComposite.h5`, which
+//!   the direction used for electrode contacts (native to template): a pipeline can resample a coordinate image through `InverseComposite.h5`, which
 //!   evaluates exactly that chain at each point, up to interpolation of the coordinate
 //!   image. So mapping *points* needs no extra inversion: pass the composite whose direction is
 //!   the one wanted.
 //!
 //! All functions in LPS millimetres (ITK physical space) except the `_ras` variants, which
-//! convert RAS inputs and outputs the way NIfTI users and `dbsloc-pipeline` hold them.
+//! convert RAS inputs and outputs the way NIfTI users hold them.
 
 use crate::grid::{lps_to_ras, ras_to_lps};
 use crate::linalg::Vec3;
@@ -30,13 +32,13 @@ pub fn map_points_ras(chain: &TransformChain, pts: &[Vec3]) -> Vec<Vec3> {
     pts.iter().map(|p| map_point_ras(chain, *p)).collect()
 }
 
-/// Maps RAS points the way `dbsloc-pipeline` mapped them through `antsApplyTransforms`: the pipeline
+/// Maps RAS points the way a pipeline mapped them through `antsApplyTransforms`: it
 /// resampled a coordinate image (each voxel holding its own coordinates, `f32`) onto an
 /// integer-millimetre lattice through the chain and interpolated the lattice trilinearly at each
 /// point. Linear interpolation of a coordinate image returns the chain's value at the lattice
 /// node, so the lattice nodes around each point (`f32` rounded, as the written image holds them)
 /// are evaluated here directly and blended with the trilinear weights. Agrees with the stored
-/// ANTs-route coordinates to below 1e-6 mm on real data (`docs/gpu_syn_cohort_report.md`).
+/// ANTs-route coordinates to below 1e-6 mm on real data in a cohort comparison.
 pub fn map_points_ras_lattice(chain: &TransformChain, pts: &[Vec3]) -> Vec<Vec3> {
     pts.iter()
         .map(|p| {

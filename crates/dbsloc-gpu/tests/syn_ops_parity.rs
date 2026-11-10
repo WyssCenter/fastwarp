@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
 
 use dbsloc_gpu::parity::{check_all, field, image, Case};
 use dbsloc_gpu::{BackendSelect, GpuError, WgpuBackend};

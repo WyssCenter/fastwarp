@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! CPU references (f64 accumulate) and deterministic phantoms for the probe kernels.
 
 use std::f64::consts::TAU;

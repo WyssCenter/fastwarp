@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! The compute backend a registration loop runs on.
 //!
 //! The loop in `syn` is written once against [`Backend`]; the CPU implementation in `cpu` is the

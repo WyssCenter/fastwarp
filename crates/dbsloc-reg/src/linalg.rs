@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Minimal 3-vector and 3x3 matrix helpers in `f64` (row-major, `m[row][col]`).
 
 /// A 3-vector.

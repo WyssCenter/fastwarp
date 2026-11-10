@@ -1,3 +1,9 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
+// SPDX-FileCopyrightText: ANTs developers
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+//
 // Copyright NumFOCUS (Insight Software Consortium)
 // Copyright 2026 Wyss Center for Bio and Neuroengineering
 //
@@ -167,7 +173,7 @@ pub fn quantile_window(values: &[f64], lower: f32, upper: f32) -> Result<(f64, f
     Ok((f64::from(lo), f64::from(hi)))
 }
 
-/// `PreprocessImage` without histogram matching (every `antsRegistration` recipe of Wyss DBS Localizer passes
+/// `PreprocessImage` without histogram matching (every `antsRegistration` recipe of the cohort pipeline passes
 /// `--use-histogram-matching 0`): linear map of `[lo, hi]` (the quantile window) onto
 /// `[out_min, out_max]`, values outside the window clamped to the output bounds.
 ///
@@ -224,7 +230,7 @@ pub fn preprocess_volume(
 /// so the quantile window is `(0, 1)` and the output range `[0, 1]`. The CT → anchor coreg argv
 /// omits the flag, so this is the preprocessing that stage runs. Histogram matching is off: the
 /// `antsRegistration` CLI initialises `UseHistogramMatching` to false
-/// (`antsRegistrationTemplateHeader.h`) and no Wyss DBS Localizer recipe passes it.
+/// (`antsRegistrationTemplateHeader.h`) and no cohort recipe passes it.
 pub fn preprocess_volume_no_winsorize(vol: &Volume<f64>) -> Result<Volume<f64>> {
     preprocess_volume(vol, 0.0, 1.0, 0.0, 1.0)
 }

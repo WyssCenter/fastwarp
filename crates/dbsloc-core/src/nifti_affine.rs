@@ -1,4 +1,7 @@
-//! NIfTI-1 voxel → world affine (`specs/01` §2, "Voxel → world affine").
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
+//! NIfTI-1 voxel → world affine (sform when set, else qform, else the scaled-diagonal fallback).
 
 use crate::Mat4;
 

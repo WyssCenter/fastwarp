@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! A minimal pure-Rust HDF5 subset, enough for ITK transform files.
 //!
 //! Written from the public HDF5 file-format specification (version 3.0). Not a general HDF5

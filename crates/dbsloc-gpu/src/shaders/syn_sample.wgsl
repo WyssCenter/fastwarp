@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 fn tri(c: vec3<f32>, off: u32, nx: u32, ny: u32, nz: u32) -> f32 {
     let cc = clamp(c, vec3<f32>(0.0), vec3<f32>(f32(nx - 1u), f32(ny - 1u), f32(nz - 1u)));
     let f = floor(cc);

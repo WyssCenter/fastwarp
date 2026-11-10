@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 use std::io::Read;
 
 pub fn inflate_zlib_limited(data: &[u8], limit: usize) -> Result<Vec<u8>, String> {

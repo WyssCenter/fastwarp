@@ -1,9 +1,10 @@
 [package]
 name = "dbsloc-gpu"
 version.workspace = true
-license.workspace = true
+publish = false
 edition = "2021"
 description = "wgpu compute device layer and go/no-go probe for the GPU registration engine"
+license = "Apache-2.0"
 
 [lib]
 name = "dbsloc_gpu"
@@ -38,10 +39,10 @@ path = "tests/ab_real_subject.rs"
 required-features = ["dev-tools"]
 
 [dependencies]
-wgpu = "29"
+wgpu = "30"
 bytemuck = { version = "1.14", features = ["derive"] }
-thiserror = "1.0"
-pollster = "0.4"
+thiserror = "2"
+pollster = "1"
 dbsloc-reg = { path = "../dbsloc-reg" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }

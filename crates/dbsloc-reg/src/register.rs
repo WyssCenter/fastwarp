@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! The production normalize end to end: isotropic registration grid, per-stage intensity
 //! preprocessing, the linear stages ([`register_full`]: centre of mass, `Rigid`, `Affine`),
 //! [`run_syn`], and the ANTs-named outputs.

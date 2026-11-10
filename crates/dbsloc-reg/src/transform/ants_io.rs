@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! ANTs-style transform sets: dispatch by file type and the `Composite.h5` /
 //! `InverseComposite.h5` pair.
 

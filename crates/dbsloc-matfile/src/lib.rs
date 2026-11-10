@@ -1,7 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 //! Reads MATLAB v7.3 `.mat` files (HDF5 behind a 512-byte user block).
 //!
-//! Written from the public HDF5 file-format specification and the MATLAB v7.3 conventions of
-//! `specs/11` §3.1. Supported: superblock versions 0 and 1 (symbol-table groups, version 1 object
+//! Written from the public HDF5 file-format specification and the MATLAB v7.3 conventions
+//! (column-major arrays, `MATLAB_class`, cells as object references). Supported: superblock versions 0 and 1 (symbol-table groups, version 1 object
 //! headers with continuation blocks, local heaps, version 1 group and chunk B-trees), datasets of
 //! any rank with fixed-point, IEEE floating-point and object-reference elements in compact,
 //! contiguous or chunked (deflate / shuffle / Fletcher32) layouts, and the `MATLAB_class` /

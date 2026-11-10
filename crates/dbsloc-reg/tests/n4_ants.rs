@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
 
 //! CPU N4 against the bundled `N4BiasFieldCorrection`. Ignored by default: it runs the ANTs
 //! binary (no data is checked in; the phantom is generated in the test).
@@ -11,23 +13,20 @@ use dbsloc_reg::linalg::IDENTITY3;
 use dbsloc_reg::n4::{run_n4, N4Params};
 use dbsloc_reg::volume::Volume;
 
-fn ants_exe() -> PathBuf {
-    let sub = if cfg!(windows) {
-        "win/N4BiasFieldCorrection.exe"
-    } else if cfg!(target_os = "macos") {
-        "mac/N4BiasFieldCorrection"
+fn ants_exe() -> Option<PathBuf> {
+    let dir = std::env::var_os("DBSLOC_ANTS_DIR")?;
+    let exe = if cfg!(windows) {
+        "N4BiasFieldCorrection.exe"
     } else {
-        "linux/N4BiasFieldCorrection"
+        "N4BiasFieldCorrection"
     };
-    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../resources/ants")
-        .join(sub);
+    let p = Path::new(&dir).join(exe);
     assert!(
         p.is_file(),
-        "bundled N4BiasFieldCorrection missing: {}",
+        "DBSLOC_ANTS_DIR is set but {} is missing",
         p.display()
     );
-    p
+    Some(p)
 }
 
 fn tmp(name: &str) -> PathBuf {
@@ -64,8 +63,12 @@ fn cv(v: &[f64]) -> f64 {
 }
 
 #[test]
-#[ignore = "runs the bundled N4BiasFieldCorrection (CI runs it by name)"]
+#[ignore = "runs N4BiasFieldCorrection from DBSLOC_ANTS_DIR; run with --ignored"]
 fn cpu_n4_agrees_with_bundled_ants() {
+    let Some(_) = ants_exe() else {
+        eprintln!("skipped: set DBSLOC_ANTS_DIR to the directory holding N4BiasFieldCorrection");
+        return;
+    };
     let size = [40usize, 40, 30];
     let spacing = 2.0;
     let origin = [
@@ -87,7 +90,7 @@ fn cpu_n4_agrees_with_bundled_ants() {
     let in_path = dir.join("in.nii.gz");
     let out_path = dir.join("ants.nii.gz");
     input.save_nifti(&in_path).unwrap();
-    let output = Command::new(ants_exe())
+    let output = Command::new(ants_exe().unwrap())
         .args(["-d", "3", "-i"])
         .arg(&in_path)
         .arg("-o")

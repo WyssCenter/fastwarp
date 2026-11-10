@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+// SPDX-License-Identifier: Apache-2.0
+
 use serde::Serialize;
 
 /// Largest single buffer planned at 0.5 mm: the three-plane displacement field
