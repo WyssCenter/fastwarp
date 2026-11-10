@@ -18,6 +18,9 @@
 - The PyO3 `extension-module` feature is gone (deprecated in PyO3 0.30; maturin >= 1.9.4 sets
   `PYO3_BUILD_EXTENSION_MODULE` itself), so the binding's Rust unit tests link on Linux and run
   in CI. `wheels.yml` pins maturin 1.16.0.
+- The idle Vulkan instance that keeps NVIDIA's Linux driver loaded lives in the engine
+  (`dbsloc_gpu::device::new_instance`) instead of the binding, so every user of the engine gets
+  it, not only the Python package; it is created only when Vulkan is among the requested APIs.
 
 ## 0.4.0 (2026-11-09)
 

@@ -143,26 +143,7 @@ fn iso_dims(grid: &Grid, mm: f64) -> [usize; 3] {
     out
 }
 
-/// One idle Vulkan instance kept for the life of the process (no device, no GPU memory).
-///
-/// The engine creates and destroys a Vulkan instance for every device it opens. Each destroy lets
-/// the Vulkan loader unload the driver library, and NVIDIA's (`libGLX_nvidia.so.0`) cannot be
-/// loaded again indefinitely: measured on Linux with driver 580, the 11th instance in a process
-/// gets no `vkCreateInstance` from it ("loader_scanned_icd_add: Could not get 'vkCreateInstance'"),
-/// so the GPU vanishes for every later call -- a cohort run fell back after ten subjects. With
-/// this instance alive the loader and the driver stay loaded and later instances reuse them.
-/// macOS runs Metal, which has no loader.
-#[cfg(not(target_os = "macos"))]
-fn keep_vulkan_loaded() {
-    static KEEP: std::sync::OnceLock<wgpu::Instance> = std::sync::OnceLock::new();
-    KEEP.get_or_init(|| dbsloc_gpu::device::new_instance(wgpu::Backends::VULKAN));
-}
-
-#[cfg(target_os = "macos")]
-fn keep_vulkan_loaded() {}
-
 fn open_gpu(adapter_substring: Option<String>) -> PyResult<WgpuBackend> {
-    keep_vulkan_loaded();
     let mut sel =
         BackendSelect::from_env().map_err(|e| GpuUnavailableError::new_err(e.to_string()))?;
     if adapter_substring.is_some() {

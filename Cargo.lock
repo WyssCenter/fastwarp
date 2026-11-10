@@ -316,7 +316,6 @@ dependencies = [
  "numpy",
  "pyo3",
  "rayon",
- "wgpu",
 ]
 
 [[package]]

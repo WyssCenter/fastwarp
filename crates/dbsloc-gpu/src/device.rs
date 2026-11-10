@@ -146,13 +146,43 @@ impl AdapterRecord {
 }
 
 /// Creates an instance restricted to `backends`.
+///
+/// The first call whose `backends` include Vulkan also creates one idle Vulkan instance that is
+/// kept for the life of the process (no device, no GPU memory), see `keep_vulkan_loaded`.
 pub fn new_instance(backends: wgpu::Backends) -> wgpu::Instance {
+    if backends.contains(wgpu::Backends::VULKAN) {
+        keep_vulkan_loaded();
+    }
+    create_instance(backends)
+}
+
+fn create_instance(backends: wgpu::Backends) -> wgpu::Instance {
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
         flags: wgpu::InstanceFlags::from_env_or_default(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     })
 }
+
+#[cfg(not(target_os = "macos"))]
+static KEEP_VULKAN: std::sync::OnceLock<wgpu::Instance> = std::sync::OnceLock::new();
+
+/// One idle Vulkan instance kept for the life of the process (no device, no GPU memory).
+///
+/// The engine creates and destroys a Vulkan instance for every device it opens. Each destroy lets
+/// the Vulkan loader unload the driver library, and NVIDIA's (`libGLX_nvidia.so.0`) cannot be
+/// loaded again indefinitely: measured on Linux with driver 580, the 11th instance in a process
+/// gets no `vkCreateInstance` from it ("loader_scanned_icd_add: Could not get 'vkCreateInstance'"),
+/// so the GPU vanishes for every later call -- a cohort run fell back after ten subjects. With
+/// this instance alive the loader and the driver stay loaded and later instances reuse them.
+/// macOS runs Metal, which has no loader.
+#[cfg(not(target_os = "macos"))]
+fn keep_vulkan_loaded() {
+    KEEP_VULKAN.get_or_init(|| create_instance(wgpu::Backends::VULKAN));
+}
+
+#[cfg(target_os = "macos")]
+fn keep_vulkan_loaded() {}
 
 /// Lists the adapters of `instance` for `backends`.
 pub fn enumerate(instance: &wgpu::Instance, backends: wgpu::Backends) -> Vec<wgpu::Adapter> {
@@ -509,6 +539,13 @@ fn wait_timeout() -> std::time::Duration {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn new_instance_with_vulkan_keeps_an_idle_vulkan_instance() {
+        drop(new_instance(wgpu::Backends::VULKAN));
+        assert!(KEEP_VULKAN.get().is_some());
+    }
 
     #[test]
     fn gpu_backend_env_is_parsed_and_an_invalid_value_is_an_error() {
