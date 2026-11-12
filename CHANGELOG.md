@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 (2026-11-12)
+
 - First public release, as `fastwarp`. The version restarts at 0.1.0; the internal
   versions before it are listed under *Development versions*.
 - `NOTICE` and `crates/fastwarp-reg/NOTICE` reproduce the BSD-3-Clause notice of the Mersenne
