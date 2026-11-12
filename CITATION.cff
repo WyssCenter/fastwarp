@@ -4,7 +4,12 @@ title: "fastwarp: the GPU registration engine of Wyss DBS Localizer"
 type: software
 authors:
   - family-names: "Köhler"
-    given-names: "Richard"
+    given-names: "Richard M."
+    affiliation: "Wyss Center for Bio and Neuroengineering"
+  - family-names: "Payonk"
+    given-names: "Jan Philipp"
+  - family-names: "Neumann"
+    given-names: "Wolf-Julian"
     affiliation: "Wyss Center for Bio and Neuroengineering"
 version: "0.4.0"
 license: Apache-2.0
