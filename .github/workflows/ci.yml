@@ -1,5 +1,5 @@
 # Every push / PR: lint, Rust tests and the Python tests on Linux (Mesa lavapipe software Vulkan).
-# macOS and Windows build in wheels.yml (tags, manual runs): macOS minutes count 10x on private repos.
+# macOS and Windows build in wheels.yml (tags, manual runs), to keep the per-push checks short.
 name: ci
 
 on:
