@@ -46,7 +46,7 @@ uv run --no-sync pytest -rs
   determinism, ANTs reading the transforms). Most tests need a GPU; the ones that compare with
   ANTs skip when ANTsPy is missing.
 - `test_recipe.py`: the recipe as data, checked before any work.
-- `test_rigid.py`, `test_linear.py`, `test_post.py`: `register_rigid`, affine fits and masks,
+- `test_rigid.py`, `test_linear.py`, `test_post.py`: rigid and affine fits and masks,
   `compose_field` and `apply_transforms`. Each starts with `pytest.importorskip("ants")`, so
   without ANTsPy the whole module is skipped, not just one test. In `test_post.py` the affine
   tests need no GPU; the composite tests do.

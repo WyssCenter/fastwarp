@@ -11,13 +11,14 @@ Affine, SyN on an isotropic grid) and writes ANTs-compatible composite transform
 
 from __future__ import annotations
 
+import warnings
 from importlib.metadata import PackageNotFoundError, version
 
+from . import _api
 from ._api import (
     CITATION,
     INTERPOLATORS,
     LinearSession,
-    RigidSession,
     apply_transforms,
     cohort_recipe,
     compose_field,
@@ -25,9 +26,7 @@ from ._api import (
     gpu_available,
     iso_grid_dims,
     linear_session,
-    register_rigid,
     register_syn,
-    rigid_session,
 )
 from ._core import (
     ENGINE_SOURCE,
@@ -54,7 +53,6 @@ __all__ = [
     "RegistrationCancelled",
     "RegistrationError",
     "LinearSession",
-    "RigidSession",
     "__version__",
     "apply_transforms",
     "cohort_recipe",
@@ -63,8 +61,6 @@ __all__ = [
     "gpu_info",
     "iso_grid_dims",
     "linear_session",
-    "register_rigid",
-    "rigid_session",
     "register_syn",
     "fits_gpu",
 ]
@@ -78,8 +74,8 @@ for _obj in (
     gpu_available,
     iso_grid_dims,
     linear_session,
-    register_rigid,
     register_syn,
+    _api.register_rigid,
 ):
     _obj.__module__ = "fastwarp"
 del _obj
@@ -87,3 +83,24 @@ del _obj
 
 def __dir__() -> list[str]:
     return sorted(__all__)
+
+
+_DEPRECATED = {
+    "RigidSession": ("LinearSession", _api.RigidSession),
+    "rigid_session": ("linear_session", _api.rigid_session),
+    "register_rigid": ("linear_session(...).register()", _api.register_rigid),
+}
+
+
+def __getattr__(name: str):
+    try:
+        replacement, obj = _DEPRECATED[name]
+    except KeyError:
+        raise AttributeError(f"module 'fastwarp' has no attribute {name!r}") from None
+    warnings.warn(
+        f"fastwarp.{name} is deprecated and will be removed in fastwarp 0.3.0; "
+        f"use fastwarp.{replacement}",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return obj

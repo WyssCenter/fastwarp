@@ -27,3 +27,8 @@ def test_private_modules_stay_importable():
     import fastwarp._core
 
     assert fastwarp._api.register_syn is fastwarp.register_syn
+
+
+def test_deprecated_names_are_not_public():
+    for name in ("RigidSession", "rigid_session", "register_rigid"):
+        assert name not in fastwarp.__all__ and name not in dir(fastwarp)
