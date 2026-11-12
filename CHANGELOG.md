@@ -56,6 +56,10 @@
   implementations that call the single operations. With two channels, the buffer pool is no
   longer trimmed at every iteration, only once per level, so very large grids stop freeing and
   recreating their reduction buffers every iteration.
+- The GPU capacity check before `register_syn` counts the moving image on its own grid: a moving
+  image with more voxels than the fixed one adds its smoothed copies to the planned memory, and
+  can be the largest storage binding (`plan_capacity_pair`; `plan_capacity` is unchanged for
+  images of equal size).
 
 ## 0.4.0 (2026-11-09)
 

@@ -18,7 +18,7 @@ mod post;
 mod recipe;
 mod session;
 
-use fastwarp_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::{plan_capacity, plan_capacity_pair, BackendSelect, CapacityCaps, WgpuBackend};
 use fastwarp_reg::init::{initial_transform, InitFeature};
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
@@ -226,7 +226,12 @@ fn register_syn<'py>(
             let g = open_gpu(adapter)?;
             let caps = CapacityCaps::from_context(g.context());
             let dims = iso_dims(fixed[0].grid(), iso_mm);
-            plan_capacity(dims, fixed.len(), &caps)
+            let moving_dims = moving
+                .iter()
+                .map(|m| iso_dims(m.grid(), iso_mm))
+                .max_by_key(|d| d.iter().map(|n| *n as u128).product::<u128>())
+                .unwrap_or(dims);
+            plan_capacity_pair(dims, moving_dims, fixed.len(), &caps)
                 .map_err(|e| GpuCapacityError::new_err(format!("{e} (at {iso_mm} mm)")))?;
             let options = SynOptions {
                 cancel: flag.as_deref(),
