@@ -33,6 +33,16 @@
 - The idle Vulkan instance that keeps NVIDIA's Linux driver loaded lives in the engine
   (`fastwarp_gpu::device::new_instance`) instead of the binding, so every user of the engine gets
   it, not only the Python package; it is created only when Vulkan is among the requested APIs.
+- The HDF5 transform reader rejects crafted files that could exhaust memory, take exponential or
+  quadratic time, or panic, with an error instead of aborting the process: datatypes of size 0
+  or of an unsupported class, chunk dimension sizes above 8 bytes, link names or filter
+  parameters that overrun their message, chunk indices that list more chunks than the dataset
+  has or run past the end of the file, chunk B-tree nodes and object
+  header continuation blocks referenced twice, B-tree leaves, continuation blocks or stored
+  chunks that together are larger than the file, and fixed array entries smaller than an
+  address. The dataset size cap is checked before the chunk index is walked, chunks outside the
+  dataset are skipped before they are decompressed, the shuffle element size is capped at the
+  chunk length, and the output buffers are allocated fallibly.
 
 ## 0.4.0 (2026-11-09)
 
