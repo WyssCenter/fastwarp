@@ -13,7 +13,7 @@ authors:
     orcid: "https://orcid.org/0009-0005-8213-8736"
   - family-names: "Neumann"
     given-names: "Wolf-Julian"
-    affiliation: "Wyss Center for Bio and Neuroengineering"
+    affiliation: "Wyss Center for Bio and Neuroengineering; Charité – Universitätsmedizin Berlin"
     orcid: "https://orcid.org/0000-0002-6758-9708"
 version: "0.4.0"
 license: Apache-2.0

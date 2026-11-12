@@ -16,12 +16,14 @@ authors:
     affiliation: 2
   - name: Wolf-Julian Neumann
     orcid: 0000-0002-6758-9708
-    affiliation: 1
+    affiliation: "1, 3"
 affiliations:
   - name: Wyss Center for Bio and Neuroengineering, Geneva, Switzerland
     index: 1
   - name: Institute of General Electrical Engineering, University of Rostock, Rostock, Germany
     index: 2
+  - name: Movement Disorder and Neuromodulation Unit, Department of Neurology, Charité – Universitätsmedizin Berlin, Berlin, Germany
+    index: 3
 date: 1 January 2027 # TODO(author): submission date
 bibliography: paper.bib
 ---
