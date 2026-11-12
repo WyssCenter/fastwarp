@@ -1,5 +1,5 @@
 project = "FastWarp"
-author = "Richard Köhler, Wyss Center for Bio and Neuroengineering"
+author = "Richard Köhler and Jan Philipp Payonk"
 copyright = "2026 Wyss Center for Bio and Neuroengineering"
 
 extensions = [
