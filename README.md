@@ -1,8 +1,8 @@
 # FastWarp
 
 GPU image registration for Python, packaged as a wheel. FastWarp was developed by
-**Richard Köhler** at the Wyss Center for Bio and Neuroengineering as the registration engine of
-Wyss DBS Localizer. It runs a
+**Richard Köhler** (Wyss Center for Bio and Neuroengineering) and **Jan Philipp Payonk**
+(University of Rostock) as the registration engine of Wyss DBS Localizer. It runs a
 full Rigid → Affine → SyN normalization in one call, and rigid or affine fits (coregistration,
 template alignment, brain-shift refinement) in a session that keeps the image pair on the GPU.
 

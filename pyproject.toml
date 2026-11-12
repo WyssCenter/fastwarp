@@ -14,7 +14,6 @@ dependencies = ["numpy"]
 authors = [
     { name = "Richard M. Köhler" },
     { name = "Jan Philipp Payonk" },
-    { name = "Wolf-Julian Neumann" },
 ]
 maintainers = [{ name = "Wyss Center for Bio and Neuroengineering" }]
 keywords = ["image registration", "GPU", "wgpu", "ANTs", "SyN", "neuroimaging", "MRI"]

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 # SPDX-License-Identifier: Apache-2.0
 
-"""FastWarp: GPU SyN registration for Python, developed by Richard Köhler at the Wyss Center
+"""FastWarp: GPU SyN registration for Python, developed by Richard Köhler and Jan Philipp Payonk
 as the registration engine of Wyss DBS Localizer.
 
 The engine is a wgpu port of ANTs/ITK's SyN with the CC and Mattes MI metrics (Vulkan, Metal,
@@ -68,8 +68,8 @@ __all__ = [
 
 #: Citation for the engine, for method logs and reference lists.
 CITATION = (
-    "Köhler R. Wyss DBS Localizer: GPU (wgpu) port of the ANTs SyN registration. "
-    "Wyss Center for Bio and Neuroengineering, Geneva; 2026."
+    "Köhler RM, Payonk JP, Neumann WJ. FastWarp: the GPU registration engine of "
+    "Wyss DBS Localizer. https://github.com/WyssCenter/fastwarp; 2026."
 )
 
 
