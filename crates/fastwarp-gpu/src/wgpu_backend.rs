@@ -222,6 +222,7 @@ pub struct WgpuBackend {
     selftest: Mutex<SelfTestRecord>,
     scalar_staging: Mutex<wgpu::Buffer>,
     partial_staging: Mutex<Option<wgpu::Buffer>>,
+    trimmed_for: Mutex<Option<Grid>>,
 }
 
 fn dir_scaled(g: &Grid) -> Mat3 {
@@ -349,6 +350,7 @@ impl WgpuBackend {
             selftest: Mutex::new(SelfTestRecord::default()),
             scalar_staging: Mutex::new(scalar_staging),
             partial_staging: Mutex::new(None),
+            trimmed_for: Mutex::new(None),
         };
         backend.run_selftest()?;
         Ok(backend)
@@ -481,6 +483,7 @@ impl WgpuBackend {
     /// dropped.
     pub fn release_idle(&self) -> u64 {
         self.taps.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        self.forget_trim();
         self.pool
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -493,6 +496,18 @@ impl WgpuBackend {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .retain_sizes(&[n * 4, n * 12]);
+    }
+
+    fn trim_pool_once_for(&self, grid: &Grid) {
+        let mut trimmed = self.trimmed_for.lock().unwrap_or_else(|p| p.into_inner());
+        if trimmed.as_ref() != Some(grid) {
+            self.trim_pool_for(grid);
+            *trimmed = Some(*grid);
+        }
+    }
+
+    fn forget_trim(&self) {
+        *self.trimmed_for.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
     /// Turns per-operation GPU timing on or off. While on, every operation is submitted alone and
@@ -1233,6 +1248,7 @@ impl Backend for WgpuBackend {
             .queue
             .write_buffer(buf.buffer(), 0, bytemuck::cast_slice(&data));
         self.uploads.fetch_add(1, Ordering::Relaxed);
+        self.forget_trim();
         Ok(GpuImage { buf, grid })
     }
 
@@ -1242,7 +1258,7 @@ impl Backend for WgpuBackend {
             enc.clear_buffer(buf.buffer(), 0, None);
             Ok(())
         })?;
-        self.trim_pool_for(grid);
+        self.trim_pool_once_for(grid);
         Ok(GpuField { buf, grid: *grid })
     }
 
@@ -1260,6 +1276,7 @@ impl Backend for WgpuBackend {
             .queue
             .write_buffer(buf.buffer(), 0, bytemuck::cast_slice(&data));
         self.uploads.fetch_add(1, Ordering::Relaxed);
+        self.forget_trim();
         Ok(GpuField { buf, grid })
     }
 
@@ -1506,6 +1523,7 @@ impl Backend for WgpuBackend {
             )
         })?;
         self.trim_pool_for(grid);
+        self.forget_trim();
         Ok(GpuField {
             buf: out,
             grid: *grid,

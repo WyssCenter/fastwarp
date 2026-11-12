@@ -51,7 +51,9 @@
   320 per iteration), and the iteration waits for the GPU fewer times to read scalars back (4
   instead of 7 with one channel, 5 instead of 12 with two). The `Backend` trait gains
   `cc_value_derivative_pair_with_norms`, `max_scaled_norm_pair` and `invert_pair`, with default
-  implementations that call the single operations.
+  implementations that call the single operations. With two channels, the buffer pool is no
+  longer trimmed at every iteration, only once per level, so very large grids stop freeing and
+  recreating their reduction buffers every iteration.
 
 ## 0.4.0 (2026-11-09)
 

@@ -316,6 +316,53 @@ fn zero_field_is_zero_after_pool_reuse() {
 }
 
 #[test]
+fn zero_field_trims_the_pool_once_per_grid_until_new_data_arrives() {
+    let Some(b) = backend() else { return };
+    let cube = |n: usize| {
+        fastwarp_reg::Grid::new([n; 3], [1.0; 3], [0.0; 3], fastwarp_reg::linalg::IDENTITY3)
+            .unwrap()
+    };
+    let (large, small) = (cube(64), cube(16));
+    let large_field_bytes = 64 * 64 * 64 * 12;
+    let small_field_bytes = 16 * 16 * 16 * 12;
+    let large_field = b.zero_field(&large).unwrap();
+    let _first = b.zero_field(&small).unwrap();
+    drop(b.copy_field(&large_field).unwrap());
+    let with_idle_copy = b.allocated_bytes();
+    let _second = b.zero_field(&small).unwrap();
+    assert_eq!(b.allocated_bytes(), with_idle_copy + small_field_bytes);
+    let _image = b.upload_image(&image(&small, 1, 0.1)).unwrap();
+    let after_upload = b.allocated_bytes();
+    let _third = b.zero_field(&small).unwrap();
+    assert_eq!(
+        b.allocated_bytes(),
+        after_upload - large_field_bytes + small_field_bytes
+    );
+    let resets: [(&str, &dyn Fn()); 3] = [
+        ("resample_field", &|| {
+            drop(b.resample_field(&large_field, &small).unwrap())
+        }),
+        ("upload_field", &|| {
+            drop(b.upload_field(&field(&small, 1.0, 2)).unwrap())
+        }),
+        ("release_idle", &|| {
+            b.release_idle();
+        }),
+    ];
+    for (label, reset) in resets {
+        let _trimmed = b.zero_field(&small).unwrap();
+        reset();
+        drop(b.copy_field(&large_field).unwrap());
+        let with_idle_copy = b.allocated_bytes();
+        let _after_reset = b.zero_field(&small).unwrap();
+        assert!(
+            b.allocated_bytes() + large_field_bytes <= with_idle_copy + small_field_bytes,
+            "{label} did not make zero_field trim again"
+        );
+    }
+}
+
+#[test]
 fn idle_pooled_buffers_are_released_on_request() {
     let Some(b) = backend() else { return };
     let grid = fastwarp_reg::Grid::new(
