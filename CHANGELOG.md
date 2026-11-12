@@ -7,9 +7,11 @@
   https://github.com/WyssCenter/fastwarp. The engine crates are now `fastwarp-core`, `fastwarp-niftiio`,
   `fastwarp-matfile`, `fastwarp-reg` and `fastwarp-gpu` (were `dbsloc-*`), and the developer
   binaries are `fastwarp_gpu_probe`, `fastwarp_reg_syn` and `fastwarp_reg_ab`. Code that imports
-  `dbsloc_gpureg` must import `fastwarp` instead; nothing else in the API changed.
+  `dbsloc_gpureg` must import `fastwarp` instead. The Rust crate names and the environment variable names changed;
+  the Python API is unchanged apart from the import name.
 - The environment variables are `FASTWARP_*` (`FASTWARP_GPU_BACKEND`, `FASTWARP_GPU_ADAPTER`,
-  `FASTWARP_ANTS_DIR`, ...); the former `DBSLOC_*` names are still read when the new one is unset.
+  `FASTWARP_ANTS_DIR`, ...). The former `DBSLOC_*` names are still read when the new name is
+  unset; a new name set to an empty value takes precedence over the old one.
 - `ENGINE_SOURCE` is `"fastwarp-legacy 90c1df3"` (was `"fastwarp 90c1df3"`): the revision belongs
   to the earlier standalone copy of the engine, not to this repository.
 - Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
@@ -19,7 +21,7 @@
   Radeon Pro 5500 XT, NVIDIA Quadro K620 on Windows).
 - Engine updated to revision `90c1df3` of its earlier standalone copy: wgpu 30, ndarray 0.17, nifti 0.18; the
   `fastwarp-matfile` tests carry their own data; the ANTs comparison tests read the programs from
-  `DBSLOC_ANTS_DIR`. `ENGINE_SOURCE` is now `"fastwarp 90c1df3"`.
+  `FASTWARP_ANTS_DIR`. `ENGINE_SOURCE` is now `"fastwarp 90c1df3"`.
 - Licence labels in REUSE form: an SPDX header in every source file, `REUSE.toml` for the rest,
   `LICENSES/Apache-2.0.txt`; `NOTICE` carries the ITK notice; `THIRD_PARTY_PORTS.md` moved to
   `docs/`.

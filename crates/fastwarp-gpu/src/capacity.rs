@@ -242,6 +242,7 @@ mod tests {
 
     #[test]
     fn budget_defaults_to_the_capped_buffer_proxy_minus_the_reserve_and_the_env_overrides_it() {
+        std::env::remove_var("DBSLOC_GPU_MEMORY_BUDGET_MB");
         std::env::remove_var(MEMORY_BUDGET_ENV);
         let small = caps(2 * GIB);
         assert_eq!(CapacityCaps::from_gpu_caps(&small).memory_budget, GIB);
