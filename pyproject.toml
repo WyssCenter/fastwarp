@@ -48,6 +48,11 @@ dev = [
     "ruff>=0.17.3",
 ]
 ants = ["antspyx>=0.6.1"]
+benchmark = [
+    { include-group = "ants" },
+    "matplotlib>=3.9",
+    "scipy>=1.15",
+]
 docs = [
     "furo>=2025.12.19",
     "myst-parser>=5.1.0",
@@ -72,3 +77,4 @@ select = ["E", "F", "I", "UP", "B", "SIM", "W605"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]

@@ -47,8 +47,8 @@ PYO3_PYTHON="$PWD/.venv/bin/python" cargo nextest run --locked --workspace --fea
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --features fastwarp-gpu/dev-tools -- -D warnings
 cargo clippy --locked -p fastwarp-gpu --all-targets -- -D warnings
-uv run --no-sync ruff check python tests
-uv run --no-sync ruff format --check python tests
+uv run --no-sync ruff check python tests benchmarks
+uv run --no-sync ruff format --check python tests benchmarks
 ```
 
 On Windows, `PYO3_PYTHON` is the full path of `.venv/Scripts/python.exe`. Set `FASTWARP_GPU_REQUIRE_ADAPTER=1` and

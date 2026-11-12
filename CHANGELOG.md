@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An accuracy benchmark that reviewers can run (`benchmarks/accuracy`, `docs/benchmarks.md`):
+  FastWarp and ANTs register the same pairs with the same recipe on public data with manual
+  cortical, subcortical and deep-nuclei labels and anatomical fiducials; every download is checked
+  against a pinned SHA-256. A `benchmark` dependency group adds SciPy and Matplotlib (already
+  locked as ANTsPy dependencies). No results yet.
 - README badges: CI, PyPI version, Python versions, licence, documentation.
 - `dir(fastwarp)` lists only the public API (`__all__`); the implementation moved to the private
   module `fastwarp._api`, and the public Python functions report `fastwarp` as their module.
