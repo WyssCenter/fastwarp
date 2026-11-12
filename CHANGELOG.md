@@ -6,7 +6,8 @@
   Twister code from which the sample-point generator derives through ITK.
 - Python 3.11 is the oldest supported version (was 3.10, which has reached its end of life); the
   wheels are `abi3` wheels for Python 3.11 and later, and their smoke test runs on Python 3.11.
-  The package declares `numpy>=2.0`.
+  The package declares `numpy>=2.0`, so NumPy 1.x is no longer accepted; the smoke test also runs
+  on NumPy 2.0.2, the oldest supported version.
 - Renamed from `dbsloc-gpureg` to `fastwarp`: the package and the module are `fastwarp`
   (`import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
   https://github.com/WyssCenter/fastwarp. The engine crates are now `fastwarp-core`, `fastwarp-niftiio`,
@@ -31,7 +32,7 @@
   `LICENSES/Apache-2.0.txt`; `NOTICE` carries the ITK notice; `THIRD_PARTY_PORTS.md` moved to
   `docs/`.
 - Development on Python 3.14 (`.python-version`); the CI tests run on 3.13, the newest Python
-  ANTsPy ships wheels for. The lock covers 3.13 and 3.14; the wheel still supports 3.10+.
+  ANTsPy ships wheels for. The lock covers every supported Python.
 - The PyO3 `extension-module` feature is gone (deprecated in PyO3 0.30; maturin >= 1.9.4 sets
   `PYO3_BUILD_EXTENSION_MODULE` itself), so the binding's Rust unit tests link on Linux and run
   in CI. `wheels.yml` pins maturin 1.16.0.
