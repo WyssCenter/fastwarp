@@ -4,7 +4,7 @@
 
 | Item | Requirement |
 | --- | --- |
-| Python | 3.10 or later. One `abi3` wheel per platform serves every Python from 3.10. |
+| Python | 3.11 or later. One `abi3` wheel per platform serves every Python from 3.11. |
 | Python dependency | `numpy` (the only runtime dependency in `pyproject.toml`). |
 | GPU API | Metal on macOS, Vulkan on Linux and Windows, DX12 on Windows. |
 | Optional | ANTsPy, to read images as `ANTsImage` and to compare with ANTs. |
@@ -35,8 +35,8 @@ adapter, and skip otherwise.
 
 `ci.yml` runs the Rust and Python tests on Linux x86_64 with Python 3.13, on Mesa's lavapipe
 software Vulkan driver. Hardware GPUs are not tested in CI. The hardware in
-[Performance](performance.md) was measured by hand. TODO(author): state which Python versions
-from 3.10 to 3.12 were run by hand, if any; CI covers 3.13 only, and the wheel builds use 3.14.
+[Performance](performance.md) was measured by hand. The release workflow builds the wheels on Python 3.14 and runs their smoke test on Python 3.11,
+the oldest supported version. Python 3.12 is not tested separately.
 
 ## From a release wheel
 

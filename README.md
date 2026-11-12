@@ -10,7 +10,7 @@ The engine is a port of ANTs/ITK's registration (Mattes mutual information and
 cross-correlation metrics, conjugate-gradient linear stages, SyN with Gaussian field
 regularisation and field inversion) to GPU compute shaders via [wgpu](https://wgpu.rs). It runs
 on **Metal** (macOS), **Vulkan** (Linux, Windows) and **DX12** (Windows), from one wheel per
-platform for every Python ≥ 3.10. Outputs are ANTs files (`Composite.h5`,
+platform for every Python ≥ 3.11. Outputs are ANTs files (`Composite.h5`,
 `InverseComposite.h5`, `0GenericAffine.mat`) that ANTsPy and `antsApplyTransforms` read as is.
 
 Licence: [Apache-2.0](LICENSE). The files ported from ANTs/ITK carry their Apache-2.0 notices
@@ -186,7 +186,7 @@ cargo clippy --locked --workspace --all-targets --features fastwarp-gpu/dev-tool
 Development uses Python 3.14 (`.python-version`). ANTsPy, which the comparisons with ANTs need,
 has no 3.14 wheels yet, so work with the `ants` group sets `UV_PYTHON=3.13`, as CI does;
 without it a later `uv sync` rebuilds the environment on 3.14 and drops ANTsPy. The lock covers
-Python 3.13 and 3.14 (`[tool.uv] environments`); the wheel itself supports 3.10 and later.
+every Python the wheel supports, 3.11 and later.
 `PYO3_PYTHON` is the Python the binding's Rust tests are built against.
 
 `constraint-dependencies = ["scipy>=1.15"]` keeps the resolver from trading SciPy
