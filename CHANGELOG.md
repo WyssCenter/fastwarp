@@ -61,7 +61,10 @@
   can be the largest storage binding (`plan_capacity_pair`; `plan_capacity` is unchanged for
   images of equal size). On Vulkan the memory budget starts from the driver's live budget of the
   device-local heap minus what the process already uses (`VK_EXT_memory_budget`,
-  `MemoryFigure::VulkanHeapBudget`) instead of the heap size, when the device reports one.
+  `MemoryFigure::VulkanHeapBudget`) instead of the heap size, when the device reports one. On
+  Metal it starts from the device's `recommendedMaxWorkingSetSize` minus its
+  `currentAllocatedSize` (`MemoryFigure::MetalRecommendedWorkingSet`) instead of the fallback of
+  at most 4 GiB.
 
 ## 0.4.0 (2026-11-09)
 
