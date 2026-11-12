@@ -130,9 +130,16 @@ def test_an_affine_fit_lands_where_ants_does(pair):
     pts = _corners(fixed)
     ants_pts = np.array([ref.apply_to_point(tuple(p)) for p in pts])
     gap = np.max(np.linalg.norm(_apply(gpu["parameters"], gpu["center"], pts) - ants_pts, axis=1))
-    assert gap < 0.5, f"GPU and ANTs affine fits {gap:.2f} mm apart"
+    true = np.array([tx.apply_to_point(tuple(p)) for p in pts])
+    ants_truth = float(np.max(np.linalg.norm(ants_pts - true, axis=1)))
+    gpu_truth = _gap(gpu, tx, pts)
+    seen = f"GPU {gpu_truth:.2f} mm and ANTs {ants_truth:.2f} mm from the truth"
     # ANTs' seeds land 0.3-0.4 mm from the truth here; the GPU 0.17 (Intel) to 0.31 mm (NVIDIA).
-    assert _gap(gpu, tx, pts) < 0.5
+    # ITK's threads sum in any order, so a fixed seed still moves ANTs between runs: CI has seen
+    # the two fits 0.54 and 0.61 mm apart. This bound is a loose parity check; the GPU's own
+    # bound against the truth below is the real test.
+    assert gap < 0.75, f"GPU and ANTs affine fits {gap:.2f} mm apart ({seen})"
+    assert gpu_truth < 0.5, seen
 
 
 @needs_gpu
