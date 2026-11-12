@@ -1,5 +1,11 @@
 # FastWarp
 
+[![CI](https://github.com/WyssCenter/fastwarp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/WyssCenter/fastwarp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/fastwarp)](https://pypi.org/project/fastwarp/)
+[![Python versions](https://img.shields.io/pypi/pyversions/fastwarp)](https://pypi.org/project/fastwarp/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/WyssCenter/fastwarp/blob/main/LICENSE)
+[![Documentation](https://readthedocs.org/projects/fastwarp/badge/?version=latest)](https://fastwarp.readthedocs.io)
+
 GPU image registration for Python, packaged as a wheel. FastWarp was developed by
 **Richard Köhler** (Wyss Center for Bio and Neuroengineering) and **Jan Philipp Payonk**
 (University of Rostock) as the registration engine of Wyss DBS Localizer. It runs a
