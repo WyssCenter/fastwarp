@@ -19,6 +19,16 @@ protection. Add a tag ruleset so that only maintainers can create `v*` tags. Add
 reviewers to the environment if a release should need a manual approval. The first successful
 upload turns the pending publisher into a normal one.
 
+### Trial upload to TestPyPI
+
+TestPyPI is a separate site with its own account. Register a second pending publisher at
+<https://test.pypi.org/manage/account/publishing/> with the same values, except the environment
+name `testpypi`. Then run the workflow by hand on `main` with the box ticked:
+`gh workflow run wheels.yml --ref main -f testpypi=true`. It uploads the version in `Cargo.toml`;
+TestPyPI, like PyPI, refuses a version it already has, so bump the version before a second
+trial. Install the result with
+`pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ fastwarp`.
+
 ## Release steps
 
 1. Set `version` in `Cargo.toml` (`[workspace.package]`); the wheel takes its version from
