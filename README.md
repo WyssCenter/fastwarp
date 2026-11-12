@@ -22,7 +22,7 @@ Documentation: <https://fastwarp.readthedocs.io>
 ## Speed
 
 T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the MNI
-2009b template (0.5 mm), 1 mm registration grid, default recipe, `fastwarp` before 0.1.0; median
+2009b template (0.5 mm), 1 mm registration grid, default recipe, a development build before 0.1.0 (internal version 0.4.0); median
 of three runs, the engine's own `linear_s` / `syn_s` / `total_s` (2026-11-09):
 
 | Hardware | Linear | SyN | Registration total |
@@ -59,12 +59,13 @@ and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS does next)
 
 ## Install
 
-From a release (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):
+From PyPI (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):
 
 ```bash
-gh release download -R WyssCenter/fastwarp -p "*.whl" -D wheels   # the latest release; needs the GitHub CLI
-pip install --find-links wheels fastwarp
+pip install fastwarp
 ```
+
+The same wheels are attached to each [GitHub release](https://github.com/WyssCenter/fastwarp/releases).
 
 From source (needs a Rust toolchain; `rust-toolchain.toml` pins the version):
 

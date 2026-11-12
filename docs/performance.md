@@ -3,7 +3,7 @@
 ## Registration
 
 Data: T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the
-MNI 2009b template (0.5 mm), 1 mm registration grid, default recipe, `fastwarp` before 0.1.0. Each
+MNI 2009b template (0.5 mm), 1 mm registration grid, default recipe, a development build before 0.1.0 (internal version 0.4.0). Each
 figure is the median of three runs of the engine's own `linear_s`, `syn_s` and `total_s`
 (2026-11-09).
 

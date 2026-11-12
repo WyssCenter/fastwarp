@@ -29,12 +29,16 @@ Then run the workflow by hand on `main` with the box ticked:
 TestPyPI, like PyPI, refuses a version it already has, so bump the version before a second
 trial. Install the result with
 `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ fastwarp==<version>`;
-without the version, pip takes the highest version from either site.
+without the version, pip takes the highest version from either site and skips pre-releases.
+
+A release candidate (for example `0.1.0-rc.1` in `Cargo.toml`, `0.1.0rc1` on TestPyPI) goes
+only through this manual run. Never push a tag for it: a tag publishes to PyPI.
 
 ## Release steps
 
 1. Set `version` in `Cargo.toml` (`[workspace.package]`); the wheel takes its version from
-   there. Update `version` in `CITATION.cff` to match.
+   there. Update `version` in `CITATION.cff` to match; while a release candidate is tried on
+   TestPyPI, `CITATION.cff` already names the coming release.
 2. In `CHANGELOG.md`, rename `## Unreleased` to `## <version> (<date>)`. The GitHub release
    notes are the section whose heading starts with the tagged version; the release fails if
    there is none. Add a new `## Unreleased` section with the next change.
