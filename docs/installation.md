@@ -79,8 +79,8 @@ print(fastwarp.gpu_info())
 
 | Variable | Effect |
 | --- | --- |
-| `DBSLOC_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
-| `DBSLOC_GPU_ADAPTER` | pick the adapter whose name contains this text |
-| `DBSLOC_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |
-| `DBSLOC_GPU_MEMORY_BUDGET_MB` | override the memory budget of the capacity check |
-| `DBSLOC_GPU_WAIT_TIMEOUT_S` | seconds to wait for the GPU before failing (default 300) |
+| `FASTWARP_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
+| `FASTWARP_GPU_ADAPTER` | pick the adapter whose name contains this text |
+| `FASTWARP_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |
+| `FASTWARP_GPU_MEMORY_BUDGET_MB` | override the memory budget of the capacity check |
+| `FASTWARP_GPU_WAIT_TIMEOUT_S` | seconds to wait for the GPU before failing (default 300) |

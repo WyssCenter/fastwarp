@@ -14,7 +14,7 @@ VERSION: str
 class GpuUnavailableError(RuntimeError):
     """No usable hardware GPU adapter.
 
-    Software adapters are refused unless DBSLOC_GPU_ALLOW_SOFTWARE=1.
+    Software adapters are refused unless FASTWARP_GPU_ALLOW_SOFTWARE=1.
     """
 
 class GpuCapacityError(RuntimeError):

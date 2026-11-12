@@ -10,7 +10,7 @@ Python tests in `tests/`.
 ```bash
 uv sync --locked --no-install-project --group ants
 PYO3_PYTHON="$PWD/.venv/bin/python" cargo nextest run --locked --workspace \
-  --features dbsloc-gpu/dev-tools --profile ci
+  --features fastwarp-gpu/dev-tools --profile ci
 uv run --no-sync maturin build --locked --release -o dist
 uv pip install --no-deps dist/*.whl
 uv run --no-sync pytest tests -v -rs
@@ -54,49 +54,49 @@ uv run --no-sync pytest -rs
 ## Rust tests
 
 ```bash
-PYO3_PYTHON=.venv/bin/python cargo nextest run --locked --workspace --features dbsloc-gpu/dev-tools
-cargo clippy --locked --workspace --all-targets --features dbsloc-gpu/dev-tools -- -D warnings
+PYO3_PYTHON=.venv/bin/python cargo nextest run --locked --workspace --features fastwarp-gpu/dev-tools
+cargo clippy --locked --workspace --all-targets --features fastwarp-gpu/dev-tools -- -D warnings
 ```
 
 On Windows use `.venv/Scripts/python.exe` for `PYO3_PYTHON`. It is the Python the binding's Rust
 tests are built against. The tests run under [cargo-nextest](https://nexte.st) because each test
-then runs in its own process; the `dbsloc-niftiio` tests share scratch folders by name, which
+then runs in its own process; the `fastwarp-niftiio` tests share scratch folders by name, which
 races under the threads of `cargo test` (`.config/nextest.toml`).
 
 ## Tests that skip without a GPU
 
 The GPU tests, Rust and Python, skip when no usable adapter opens (`pytest.mark.skipif(not
 gpu_available())` in Python), so that the suite runs on a machine without a GPU.
-`DBSLOC_GPU_REQUIRE_ADAPTER=1` makes a missing adapter a failure instead. `DBSLOC_REQUIRE_ANTSPY=1`
+`FASTWARP_GPU_REQUIRE_ADAPTER=1` makes a missing adapter a failure instead. `FASTWARP_REQUIRE_ANTSPY=1`
 does the same for an ANTsPy that does not import.
 
 ## Software GPU runs
 
 On Linux, `ci.yml` installs Mesa's lavapipe software Vulkan driver and sets
-`WGPU_FORCE_FALLBACK_ADAPTER=1`, `DBSLOC_GPU_ALLOW_SOFTWARE=1`, `DBSLOC_GPU_REQUIRE_ADAPTER=1` and
-`DBSLOC_REQUIRE_ANTSPY=1`:
+`WGPU_FORCE_FALLBACK_ADAPTER=1`, `FASTWARP_GPU_ALLOW_SOFTWARE=1`, `FASTWARP_GPU_REQUIRE_ADAPTER=1` and
+`FASTWARP_REQUIRE_ANTSPY=1`:
 
 ```bash
 sudo apt-get install -y mesa-vulkan-drivers
-export WGPU_FORCE_FALLBACK_ADAPTER=1 DBSLOC_GPU_ALLOW_SOFTWARE=1 DBSLOC_GPU_REQUIRE_ADAPTER=1
+export WGPU_FORCE_FALLBACK_ADAPTER=1 FASTWARP_GPU_ALLOW_SOFTWARE=1 FASTWARP_GPU_REQUIRE_ADAPTER=1
 ```
 
 On Windows and macOS, no workflow sets up a software adapter. `wheels.yml` runs the Python
 tests on `windows-latest`, `macos-latest` (arm64) and the Linux runners after installing the
 wheel, with none of these variables, so GPU tests run only if the runner exposes a hardware
 adapter and skip otherwise. The software adapter names in the source are lavapipe and WARP
-(`DBSLOC_GPU_ALLOW_SOFTWARE`). TODO(author): say whether the Windows and macOS runners ran the
+(`FASTWARP_GPU_ALLOW_SOFTWARE`). TODO(author): say whether the Windows and macOS runners ran the
 GPU tests or skipped them; the workflow files do not record it.
 
 ## Tests against the real ANTs programs
 
 The Rust tests that compare the engine with `antsRegistration`, `antsApplyTransforms` and
-`N4BiasFieldCorrection` are `#[ignore]`d. Set `DBSLOC_ANTS_DIR` to the folder that holds the
+`N4BiasFieldCorrection` are `#[ignore]`d. Set `FASTWARP_ANTS_DIR` to the folder that holds the
 three programs of ANTs 2.6.5. Unset, the tests skip; a folder without a program fails them.
 
 ```bash
-DBSLOC_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p dbsloc-reg --run-ignored only \
-  -E 'binary_id(dbsloc-reg::ants_compat) | binary_id(dbsloc-reg::coreg_metric) | binary_id(dbsloc-reg::n4_ants)'
+FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-reg --run-ignored only \
+  -E 'binary_id(fastwarp-reg::ants_compat) | binary_id(fastwarp-reg::coreg_metric) | binary_id(fastwarp-reg::n4_ants)'
 ```
 
 `full.yml` runs them on non-draft pull requests, nightly when main moved and by hand, with the
@@ -107,16 +107,16 @@ programs from the official ANTs 2.6.5 Ubuntu 24.04 release, checked against the 
 
 | Variable | Effect |
 | --- | --- |
-| `DBSLOC_GPU_REQUIRE_ADAPTER=1` | a missing GPU adapter fails the Rust and Python GPU tests instead of skipping them |
-| `DBSLOC_REQUIRE_ANTSPY=1` | ANTsPy failing to import fails the Python tests instead of skipping the comparisons with ANTs |
-| `WGPU_FORCE_FALLBACK_ADAPTER=1` | select software adapters only (with `DBSLOC_GPU_ALLOW_SOFTWARE=1`) |
-| `DBSLOC_ANTS_DIR` | folder with the ANTs 2.6.5 programs for the `#[ignore]`d comparison tests |
-| `DBSLOC_ATLAS_INDEX_MAT` | path to an atlas index `.mat` for a `dbsloc-matfile` test; unset skips it, a missing file fails it |
-| `DBSLOC_UIPREFS_DIR` | folder of real `.mat` files for an `#[ignore]`d `dbsloc-matfile` test |
-| `DBSLOC_REG_AB_DIR` | folder of a real subject (ANTs outputs) for the `#[ignore]`d A/B tests in `dbsloc-gpu` |
-| `DBSLOC_REG_PROTO_DIR` | folder of prototype composite transforms for a `dbsloc-reg` test; unset skips it |
-| `DBSLOC_REG_ANTS_COMPOSITE` | path of a real ANTs composite `.h5` for a `dbsloc-reg` test; unset skips it |
-| `DBSLOC_GPU_BENCH` | enables the `#[ignore]`d GPU benchmarks in `syn_bench` |
+| `FASTWARP_GPU_REQUIRE_ADAPTER=1` | a missing GPU adapter fails the Rust and Python GPU tests instead of skipping them |
+| `FASTWARP_REQUIRE_ANTSPY=1` | ANTsPy failing to import fails the Python tests instead of skipping the comparisons with ANTs |
+| `WGPU_FORCE_FALLBACK_ADAPTER=1` | select software adapters only (with `FASTWARP_GPU_ALLOW_SOFTWARE=1`) |
+| `FASTWARP_ANTS_DIR` | folder with the ANTs 2.6.5 programs for the `#[ignore]`d comparison tests |
+| `FASTWARP_ATLAS_INDEX_MAT` | path to an atlas index `.mat` for a `fastwarp-matfile` test; unset skips it, a missing file fails it |
+| `FASTWARP_UIPREFS_DIR` | folder of real `.mat` files for an `#[ignore]`d `fastwarp-matfile` test |
+| `FASTWARP_REG_AB_DIR` | folder of a real subject (ANTs outputs) for the `#[ignore]`d A/B tests in `fastwarp-gpu` |
+| `FASTWARP_REG_PROTO_DIR` | folder of prototype composite transforms for a `fastwarp-reg` test; unset skips it |
+| `FASTWARP_REG_ANTS_COMPOSITE` | path of a real ANTs composite `.h5` for a `fastwarp-reg` test; unset skips it |
+| `FASTWARP_GPU_BENCH` | enables the `#[ignore]`d GPU benchmarks in `syn_bench` |
 
 ## Other checks
 
