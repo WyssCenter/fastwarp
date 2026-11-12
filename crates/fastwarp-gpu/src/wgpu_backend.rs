@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytemuck::Pod;
-use fastwarp_reg::backend::Backend;
+use fastwarp_reg::backend::{Backend, InversionPair, MetricEvaluation, MetricPair};
 use fastwarp_reg::error::{RegError, Result as RegResult};
 use fastwarp_reg::field_ops::{
     gaussian_operator_coefficients, InvertParams, InvertStats, VectorField,
@@ -732,9 +732,16 @@ impl WgpuBackend {
         Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 
-    fn read_partials(&self, buffer: &wgpu::Buffer, count: usize) -> RegResult<Vec<f32>> {
-        let len = (count * 4) as u64;
+    fn read_sources(&self, sources: &[(&wgpu::Buffer, u64)]) -> RegResult<Vec<u8>> {
+        let len: u64 = sources.iter().map(|(_, bytes)| bytes).sum();
         self.scalar_readbacks.fetch_add(1, Ordering::Relaxed);
+        if len <= SCALAR_STAGING_BYTES {
+            let staging = self
+                .scalar_staging
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            return self.read_sources_staged(sources, len, &staging);
+        }
         let mut staging = self
             .partial_staging
             .lock()
@@ -743,9 +750,30 @@ impl WgpuBackend {
             Some(b) if b.size() >= len => b,
             _ => self.ctx.staging_buffer(len).map_err(gerr)?,
         };
-        let bytes = self.ctx.read_bytes_staged(buffer, 0, len, &buf);
+        let values = self.read_sources_staged(sources, len, &buf);
         *staging = Some(buf);
-        Ok(bytemuck::pod_collect_to_vec(&bytes.map_err(gerr)?))
+        values
+    }
+
+    fn read_sources_staged(
+        &self,
+        sources: &[(&wgpu::Buffer, u64)],
+        len: u64,
+        staging: &wgpu::Buffer,
+    ) -> RegResult<Vec<u8>> {
+        let mut enc = self
+            .ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("fastwarp-gpu readback"),
+            });
+        let mut offset = 0;
+        for (buffer, bytes) in sources {
+            enc.copy_buffer_to_buffer(buffer, 0, staging, offset, *bytes);
+            offset += bytes;
+        }
+        self.ctx.queue.submit(Some(enc.finish()));
+        self.ctx.read_staging(staging, len).map_err(gerr)
     }
 
     fn require_same_grid(&self, what: &str, a: &Grid, b: &Grid) -> RegResult<()> {
@@ -797,37 +825,60 @@ impl WgpuBackend {
         Ok(set)
     }
 
-    fn reduce_field(&self, field: &GpuField, mode: u32, label: &'static str) -> RegResult<f32> {
-        let n = field.grid.num_voxels();
+    fn reduction_partials(&self, grid: &Grid) -> RegResult<PoolBuf> {
+        let groups = self.groups_1d(grid.num_voxels() as u64)?;
+        self.acquire("reduction partials", u64::from(groups[0] * groups[1]) * 4)
+    }
+
+    fn encode_reduce(
+        &self,
+        pass: &mut wgpu::ComputePass<'_>,
+        field: &wgpu::Buffer,
+        grid: &Grid,
+        mode: u32,
+        part: &wgpu::Buffer,
+        scalar: &wgpu::Buffer,
+    ) -> RegResult<()> {
+        let n = grid.num_voxels();
         let groups = self.groups_1d(n as u64)?;
         let count = groups[0] * groups[1];
-        let part = self.acquire("reduction partials", u64::from(count) * 4)?;
+        self.launch(
+            pass,
+            &self.kernels.norm_partial,
+            &[field, part],
+            &NormU {
+                n: n as u32,
+                mode,
+                pad: [0; 2],
+                sp: spacing4(grid),
+            },
+            groups,
+        )?;
+        self.launch(
+            pass,
+            &self.kernels.reduce_scalar,
+            &[part, scalar],
+            &ReduceU {
+                count,
+                mode,
+                out_index: 0,
+                pad: 0,
+            },
+            [1, 1, 1],
+        )
+    }
+
+    fn reduce_field(&self, field: &GpuField, mode: u32, label: &'static str) -> RegResult<f32> {
+        let part = self.reduction_partials(&field.grid)?;
         let scalar = self.acquire("reduction scalar", 16)?;
-        let sp = spacing4(&field.grid);
         self.run_pass(label, |pass| {
-            self.launch(
+            self.encode_reduce(
                 pass,
-                &self.kernels.norm_partial,
-                &[field.buf.buffer(), part.buffer()],
-                &NormU {
-                    n: n as u32,
-                    mode,
-                    pad: [0; 2],
-                    sp,
-                },
-                groups,
-            )?;
-            self.launch(
-                pass,
-                &self.kernels.reduce_scalar,
-                &[part.buffer(), scalar.buffer()],
-                &ReduceU {
-                    count,
-                    mode,
-                    out_index: 0,
-                    pad: 0,
-                },
-                [1, 1, 1],
+                field.buf.buffer(),
+                &field.grid,
+                mode,
+                part.buffer(),
+                scalar.buffer(),
             )
         })?;
         let v = self.read_scalars(scalar.buffer(), 1)?;
@@ -836,14 +887,17 @@ impl WgpuBackend {
 
     /// The CC metric of `(fixed, moving)` and, when `swapped`, of `(moving, fixed)` from the same
     /// window sums: the five sums are symmetric under the swap (`a <-> b`, `aa <-> bb`, `ab`), so
-    /// the second direction only rebinds them. Results are in evaluation order.
+    /// the second direction only rebinds them. Results are in evaluation order; with `norms`, the
+    /// second vector holds the [`Backend::l2_norm`] of each derivative, read back together with
+    /// the metric values.
     fn cc_evaluate(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
         radius: usize,
         swapped: bool,
-    ) -> RegResult<Vec<(f64, GpuField)>> {
+        norms: bool,
+    ) -> RegResult<(Vec<MetricEvaluation<GpuField>>, Vec<f64>)> {
         self.require_same_grid("cc", &fixed.grid, &moving.grid)?;
         if radius == 0 || radius > BOX_RADIUS_MAX as usize {
             return Err(bad(format!(
@@ -882,7 +936,18 @@ impl WgpuBackend {
         for _ in 0..directions {
             outs.push(self.field_buffer(&grid)?);
         }
-        let parts = self.acquire("cc partials", u64::from(count) * directions as u64 * 4)?;
+        let parts_bytes = u64::from(count) * directions as u64 * 4;
+        let parts = self.acquire("cc partials", parts_bytes)?;
+        let reduction = if norms {
+            let part = self.reduction_partials(&grid)?;
+            let mut scalars = Vec::with_capacity(directions);
+            for _ in 0..directions {
+                scalars.push(self.acquire("reduction scalar", 16)?);
+            }
+            Some((part, scalars))
+        } else {
+            None
+        };
         let ifo = index_from_offset(&grid)?;
         let spacing = grid.spacing();
         let mut offsets = [[0.0f32; 4]; 3];
@@ -978,17 +1043,36 @@ impl WgpuBackend {
                     g3,
                 )?;
             }
+            if let Some((part, scalars)) = &reduction {
+                for (out, scalar) in outs.iter().zip(scalars) {
+                    self.encode_reduce(
+                        pass,
+                        out.buffer(),
+                        &grid,
+                        1,
+                        part.buffer(),
+                        scalar.buffer(),
+                    )?;
+                }
+            }
             Ok(())
         })?;
-        let partials = self.read_partials(parts.buffer(), count as usize * directions)?;
-        Ok(outs
+        let mut sources = vec![(parts.buffer(), parts_bytes)];
+        if let Some((_, scalars)) = &reduction {
+            sources.extend(scalars.iter().map(|s| (s.buffer(), 4)));
+        }
+        let values: Vec<f32> = bytemuck::pod_collect_to_vec(&self.read_sources(&sources)?);
+        let (partials, squared_norms) = values.split_at(count as usize * directions);
+        let evaluations = outs
             .into_iter()
             .zip(partials.chunks(count as usize))
             .map(|(buf, part)| {
                 let total: f64 = part.iter().map(|v| f64::from(*v)).sum();
                 (total / n as f64, GpuField { buf, grid })
             })
-            .collect())
+            .collect();
+        let norms = squared_norms.iter().map(|v| f64::from(*v).sqrt()).collect();
+        Ok((evaluations, norms))
     }
 
     /// [`Backend::smooth_field`] with the gather kernel on every axis, the pre-tiling
@@ -1239,7 +1323,7 @@ impl Backend for WgpuBackend {
         moving: &GpuImage,
         radius: usize,
     ) -> RegResult<(f64, GpuField)> {
-        let mut out = self.cc_evaluate(fixed, moving, radius, false)?;
+        let (mut out, _) = self.cc_evaluate(fixed, moving, radius, false, false)?;
         out.pop().ok_or_else(|| bad("cc produced no result"))
     }
 
@@ -1248,12 +1332,22 @@ impl Backend for WgpuBackend {
         fixed: &GpuImage,
         moving: &GpuImage,
         radius: usize,
-    ) -> RegResult<fastwarp_reg::backend::MetricPair<GpuField>> {
-        let mut out = self.cc_evaluate(fixed, moving, radius, true)?;
-        match (out.pop(), out.pop()) {
-            (Some(second), Some(first)) => Ok((first, second)),
-            _ => Err(bad("cc pair produced fewer than two results")),
-        }
+    ) -> RegResult<MetricPair<GpuField>> {
+        let (out, _) = self.cc_evaluate(fixed, moving, radius, true, false)?;
+        cc_pair(out)
+    }
+
+    fn cc_value_derivative_pair_with_norms(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        radius: usize,
+    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
+        let (out, norms) = self.cc_evaluate(fixed, moving, radius, true, true)?;
+        let norms: [f64; 2] = norms
+            .try_into()
+            .map_err(|_| bad("cc pair produced fewer than two norms"))?;
+        Ok((cc_pair(out)?, norms))
     }
 
     fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
@@ -1265,6 +1359,33 @@ impl Backend for WgpuBackend {
 
     fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
         Ok(f64::from(self.reduce_field(field, 0, "max_scaled_norm")?))
+    }
+
+    fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
+        if a.grid != b.grid {
+            return Ok((self.max_scaled_norm(a)?, self.max_scaled_norm(b)?));
+        }
+        let part = self.reduction_partials(&a.grid)?;
+        let scalars = [
+            self.acquire("reduction scalar", 16)?,
+            self.acquire("reduction scalar", 16)?,
+        ];
+        self.run_pass("max_scaled_norm_pair", |pass| {
+            for (field, scalar) in [a, b].into_iter().zip(&scalars) {
+                self.encode_reduce(
+                    pass,
+                    field.buf.buffer(),
+                    &field.grid,
+                    0,
+                    part.buffer(),
+                    scalar.buffer(),
+                )?;
+            }
+            Ok(())
+        })?;
+        let bytes = self.read_sources(&[(scalars[0].buffer(), 4), (scalars[1].buffer(), 4)])?;
+        let v: Vec<f32> = bytemuck::pod_collect_to_vec(&bytes);
+        Ok((f64::from(v[0]), f64::from(v[1])))
     }
 
     fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
@@ -1339,6 +1460,69 @@ impl Backend for WgpuBackend {
         initial: GpuField,
         params: &InvertParams,
     ) -> RegResult<(GpuField, InvertStats)> {
+        let (psi, state) = self.invert_encode(field, initial, params)?;
+        let words: Vec<u32> = match state {
+            Some(state) => {
+                bytemuck::pod_collect_to_vec(&self.read_scalar_bytes(state.buffer(), 16)?)
+            }
+            None => vec![0; 4],
+        };
+        Ok((psi, invert_stats(&words)))
+    }
+
+    fn invert_pair(
+        &self,
+        field: GpuField,
+        inverse: GpuField,
+        params: &InvertParams,
+    ) -> RegResult<InversionPair<GpuField>> {
+        let (inverse, inverse_state) = self.invert_encode(&field, inverse, params)?;
+        let (field, field_state) = self.invert_encode(&inverse, field, params)?;
+        let words: Vec<u32> = match (&inverse_state, &field_state) {
+            (Some(a), Some(b)) => bytemuck::pod_collect_to_vec(
+                &self.read_sources(&[(a.buffer(), 16), (b.buffer(), 16)])?,
+            ),
+            _ => vec![0; 8],
+        };
+        Ok((
+            (inverse, invert_stats(&words[..4])),
+            (field, invert_stats(&words[4..])),
+        ))
+    }
+
+    fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
+        if field.grid == *grid {
+            return self.copy_field(field);
+        }
+        let out = self.field_buffer(grid)?;
+        let uniform = warp_uniform(grid, &field.grid, None, false, 3)?;
+        self.run_pass("resample_field", |pass| {
+            self.launch(
+                pass,
+                &self.kernels.warp,
+                &[field.buf.buffer(), field.buf.buffer(), out.buffer()],
+                &uniform,
+                self.groups_3d(grid),
+            )
+        })?;
+        self.trim_pool_for(grid);
+        Ok(GpuField {
+            buf: out,
+            grid: *grid,
+        })
+    }
+}
+
+impl WgpuBackend {
+    /// Records ITK's fixed-point inversion of `field` from `initial` (updated in place and
+    /// returned) and returns the device buffer of its state words (maximum and mean error, steps
+    /// executed), `None` when `params` allows no step.
+    fn invert_encode(
+        &self,
+        field: &GpuField,
+        initial: GpuField,
+        params: &InvertParams,
+    ) -> RegResult<(GpuField, Option<PoolBuf>)> {
         self.require_same_grid("invert", &field.grid, &initial.grid)?;
         let grid = field.grid;
         let n = grid.num_voxels();
@@ -1358,7 +1542,6 @@ impl Backend for WgpuBackend {
         let dims = dims4(&grid);
         let max_tol = params.max_error_tolerance;
         let mean_tol = params.mean_error_tolerance;
-        let mut words = [0u32; 4];
         let mut first = 0u32;
         while first < params.max_iterations {
             let take = INVERT_BODIES_PER_SUBMIT.min(params.max_iterations - first);
@@ -1426,41 +1609,24 @@ impl Backend for WgpuBackend {
             })?;
             first += take;
         }
-        if params.max_iterations > 0 {
-            let bytes = self.read_scalar_bytes(state.buffer(), 16)?;
-            let read: Vec<u32> = bytemuck::pod_collect_to_vec(&bytes);
-            words.copy_from_slice(&read);
-        }
-        let max_error = f64::from(f32::from_bits(words[0]));
-        let mean_error = f64::from(f32::from_bits(words[1]));
-        let executed = words[2];
-        let stats = InvertStats {
-            iterations: executed,
-            mean_error_norm: if executed == 0 { 0.0 } else { mean_error },
-            max_error_norm: if executed == 0 { 0.0 } else { max_error },
-        };
-        Ok((psi, stats))
+        Ok((psi, (params.max_iterations > 0).then_some(state)))
     }
+}
 
-    fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
-        if field.grid == *grid {
-            return self.copy_field(field);
-        }
-        let out = self.field_buffer(grid)?;
-        let uniform = warp_uniform(grid, &field.grid, None, false, 3)?;
-        self.run_pass("resample_field", |pass| {
-            self.launch(
-                pass,
-                &self.kernels.warp,
-                &[field.buf.buffer(), field.buf.buffer(), out.buffer()],
-                &uniform,
-                self.groups_3d(grid),
-            )
-        })?;
-        self.trim_pool_for(grid);
-        Ok(GpuField {
-            buf: out,
-            grid: *grid,
-        })
+fn cc_pair(mut out: Vec<MetricEvaluation<GpuField>>) -> RegResult<MetricPair<GpuField>> {
+    match (out.pop(), out.pop()) {
+        (Some(second), Some(first)) => Ok((first, second)),
+        _ => Err(bad("cc pair produced fewer than two results")),
+    }
+}
+
+fn invert_stats(words: &[u32]) -> InvertStats {
+    let max_error = f64::from(f32::from_bits(words[0]));
+    let mean_error = f64::from(f32::from_bits(words[1]));
+    let executed = words[2];
+    InvertStats {
+        iterations: executed,
+        mean_error_norm: if executed == 0 { 0.0 } else { mean_error },
+        max_error_norm: if executed == 0 { 0.0 } else { max_error },
     }
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use fastwarp_gpu::parity::{check_all, field, image, Case};
-use fastwarp_gpu::{BackendSelect, GpuError, WgpuBackend};
+use fastwarp_gpu::{BackendSelect, GpuError, GpuField, WgpuBackend};
 use fastwarp_reg::backend::Backend;
 use fastwarp_reg::field_ops::InvertParams;
 use fastwarp_reg::transform::AffineTransform;
@@ -243,6 +243,61 @@ fn the_cc_pair_matches_the_cpu_in_both_directions_and_two_gpu_calls_bit_for_bit(
             "swapped derivative {worst} of {range}"
         );
     }
+}
+
+#[test]
+fn paired_scalar_operations_match_the_single_ones_bit_for_bit_in_one_read_back() {
+    let Some(b) = backend() else { return };
+    let grid = Case::awkward([29, 23, 19], [1.2, 1.6, 2.0], true, 3)
+        .grid()
+        .unwrap();
+    let fixed = b.upload_image(&image(&grid, 3, 0.2)).unwrap();
+    let moving = b.upload_image(&image(&grid, 4, 0.2)).unwrap();
+    let field_bits = |f: &GpuField| -> Vec<u64> {
+        let down = b.download_field(f).unwrap();
+        let flat: Vec<f64> = down.data().iter().flat_map(|v| v.iter().copied()).collect();
+        bits(&flat)
+    };
+    let reads = || b.stats().scalar_readbacks;
+
+    let before = reads();
+    let (((v1, d1), (v2, d2)), [n1, n2]) = b
+        .cc_value_derivative_pair_with_norms(&fixed, &moving, 3)
+        .unwrap();
+    assert_eq!(reads() - before, 1);
+    let ((s1, e1), (s2, e2)) = b.cc_value_derivative_pair(&fixed, &moving, 3).unwrap();
+    let (m1, m2) = (b.l2_norm(&e1).unwrap(), b.l2_norm(&e2).unwrap());
+    assert_eq!(bits(&[v1, v2, n1, n2]), bits(&[s1, s2, m1, m2]));
+    assert_eq!(field_bits(&d1), field_bits(&e1));
+    assert_eq!(field_bits(&d2), field_bits(&e2));
+
+    let fixed_side = b.smooth_field(d1, 3.0).unwrap();
+    let moving_side = b.smooth_field(d2, 3.0).unwrap();
+    let before = reads();
+    let (max1, max2) = b.max_scaled_norm_pair(&fixed_side, &moving_side).unwrap();
+    assert_eq!(reads() - before, 1);
+    let single = [
+        b.max_scaled_norm(&fixed_side).unwrap(),
+        b.max_scaled_norm(&moving_side).unwrap(),
+    ];
+    assert_eq!(bits(&[max1, max2]), bits(&single));
+
+    let f0 = field(&grid, 2.0, 5);
+    let g0 = field(&grid, 0.5, 6);
+    let (f, g) = (b.upload_field(&f0).unwrap(), b.upload_field(&g0).unwrap());
+    let before = reads();
+    let ((inverse, inverse_stats), (forward, forward_stats)) =
+        b.invert_pair(f, g, &InvertParams::SYN).unwrap();
+    assert_eq!(reads() - before, 1);
+    let (f, g) = (b.upload_field(&f0).unwrap(), b.upload_field(&g0).unwrap());
+    let (single_inverse, single_inverse_stats) = b.invert(&f, g, &InvertParams::SYN).unwrap();
+    let (single_forward, single_forward_stats) =
+        b.invert(&single_inverse, f, &InvertParams::SYN).unwrap();
+    assert!(inverse_stats.iterations > 0 && forward_stats.iterations > 0);
+    assert_eq!(inverse_stats, single_inverse_stats);
+    assert_eq!(forward_stats, single_forward_stats);
+    assert_eq!(field_bits(&inverse), field_bits(&single_inverse));
+    assert_eq!(field_bits(&forward), field_bits(&single_forward));
 }
 
 #[test]

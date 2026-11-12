@@ -19,6 +19,13 @@ pub type MetricEvaluation<F> = (f64, F);
 /// The two directions of one metric evaluation: `(fixed, moving)` then `(moving, fixed)`.
 pub type MetricPair<F> = (MetricEvaluation<F>, MetricEvaluation<F>);
 
+/// An inverted field with the statistics of its inversion.
+pub type Inversion<F> = (F, InvertStats);
+
+/// The two inversions of [`Backend::invert_pair`] in call order: the new inverse, then the new
+/// field.
+pub type InversionPair<F> = (Inversion<F>, Inversion<F>);
+
 /// Operations the symmetric normalisation loop needs.
 ///
 /// Scalar images ([`Backend::Image`]) and displacement fields ([`Backend::Field`]) are opaque
@@ -88,6 +95,20 @@ pub trait Backend: Sync {
         Ok((forward, backward))
     }
 
+    /// [`Backend::cc_value_derivative_pair`] with the [`Backend::l2_norm`] of both derivatives,
+    /// in the same order. The default calls them one after the other; a backend that can return
+    /// all the scalars at once overrides it with bit-identical results.
+    fn cc_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        radius: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        let pair = self.cc_value_derivative_pair(fixed, moving, radius)?;
+        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        Ok((pair, norms))
+    }
+
     /// SyN's Gaussian smoothing of a field (`variance` in squared voxels of the field's grid,
     /// faces pinned to zero). Takes the field so that `variance <= 0` returns it unchanged
     /// without a copy.
@@ -95,6 +116,12 @@ pub trait Backend: Sync {
 
     /// Largest `|u / spacing|` over the field.
     fn max_scaled_norm(&self, field: &Self::Field) -> Result<f64>;
+
+    /// [`Backend::max_scaled_norm`] of two fields, `(a, b)`. The default calls it twice; a
+    /// backend that can return both values at once overrides it with bit-identical results.
+    fn max_scaled_norm_pair(&self, a: &Self::Field, b: &Self::Field) -> Result<(f64, f64)> {
+        Ok((self.max_scaled_norm(a)?, self.max_scaled_norm(b)?))
+    }
 
     /// Euclidean norm of the whole field as one vector.
     fn l2_norm(&self, field: &Self::Field) -> Result<f64>;
@@ -117,6 +144,21 @@ pub trait Backend: Sync {
         initial: Self::Field,
         params: &InvertParams,
     ) -> Result<(Self::Field, InvertStats)>;
+
+    /// The two inversions with which SyN re-estimates a field and its inverse:
+    /// `inverse = invert(field, initial = inverse)`, then `field = invert(inverse, initial =
+    /// field)`. The default calls [`Backend::invert`] twice; a backend that can return both
+    /// statistics at once overrides it with bit-identical results.
+    fn invert_pair(
+        &self,
+        field: Self::Field,
+        inverse: Self::Field,
+        params: &InvertParams,
+    ) -> Result<InversionPair<Self::Field>> {
+        let inverse = self.invert(&field, inverse, params)?;
+        let field = self.invert(&inverse.0, field, params)?;
+        Ok((inverse, field))
+    }
 
     /// The field resampled onto `grid` (linear, zero outside the old buffer).
     fn resample_field(&self, field: &Self::Field, grid: &Grid) -> Result<Self::Field>;

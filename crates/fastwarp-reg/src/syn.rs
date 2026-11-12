@@ -161,16 +161,16 @@ impl<B: Backend> SideAccumulator<B> {
     fn add(
         &mut self,
         backend: &B,
-        channels: usize,
         weight: f64,
         value: f64,
         derivative: B::Field,
+        magnitude: Option<f64>,
     ) -> Result<()> {
         self.values.push(value);
-        if channels == 1 {
+        let Some(magnitude) = magnitude else {
             self.gradient = Some(derivative);
             return Ok(());
-        }
+        };
         let acc = match self.gradient.as_mut() {
             Some(acc) => acc,
             None => {
@@ -178,7 +178,6 @@ impl<B: Backend> SideAccumulator<B> {
                 self.gradient.insert(backend.zero_field(&grid)?)
             }
         };
-        let magnitude = backend.l2_norm(&derivative)?;
         if !magnitude.is_finite() {
             return Err(invalid("syn", "the metric gradient is not finite"));
         }
@@ -189,7 +188,12 @@ impl<B: Backend> SideAccumulator<B> {
         Ok(())
     }
 
-    fn finish(self, backend: &B, recipe: &SynRecipe, normalised: &[f64]) -> Result<SideUpdate<B>> {
+    fn smoothed(
+        self,
+        backend: &B,
+        recipe: &SynRecipe,
+        normalised: &[f64],
+    ) -> Result<SmoothedSide<B>> {
         let channels = self.values.len();
         let first_value = self.values[0];
         let mut gradient = self
@@ -201,21 +205,34 @@ impl<B: Backend> SideAccumulator<B> {
             backend.scale(&mut gradient, self.total_magnitude / channels as f64)?;
             self.values.iter().zip(normalised).map(|(v, w)| v * w).sum()
         };
-        gradient = backend.smooth_field(gradient, recipe.update_field_variance)?;
-        let max_norm = backend.max_scaled_norm(&gradient)?;
-        if !max_norm.is_finite() {
-            return Err(invalid("syn", "the metric gradient is not finite"));
-        }
+        let gradient = backend.smooth_field(gradient, recipe.update_field_variance)?;
+        Ok(SmoothedSide {
+            gradient,
+            first_value,
+            weighted_value,
+        })
+    }
+}
+
+struct SmoothedSide<B: Backend> {
+    gradient: B::Field,
+    first_value: f64,
+    weighted_value: f64,
+}
+
+impl<B: Backend> SmoothedSide<B> {
+    fn finish(self, backend: &B, recipe: &SynRecipe, max_norm: f64) -> Result<SideUpdate<B>> {
         let mut scale = recipe.gradient_step;
         if max_norm > 0.0 {
             scale /= max_norm;
         }
+        let mut gradient = self.gradient;
         backend.scale(&mut gradient, scale)?;
         Ok(SideUpdate {
             update: gradient,
             scale,
-            first_value,
-            weighted_value,
+            first_value: self.first_value,
+            weighted_value: self.weighted_value,
         })
     }
 }
@@ -232,25 +249,46 @@ fn side_updates<B: Backend>(
     let mut fixed_side = SideAccumulator::<B>::new(channels);
     let mut moving_side = SideAccumulator::<B>::new(channels);
     for c in 0..channels {
-        let ((fixed_value, fixed_derivative), (moving_value, moving_derivative)) =
-            backend.cc_value_derivative_pair(&fixed_mid[c], &moving_mid[c], recipe.cc_radius)?;
+        let (((fixed_value, fixed_derivative), (moving_value, moving_derivative)), norms) =
+            if channels == 1 {
+                let pair = backend.cc_value_derivative_pair(
+                    &fixed_mid[c],
+                    &moving_mid[c],
+                    recipe.cc_radius,
+                )?;
+                (pair, None)
+            } else {
+                let (pair, norms) = backend.cc_value_derivative_pair_with_norms(
+                    &fixed_mid[c],
+                    &moving_mid[c],
+                    recipe.cc_radius,
+                )?;
+                (pair, Some(norms))
+            };
         fixed_side.add(
             backend,
-            channels,
             normalised[c],
             fixed_value,
             fixed_derivative,
+            norms.map(|n| n[0]),
         )?;
         moving_side.add(
             backend,
-            channels,
             normalised[c],
             moving_value,
             moving_derivative,
+            norms.map(|n| n[1]),
         )?;
     }
-    let fixed_update = fixed_side.finish(backend, recipe, &normalised)?;
-    let moving_update = moving_side.finish(backend, recipe, &normalised)?;
+    let fixed_side = fixed_side.smoothed(backend, recipe, &normalised)?;
+    let moving_side = moving_side.smoothed(backend, recipe, &normalised)?;
+    let (fixed_max, moving_max) =
+        backend.max_scaled_norm_pair(&fixed_side.gradient, &moving_side.gradient)?;
+    if !(fixed_max.is_finite() && moving_max.is_finite()) {
+        return Err(invalid("syn", "the metric gradient is not finite"));
+    }
+    let fixed_update = fixed_side.finish(backend, recipe, fixed_max)?;
+    let moving_update = moving_side.finish(backend, recipe, moving_max)?;
     Ok((fixed_update, moving_update))
 }
 
@@ -265,8 +303,8 @@ fn update_total_field<B: Backend>(
     drop(update);
     drop(field);
     let tmp = backend.smooth_field(composed, recipe.total_field_variance)?;
-    let (new_inverse, stats_inverse) = backend.invert(&tmp, inverse, &InvertParams::SYN)?;
-    let (new_field, stats_field) = backend.invert(&new_inverse, tmp, &InvertParams::SYN)?;
+    let ((new_inverse, stats_inverse), (new_field, stats_field)) =
+        backend.invert_pair(tmp, inverse, &InvertParams::SYN)?;
     if [stats_inverse, stats_field]
         .iter()
         .any(|s| !(s.mean_error_norm.is_finite() && s.max_error_norm.is_finite()))
