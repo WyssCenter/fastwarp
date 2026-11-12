@@ -124,6 +124,9 @@ else:
 
 ### Environment
 
+The former `DBSLOC_` names (for example `DBSLOC_GPU_BACKEND` for `FASTWARP_GPU_BACKEND`) are still
+read when the `FASTWARP_` name is unset.
+
 | Variable | Effect |
 | --- | --- |
 | `FASTWARP_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
@@ -178,7 +181,7 @@ Python 3.13 and 3.14 (`[tool.uv] environments`); the wheel itself supports 3.10 
 down to 1.6 (no wheels, open advisories) for a newer NumPy; drop it once ANTsPy's dependencies
 resolve to a current SciPy without it.
 
-Test variables:
+Test variables (the former `DBSLOC_` names are still read when the `FASTWARP_` name is unset):
 
 | Variable | Effect |
 | --- | --- |

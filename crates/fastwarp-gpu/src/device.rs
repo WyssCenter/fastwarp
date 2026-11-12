@@ -68,6 +68,18 @@ pub fn env_var_os(name: &str) -> Option<std::ffi::OsString> {
     })
 }
 
+/// The name `env_var_os` reads `name` from: the former `DBSLOC_*` name when only that is set.
+#[doc(hidden)]
+pub fn env_var_name(name: &str) -> String {
+    let old = name
+        .strip_prefix("FASTWARP_")
+        .map(|suffix| format!("DBSLOC_{suffix}"));
+    match old {
+        Some(old) if std::env::var_os(name).is_none() && std::env::var_os(&old).is_some() => old,
+        _ => name.to_string(),
+    }
+}
+
 #[doc(hidden)]
 pub fn env_var(name: &str) -> Option<String> {
     env_var_os(name)?.into_string().ok()
@@ -109,7 +121,9 @@ impl BackendSelect {
     pub fn from_env() -> GpuResult<Self> {
         let backend = match env_var(GPU_BACKEND_ENV) {
             Some(v) if !v.trim().is_empty() => BackendChoice::parse(&v).map_err(|e| match e {
-                GpuError::Invalid(m) => GpuError::Invalid(format!("{GPU_BACKEND_ENV}: {m}")),
+                GpuError::Invalid(m) => {
+                    GpuError::Invalid(format!("{}: {m}", env_var_name(GPU_BACKEND_ENV)))
+                }
                 other => other,
             })?,
             _ => BackendChoice::Auto,
@@ -422,8 +436,9 @@ impl GpuContext {
             })
             .map_err(|e| match e {
                 wgpu::PollError::Timeout => GpuError::Internal(format!(
-                    "GPU wait timed out after {} s (FASTWARP_GPU_WAIT_TIMEOUT_S)",
-                    timeout.as_secs_f64()
+                    "GPU wait timed out after {} s ({})",
+                    timeout.as_secs_f64(),
+                    env_var_name("FASTWARP_GPU_WAIT_TIMEOUT_S")
                 )),
                 other => GpuError::Internal(format!("poll failed: {other}")),
             })?;
@@ -572,6 +587,7 @@ mod tests {
 
     #[test]
     fn gpu_backend_env_is_parsed_and_an_invalid_value_is_an_error() {
+        std::env::remove_var("DBSLOC_GPU_BACKEND");
         std::env::remove_var(GPU_BACKEND_ENV);
         assert_eq!(
             BackendSelect::from_env().unwrap().backend,
@@ -591,6 +607,10 @@ mod tests {
         let e = BackendSelect::from_env().unwrap_err().to_string();
         std::env::remove_var(GPU_BACKEND_ENV);
         assert!(e.contains(GPU_BACKEND_ENV), "{e}");
+        std::env::set_var("DBSLOC_GPU_BACKEND", "cuda");
+        let old = BackendSelect::from_env().unwrap_err().to_string();
+        std::env::remove_var("DBSLOC_GPU_BACKEND");
+        assert!(old.contains("DBSLOC_GPU_BACKEND:"), "{old}");
         assert!(e.contains("E_GPU_BACKEND"), "{e}");
         for v in ["auto", "vulkan", "dx12", "metal"] {
             assert!(e.contains(v), "{e}");
