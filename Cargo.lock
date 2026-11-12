@@ -284,66 +284,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "dbsloc-core"
-version = "0.4.0"
-dependencies = [
- "nifti",
-]
-
-[[package]]
-name = "dbsloc-gpu"
-version = "0.4.0"
-dependencies = [
- "bytemuck",
- "clap",
- "dbsloc-reg",
- "pollster",
- "rayon",
- "serde",
- "serde_json",
- "thiserror",
- "wgpu",
-]
-
-[[package]]
-name = "dbsloc-matfile"
-version = "0.4.0"
-dependencies = [
- "flate2",
- "miniz_oxide",
- "rayon",
- "thiserror",
-]
-
-[[package]]
-name = "dbsloc-niftiio"
-version = "0.4.0"
-dependencies = [
- "bytemuck",
- "crc32fast",
- "flate2",
- "ndarray",
- "nifti",
- "rayon",
- "thiserror",
-]
-
-[[package]]
-name = "dbsloc-reg"
-version = "0.4.0"
-dependencies = [
- "dbsloc-core",
- "dbsloc-matfile",
- "dbsloc-niftiio",
- "flate2",
- "miniz_oxide",
- "ndarray",
- "nifti",
- "rayon",
- "thiserror",
-]
-
-[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -384,16 +324,76 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
+name = "fastwarp-core"
+version = "0.4.0"
+dependencies = [
+ "nifti",
+]
+
+[[package]]
+name = "fastwarp-gpu"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "clap",
+ "fastwarp-reg",
+ "pollster",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "wgpu",
+]
+
+[[package]]
+name = "fastwarp-matfile"
+version = "0.4.0"
+dependencies = [
+ "flate2",
+ "miniz_oxide",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "fastwarp-niftiio"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "crc32fast",
+ "flate2",
+ "ndarray",
+ "nifti",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
 name = "fastwarp-py"
 version = "0.4.0"
 dependencies = [
- "dbsloc-gpu",
- "dbsloc-niftiio",
- "dbsloc-reg",
+ "fastwarp-gpu",
+ "fastwarp-niftiio",
+ "fastwarp-reg",
  "ndarray",
  "numpy",
  "pyo3",
  "rayon",
+]
+
+[[package]]
+name = "fastwarp-reg"
+version = "0.4.0"
+dependencies = [
+ "fastwarp-core",
+ "fastwarp-matfile",
+ "fastwarp-niftiio",
+ "flate2",
+ "miniz_oxide",
+ "ndarray",
+ "nifti",
+ "rayon",
+ "thiserror",
 ]
 
 [[package]]

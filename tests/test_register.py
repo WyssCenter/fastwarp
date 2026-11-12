@@ -4,7 +4,7 @@
 """End-to-end tests on a synthetic phantom (no patient data).
 
 GPU tests skip without a usable adapter; CI runs them on Mesa's lavapipe with
-DBSLOC_GPU_ALLOW_SOFTWARE=1.
+FASTWARP_GPU_ALLOW_SOFTWARE=1.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def test_cancel_from_another_thread(tmp_path):
 
 @needs_gpu
 def test_capacity_refused_before_work(tmp_path, monkeypatch):
-    monkeypatch.setenv("DBSLOC_GPU_MEMORY_BUDGET_MB", "1")
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "1")
     assert not g.fits_gpu(phantom(), iso_mm=SPACING)
     with pytest.raises(g.GpuCapacityError):
         g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "cap_", iso_mm=SPACING)

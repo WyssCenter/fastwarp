@@ -36,7 +36,7 @@ load (load average about 110 on 48 cores) during its runs.
 
 ¹ 2 GB is too little for T1w + T2w at 1 mm (1.6 GB): the capacity check refuses it up front
 (`GpuCapacityError`), so a caller falls back to ANTs. T1w alone needs 1.4 GB and ran only with
-`DBSLOC_GPU_MEMORY_BUDGET_MB=1900`, since the default budget keeps 1 GB free for the desktop.
+`FASTWARP_GPU_MEMORY_BUDGET_MB=1900`, since the default budget keeps 1 GB free for the desktop.
 
 Linear sessions: one rigid fit of the T2w onto the T1w (the default rigid stage) takes 1.2 s on
 the M5 Pro, 1.6 s on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and
@@ -126,11 +126,11 @@ else:
 
 | Variable | Effect |
 | --- | --- |
-| `DBSLOC_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
-| `DBSLOC_GPU_ADAPTER` | pick the adapter whose name contains this text |
-| `DBSLOC_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |
-| `DBSLOC_GPU_MEMORY_BUDGET_MB` | override the memory budget of the capacity check |
-| `DBSLOC_GPU_WAIT_TIMEOUT_S` | seconds to wait for the GPU before failing (default 300) |
+| `FASTWARP_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
+| `FASTWARP_GPU_ADAPTER` | pick the adapter whose name contains this text |
+| `FASTWARP_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |
+| `FASTWARP_GPU_MEMORY_BUDGET_MB` | override the memory budget of the capacity check |
+| `FASTWARP_GPU_WAIT_TIMEOUT_S` | seconds to wait for the GPU before failing (default 300) |
 
 The capacity check uses the device memory the graphics API reports, halved on integrated GPUs
 (they share memory with the host, e.g. Apple Silicon).
@@ -164,8 +164,8 @@ The Python tools (maturin, pytest, ruff; ANTsPy in the `ants` group) are locked 
 export UV_PYTHON=3.13   # ANTsPy has no Python 3.14 wheels yet; see below
 uv sync --locked --no-install-project --group ants
 uv run --no-sync maturin develop --uv --release && uv run --no-sync pytest   # Python tests (skip without a GPU)
-PYO3_PYTHON=.venv/bin/python cargo nextest run --locked --workspace --features dbsloc-gpu/dev-tools   # Windows: .venv/Scripts/python.exe
-cargo clippy --locked --workspace --all-targets --features dbsloc-gpu/dev-tools -- -D warnings
+PYO3_PYTHON=.venv/bin/python cargo nextest run --locked --workspace --features fastwarp-gpu/dev-tools   # Windows: .venv/Scripts/python.exe
+cargo clippy --locked --workspace --all-targets --features fastwarp-gpu/dev-tools -- -D warnings
 ```
 
 Development uses Python 3.14 (`.python-version`). ANTsPy, which the comparisons with ANTs need,
@@ -182,24 +182,24 @@ Test variables:
 
 | Variable | Effect |
 | --- | --- |
-| `DBSLOC_GPU_REQUIRE_ADAPTER=1` | a missing GPU adapter fails the Rust and Python GPU tests instead of skipping them |
-| `DBSLOC_REQUIRE_ANTSPY=1` | ANTsPy failing to import fails the Python tests instead of skipping the comparisons with ANTs |
-| `WGPU_FORCE_FALLBACK_ADAPTER=1` | select software adapters only (with `DBSLOC_GPU_ALLOW_SOFTWARE=1`) |
-| `DBSLOC_ATLAS_INDEX_MAT` | path to an atlas index `.mat` for a `dbsloc-matfile` test; unset skips it, a missing file fails it |
-| `DBSLOC_UIPREFS_DIR` | folder of real `.mat` files for an `#[ignore]`d `dbsloc-matfile` test |
-| `DBSLOC_REG_AB_DIR` | folder of a real subject (ANTs outputs) for the `#[ignore]`d A/B tests in `dbsloc-gpu` |
-| `DBSLOC_REG_PROTO_DIR` | folder of prototype composite transforms for a `dbsloc-reg` test; unset skips it |
-| `DBSLOC_REG_ANTS_COMPOSITE` | path of a real ANTs composite `.h5` for a `dbsloc-reg` test; unset skips it |
-| `DBSLOC_GPU_BENCH` | enables the `#[ignore]`d GPU benchmarks in `syn_bench` |
+| `FASTWARP_GPU_REQUIRE_ADAPTER=1` | a missing GPU adapter fails the Rust and Python GPU tests instead of skipping them |
+| `FASTWARP_REQUIRE_ANTSPY=1` | ANTsPy failing to import fails the Python tests instead of skipping the comparisons with ANTs |
+| `WGPU_FORCE_FALLBACK_ADAPTER=1` | select software adapters only (with `FASTWARP_GPU_ALLOW_SOFTWARE=1`) |
+| `FASTWARP_ATLAS_INDEX_MAT` | path to an atlas index `.mat` for a `fastwarp-matfile` test; unset skips it, a missing file fails it |
+| `FASTWARP_UIPREFS_DIR` | folder of real `.mat` files for an `#[ignore]`d `fastwarp-matfile` test |
+| `FASTWARP_REG_AB_DIR` | folder of a real subject (ANTs outputs) for the `#[ignore]`d A/B tests in `fastwarp-gpu` |
+| `FASTWARP_REG_PROTO_DIR` | folder of prototype composite transforms for a `fastwarp-reg` test; unset skips it |
+| `FASTWARP_REG_ANTS_COMPOSITE` | path of a real ANTs composite `.h5` for a `fastwarp-reg` test; unset skips it |
+| `FASTWARP_GPU_BENCH` | enables the `#[ignore]`d GPU benchmarks in `syn_bench` |
 
 The Rust tests that compare the engine with the real ANTs programs (`antsRegistration`,
 `antsApplyTransforms`, `N4BiasFieldCorrection`) are `#[ignore]`d. Run them with
-`DBSLOC_ANTS_DIR` set to the folder holding ANTs 2.6.5; unset, they skip, and a folder without
+`FASTWARP_ANTS_DIR` set to the folder holding ANTs 2.6.5; unset, they skip, and a folder without
 the program fails them:
 
 ```bash
-DBSLOC_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p dbsloc-reg --run-ignored only \
-  -E 'binary_id(dbsloc-reg::ants_compat) | binary_id(dbsloc-reg::coreg_metric) | binary_id(dbsloc-reg::n4_ants)'
+FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-reg --run-ignored only \
+  -E 'binary_id(fastwarp-reg::ants_compat) | binary_id(fastwarp-reg::coreg_metric) | binary_id(fastwarp-reg::n4_ants)'
 ```
 
 CI (`ci.yml`) runs the Rust and Python tests on Linux with Mesa's software Vulkan driver, and
@@ -214,7 +214,7 @@ Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes 
 
 ## Source and credit
 
-`crates/dbsloc-{core,niftiio,matfile,reg,gpu}` are copies of the registration engine of
+`crates/fastwarp-{core,niftiio,matfile,reg,gpu}` are copies of the registration engine of
 Wyss DBS Localizer (an internal Wyss Center repository), taken at revision `90c1df3`
 (2026-11-10) of an earlier standalone copy of that engine, which this repository replaces
 (`ENGINE_SOURCE` names that revision); later changes are in `CHANGELOG.md`. `crates/fastwarp-py` is the Python binding (PyO3). Please
