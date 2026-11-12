@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
 project = "FastWarp"
 author = "Richard Köhler and Jan Philipp Payonk"
 copyright = "2026 Wyss Center for Bio and Neuroengineering"
