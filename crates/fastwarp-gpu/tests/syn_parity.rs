@@ -259,6 +259,34 @@ fn gpu_syn_is_deterministic_with_smoothed_total_field_and_wide_kernels() {
     }
 }
 
+#[test]
+fn a_syn_iteration_reads_back_four_scalar_blocks_with_one_channel_and_five_with_two() {
+    let Some(gpu) = backend() else { return };
+    let p = phantom(16, 2.0, 1.5);
+    for (two, expected) in [(false, 4), (true, 5)] {
+        let readbacks = |iterations: u32| {
+            let mut recipe = small_recipe(&[(1, 0.0, iterations)], 2);
+            if two {
+                recipe.channel_weights = vec![0.5, 0.5];
+            }
+            recipe.convergence_threshold = -1.0;
+            let before = gpu.stats().scalar_readbacks;
+            let r = run_syn(
+                &gpu,
+                &recipe,
+                &channels(&p, two),
+                &p.initial,
+                &SynOptions::default(),
+            )
+            .unwrap();
+            assert_eq!(r.levels[0].iterations.len(), iterations as usize);
+            gpu.stats().scalar_readbacks - before
+        };
+        let per_iteration = (readbacks(5) - readbacks(2)) / 3;
+        assert_eq!(per_iteration, expected, "two channels: {two}");
+    }
+}
+
 fn capacity_plan_bounds_pool_peak(n: usize, iterations: u32) {
     let n_full = (n * n * n) as u64;
     let h = head([n, n, n], 2.0, 3.0);

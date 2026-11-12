@@ -48,7 +48,10 @@
   derivative evaluation. Results are unchanged.
 - Less host work per GPU SyN iteration, with bit-identical results: a displacement-field
   inversion creates its five bind groups once instead of four per inversion step (20 instead of
-  320 per iteration).
+  320 per iteration), and the iteration waits for the GPU fewer times to read scalars back (4
+  instead of 7 with one channel, 5 instead of 12 with two). The `Backend` trait gains
+  `cc_value_derivative_pair_with_norms`, `max_scaled_norm_pair` and `invert_pair`, with default
+  implementations that call the single operations.
 
 ## 0.4.0 (2026-11-09)
 
