@@ -150,6 +150,37 @@ fn gpu_results_are_bit_identical_across_runs() {
 }
 
 #[test]
+fn an_inversion_longer_than_one_submission_runs_every_step_and_matches_the_cpu() {
+    let Some(b) = backend() else { return };
+    let cpu = fastwarp_reg::cpu::CpuBackend;
+    let grid = Case::awkward([12, 10, 8], [1.0, 1.2, 1.5], false, 2)
+        .grid()
+        .unwrap();
+    let f0 = field(&grid, 1.5, 7);
+    let params = InvertParams {
+        max_iterations: 1030,
+        mean_error_tolerance: 0.0,
+        max_error_tolerance: 0.0,
+        enforce_boundary_condition: true,
+    };
+    let f = b.upload_field(&f0).unwrap();
+    let (inverse, stats) = b.invert(&f, b.zero_field(&grid).unwrap(), &params).unwrap();
+    let (cpu_inverse, cpu_stats) = cpu
+        .invert(&f0, cpu.zero_field(&grid).unwrap(), &params)
+        .unwrap();
+    assert_eq!(stats.iterations, 1030);
+    assert_eq!(cpu_stats.iterations, 1030);
+    let gpu_inverse = b.download_field(&inverse).unwrap();
+    let worst = gpu_inverse
+        .data()
+        .iter()
+        .zip(cpu_inverse.data())
+        .flat_map(|(g, c)| (0..3).map(move |k| (g[k] - c[k]).abs()))
+        .fold(0.0f64, f64::max);
+    assert!(worst < 1e-3, "{worst}");
+}
+
+#[test]
 fn cc_of_an_image_with_itself_is_minus_one_with_zero_derivative() {
     let Some(b) = backend() else { return };
     let grid = Case::awkward([13, 11, 9], [1.0, 1.0, 1.0], false, 2)

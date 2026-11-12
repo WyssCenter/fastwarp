@@ -625,12 +625,16 @@ impl WgpuBackend {
         uniform: &U,
         groups: [u32; 3],
     ) -> RegResult<()> {
-        let max = self.max_groups;
-        if groups.iter().any(|g| *g > max) {
-            return Err(bad(format!(
-                "dispatch {groups:?} exceeds max_compute_workgroups_per_dimension {max}"
-            )));
-        }
+        let group = self.prepare(pipeline, buffers, uniform)?;
+        self.dispatch(pass, pipeline, &group, groups)
+    }
+
+    fn prepare<U: Pod>(
+        &self,
+        pipeline: &wgpu::ComputePipeline,
+        buffers: &[&wgpu::Buffer],
+        uniform: &U,
+    ) -> RegResult<wgpu::BindGroup> {
         let slot = self.ring.next.fetch_add(1, Ordering::Relaxed) % RING_SLOTS;
         let offset = slot * self.ring.stride;
         let bytes = bytemuck::bytes_of(uniform);
@@ -653,16 +657,31 @@ impl WgpuBackend {
                 size: Some(size),
             }),
         });
-        let group = self
+        Ok(self
             .ctx
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &layout,
                 entries: &entries,
-            });
+            }))
+    }
+
+    fn dispatch(
+        &self,
+        pass: &mut wgpu::ComputePass<'_>,
+        pipeline: &wgpu::ComputePipeline,
+        group: &wgpu::BindGroup,
+        groups: [u32; 3],
+    ) -> RegResult<()> {
+        let max = self.max_groups;
+        if groups.iter().any(|g| *g > max) {
+            return Err(bad(format!(
+                "dispatch {groups:?} exceeds max_compute_workgroups_per_dimension {max}"
+            )));
+        }
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &group, &[]);
+        pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
         Ok(())
     }
@@ -1349,55 +1368,59 @@ impl Backend for WgpuBackend {
                 "invert (continued)"
             };
             self.run_pass(label, |pass| {
-                for body in first..first + take {
-                    self.launch(
-                        pass,
-                        &self.kernels.inv_begin,
-                        &[state.buffer()],
-                        &InvBeginU {
-                            max_tol: max_tol as f32,
-                            mean_tol: mean_tol as f32,
-                            pad: [0; 2],
-                        },
-                        [1, 1, 1],
-                    )?;
-                    self.launch(
-                        pass,
-                        &self.kernels.inv_residual,
-                        &[
-                            field.buf.buffer(),
-                            psi.buf.buffer(),
-                            err.buffer(),
-                            part.buffer(),
-                            state.buffer(),
-                        ],
-                        &InvResidualU { dims, l, sp },
-                        g3,
-                    )?;
-                    self.launch(
-                        pass,
-                        &self.kernels.inv_reduce,
-                        &[part.buffer(), state.buffer()],
-                        &InvReduceU {
-                            count,
-                            n: n as u32,
-                            pad: [0; 2],
-                        },
-                        [1, 1, 1],
-                    )?;
-                    self.launch(
-                        pass,
+                let begin = self.prepare(
+                    &self.kernels.inv_begin,
+                    &[state.buffer()],
+                    &InvBeginU {
+                        max_tol: max_tol as f32,
+                        mean_tol: mean_tol as f32,
+                        pad: [0; 2],
+                    },
+                )?;
+                let residual = self.prepare(
+                    &self.kernels.inv_residual,
+                    &[
+                        field.buf.buffer(),
+                        psi.buf.buffer(),
+                        err.buffer(),
+                        part.buffer(),
+                        state.buffer(),
+                    ],
+                    &InvResidualU { dims, l, sp },
+                )?;
+                let reduce = self.prepare(
+                    &self.kernels.inv_reduce,
+                    &[part.buffer(), state.buffer()],
+                    &InvReduceU {
+                        count,
+                        n: n as u32,
+                        pad: [0; 2],
+                    },
+                )?;
+                let update_group = |eps: f32| {
+                    self.prepare(
                         &self.kernels.inv_update,
                         &[psi.buf.buffer(), err.buffer(), state.buffer()],
                         &InvUpdateU {
                             dims,
                             sp,
-                            eps: if body == 0 { 0.75 } else { 0.5 },
+                            eps,
                             enforce: u32::from(params.enforce_boundary_condition),
                             pad: [0; 2],
                         },
-                        g3,
-                    )?;
+                    )
+                };
+                let update_first = (first == 0).then(|| update_group(0.75)).transpose()?;
+                let update_rest = update_group(0.5)?;
+                for body in first..first + take {
+                    let update = match (&update_first, body) {
+                        (Some(group), 0) => group,
+                        _ => &update_rest,
+                    };
+                    self.dispatch(pass, &self.kernels.inv_begin, &begin, [1, 1, 1])?;
+                    self.dispatch(pass, &self.kernels.inv_residual, &residual, g3)?;
+                    self.dispatch(pass, &self.kernels.inv_reduce, &reduce, [1, 1, 1])?;
+                    self.dispatch(pass, &self.kernels.inv_update, update, g3)?;
                 }
                 Ok(())
             })?;
