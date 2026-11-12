@@ -3,6 +3,8 @@
 ## Unreleased
 
 - README badges: CI, PyPI version, Python versions, licence, documentation.
+- `dir(fastwarp)` lists only the public API (`__all__`); the implementation moved to the private
+  module `fastwarp._api`, and the public functions and classes report `fastwarp` as their module.
 
 ## 0.1.0 (2026-11-12)
 

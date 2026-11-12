@@ -126,7 +126,7 @@ programs from the official ANTs 2.6.5 Ubuntu 24.04 release, checked against the 
 ## Building the docs
 
 The documentation is built with Sphinx on Python 3.13, without compiling the Rust extension.
-The API reference is generated statically from `python/fastwarp/__init__.py` and
+The API reference is generated statically from `python/fastwarp/__init__.py`, `python/fastwarp/_api.py` and
 `python/fastwarp/_core.pyi`.
 
 ```bash
