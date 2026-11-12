@@ -26,6 +26,9 @@ const LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS: u64 = 188;
 /// What a second channel adds (two smoothed and two warped images, with the derivative fields
 /// accumulated one channel at a time); one channel measured 165.7 B/voxel.
 const LEVEL_BYTES_PER_VOXEL_PER_CHANNEL: u64 = 20;
+/// Each channel keeps one smoothed moving image on the moving image's own grid for the whole
+/// level (`syn.rs`, `syn_fields`); the per-voxel figures above count it on the fixed grid.
+const MOVING_IMAGE_BYTES_PER_VOXEL: u64 = 4;
 
 /// Environment override of the device memory budget, in mebibytes.
 pub const MEMORY_BUDGET_ENV: &str = "FASTWARP_GPU_MEMORY_BUDGET_MB";
@@ -124,7 +127,8 @@ impl CapacityCaps {
 pub struct CapacityPlan {
     /// Voxels of the finest registration level.
     pub voxels: u64,
-    /// Bytes of the largest single storage binding (the three-plane displacement field).
+    /// Bytes of the largest single storage binding (the three-plane displacement field, or a
+    /// moving image with more than three times the voxels).
     pub largest_binding_bytes: u64,
     /// Bytes of the finest level's total device allocation.
     pub level_total_bytes: u64,
@@ -137,12 +141,12 @@ pub struct CapacityPlan {
 /// Why a grid cannot fit.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CapacityError {
-    /// The largest binding (the three-plane displacement field) exceeds
-    /// `max_storage_buffer_binding_size`.
+    /// The largest binding (the three-plane displacement field, or a larger moving image)
+    /// exceeds `max_storage_buffer_binding_size`.
     #[error(
         "the finest registration level {dims:?} needs a storage binding of {need} bytes \
-         (the three-plane displacement field), but the device binds at most {limit} bytes per \
-         storage buffer"
+         (the three-plane displacement field, or the moving image when that is larger), but the \
+         device binds at most {limit} bytes per storage buffer"
     )]
     Binding {
         /// Grid dimensions of the finest level.
@@ -167,17 +171,45 @@ pub enum CapacityError {
     },
 }
 
-/// Checks whether `grid_dims` at `channels` channels fits `caps`. Pure; no device is touched.
+/// Checks whether `grid_dims` at `channels` channels fits `caps`, for a moving image on a grid of
+/// the same size. Pure; no device is touched.
 pub fn plan_capacity(
     grid_dims: [usize; 3],
     channels: usize,
     caps: &CapacityCaps,
 ) -> Result<CapacityPlan, CapacityError> {
-    let voxels = grid_dims.iter().map(|d| *d as u64).product::<u64>();
-    let largest_binding_bytes = voxels.saturating_mul(LARGEST_BINDING_BYTES_PER_VOXEL);
+    plan_capacity_pair(grid_dims, grid_dims, channels, caps)
+}
+
+/// Like [`plan_capacity`] for a moving image whose registration grid is `moving_dims` (the moving
+/// image resampled on its own, not onto the fixed grid). A moving grid with more voxels than the
+/// fixed one adds its excess for every channel; a smaller one is planned as if it were the size
+/// of the fixed grid.
+pub fn plan_capacity_pair(
+    grid_dims: [usize; 3],
+    moving_dims: [usize; 3],
+    channels: usize,
+    caps: &CapacityCaps,
+) -> Result<CapacityPlan, CapacityError> {
+    let count = |dims: [usize; 3]| {
+        dims.iter()
+            .fold(1u64, |acc, d| acc.saturating_mul(*d as u64))
+    };
+    let voxels = count(grid_dims);
+    let moving_voxels = count(moving_dims);
+    let channels = channels.max(1) as u64;
+    let largest_binding_bytes = voxels
+        .saturating_mul(LARGEST_BINDING_BYTES_PER_VOXEL)
+        .max(moving_voxels.saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL));
     let per_voxel = LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS - LEVEL_BYTES_PER_VOXEL_PER_CHANNEL
-        + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL * (channels.max(1) as u64 - 1);
-    let level_total_bytes = voxels.saturating_mul(per_voxel);
+        + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL * (channels - 1);
+    let moving_excess = moving_voxels
+        .saturating_sub(voxels)
+        .saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL)
+        .saturating_mul(channels);
+    let level_total_bytes = voxels
+        .saturating_mul(per_voxel)
+        .saturating_add(moving_excess);
     if largest_binding_bytes > caps.max_storage_buffer_binding_size {
         return Err(CapacityError::Binding {
             dims: grid_dims,
@@ -414,6 +446,76 @@ mod tests {
         assert!(matches!(
             plan_capacity([256, 256, 256], 1, &caps),
             Err(CapacityError::Memory { .. })
+        ));
+    }
+
+    fn unlimited() -> CapacityCaps {
+        CapacityCaps {
+            max_storage_buffer_binding_size: u64::MAX,
+            memory_budget: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn a_moving_grid_of_the_fixed_size_or_smaller_plans_like_the_fixed_grid_alone() {
+        for channels in [1, 2] {
+            let alone = plan_capacity([197, 233, 189], channels, &arc()).unwrap();
+            let same =
+                plan_capacity_pair([197, 233, 189], [197, 233, 189], channels, &arc()).unwrap();
+            let smaller =
+                plan_capacity_pair([197, 233, 189], [100, 120, 90], channels, &arc()).unwrap();
+            assert_eq!(same, alone);
+            assert_eq!(smaller, alone);
+        }
+    }
+
+    #[test]
+    fn a_larger_moving_grid_adds_its_excess_image_bytes_for_every_channel() {
+        let fixed = 10 * 10 * 10;
+        let moving = 20 * 20 * 20;
+        for channels in [1u64, 2] {
+            let plan =
+                plan_capacity_pair([10, 10, 10], [20, 20, 20], channels as usize, &unlimited())
+                    .unwrap();
+            let alone = plan_capacity([10, 10, 10], channels as usize, &unlimited()).unwrap();
+            assert_eq!(plan.voxels, fixed);
+            assert_eq!(
+                plan.level_total_bytes,
+                alone.level_total_bytes + (moving - fixed) * 4 * channels
+            );
+        }
+    }
+
+    #[test]
+    fn a_larger_moving_grid_can_exceed_a_budget_the_fixed_grid_alone_fits() {
+        let fixed = [128, 128, 128];
+        let moving = [256, 256, 256];
+        let need = plan_capacity(fixed, 2, &unlimited())
+            .unwrap()
+            .level_total_bytes;
+        let caps = CapacityCaps {
+            max_storage_buffer_binding_size: u64::MAX,
+            memory_budget: need,
+        };
+        assert!(plan_capacity(fixed, 2, &caps).is_ok());
+        assert!(matches!(
+            plan_capacity_pair(fixed, moving, 2, &caps),
+            Err(CapacityError::Memory { .. })
+        ));
+    }
+
+    #[test]
+    fn a_moving_image_with_over_three_times_the_voxels_is_the_largest_binding() {
+        let plan = plan_capacity_pair([100, 100, 100], [200, 200, 100], 1, &unlimited()).unwrap();
+        assert_eq!(plan.largest_binding_bytes, 200 * 200 * 100 * 4);
+        let caps = CapacityCaps {
+            max_storage_buffer_binding_size: 100 * 100 * 100 * 12,
+            memory_budget: u64::MAX,
+        };
+        assert!(plan_capacity([100, 100, 100], 1, &caps).is_ok());
+        assert!(matches!(
+            plan_capacity_pair([100, 100, 100], [200, 200, 100], 1, &caps),
+            Err(CapacityError::Binding { .. })
         ));
     }
 }

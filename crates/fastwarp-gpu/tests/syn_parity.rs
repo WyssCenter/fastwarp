@@ -7,7 +7,7 @@ mod common;
 use std::time::Instant;
 
 use common::*;
-use fastwarp_gpu::{plan_capacity, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::{plan_capacity, plan_capacity_pair, CapacityCaps, WgpuBackend};
 use fastwarp_reg::apply::{apply_chain, Interpolation};
 use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
@@ -287,9 +287,13 @@ fn a_syn_iteration_reads_back_four_scalar_blocks_with_one_channel_and_five_with_
     }
 }
 
-fn capacity_plan_bounds_pool_peak(n: usize, iterations: u32) {
+fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, iterations: u32) {
     let n_full = (n * n * n) as u64;
-    let h = head([n, n, n], 2.0, 3.0);
+    let mut h = head([n, n, n], 2.0, 3.0);
+    if moving_n != n {
+        let spacing = (n - 1) as f64 * 2.0 / (moving_n - 1) as f64;
+        h.moving = head([moving_n; 3], spacing, 3.0).moving;
+    }
     let contrast = |v: &Volume<f64>| {
         Volume::from_vec(*v.grid(), v.data().iter().map(|x| contrast2(*x)).collect()).unwrap()
     };
@@ -322,7 +326,7 @@ fn capacity_plan_bounds_pool_peak(n: usize, iterations: u32) {
             max_storage_buffer_binding_size: u64::MAX,
             memory_budget: u64::MAX,
         };
-        let plan = plan_capacity([n, n, n], channels, &caps).unwrap();
+        let plan = plan_capacity_pair([n; 3], [moving_n; 3], channels, &caps).unwrap();
         eprintln!(
             "channels {channels}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
             peak as f64 / n_full as f64,
@@ -335,19 +339,35 @@ fn capacity_plan_bounds_pool_peak(n: usize, iterations: u32) {
                 plan.level_total_bytes
             )
         }));
+        if moving_n != n {
+            let fixed_only = plan_capacity([n; 3], channels, &caps).unwrap();
+            failures.extend(
+                (peak <= fixed_only.level_total_bytes + 16 * n_full).then(|| {
+                    format!(
+                        "channels {channels}: peak {peak} within the fixed-only plan {} + 16 n",
+                        fixed_only.level_total_bytes
+                    )
+                }),
+            );
+        }
     }
     assert!(failures.is_empty(), "{failures:?}");
 }
 
 #[test]
 fn the_capacity_plan_bounds_the_pool_peak_of_a_two_level_run() {
-    capacity_plan_bounds_pool_peak(96, 1);
+    capacity_plan_bounds_pool_peak(96, 96, 1);
+}
+
+#[test]
+fn the_capacity_plan_bounds_the_pool_peak_with_a_finer_moving_grid() {
+    capacity_plan_bounds_pool_peak(96, 191, 1);
 }
 
 #[test]
 #[ignore = "recalibration at 128^3; run with --ignored --release"]
 fn the_capacity_plan_bounds_the_pool_peak_of_a_two_level_run_at_128() {
-    capacity_plan_bounds_pool_peak(128, 3);
+    capacity_plan_bounds_pool_peak(128, 128, 3);
 }
 
 #[test]
