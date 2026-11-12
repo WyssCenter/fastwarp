@@ -59,7 +59,9 @@
 - The GPU capacity check before `register_syn` counts the moving image on its own grid: a moving
   image with more voxels than the fixed one adds its smoothed copies to the planned memory, and
   can be the largest storage binding (`plan_capacity_pair`; `plan_capacity` is unchanged for
-  images of equal size).
+  images of equal size). On Vulkan the memory budget starts from the driver's live budget of the
+  device-local heap minus what the process already uses (`VK_EXT_memory_budget`,
+  `MemoryFigure::VulkanHeapBudget`) instead of the heap size, when the device reports one.
 
 ## 0.4.0 (2026-11-09)
 

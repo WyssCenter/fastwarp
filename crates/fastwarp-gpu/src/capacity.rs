@@ -39,12 +39,64 @@ pub const FALLBACK_MEMORY_CAP_BYTES: u64 = 4 << 30;
 pub enum MemoryFigure {
     DxgiLocalBudget,
     VulkanDeviceLocalHeap,
+    VulkanHeapBudget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct DeviceMemory {
     pub bytes: u64,
     pub figure: MemoryFigure,
+}
+
+/// One memory heap as `VK_EXT_memory_budget` reports it.
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd"
+))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeapBudget {
+    pub device_local: bool,
+    pub size: u64,
+    pub budget: u64,
+    pub usage: u64,
+}
+
+/// The most a device-local heap has left within its budget (`budget` capped at the heap size,
+/// minus `usage`), or `None` when no device-local heap reports a budget.
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd"
+))]
+pub(crate) fn heap_budget_bytes(heaps: &[HeapBudget]) -> Option<u64> {
+    heaps
+        .iter()
+        .filter(|h| h.device_local && h.budget > 0 && h.size > 0)
+        .map(|h| h.budget.min(h.size).saturating_sub(h.usage))
+        .max()
+}
+
+/// The Vulkan memory figure: the heap budget when `heaps` has one, else `heap_size`.
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd"
+))]
+pub(crate) fn vulkan_figure(
+    heaps: Option<&[HeapBudget]>,
+    heap_size: Option<DeviceMemory>,
+) -> Option<DeviceMemory> {
+    match heaps.and_then(heap_budget_bytes) {
+        Some(bytes) => Some(DeviceMemory {
+            bytes,
+            figure: MemoryFigure::VulkanHeapBudget,
+        }),
+        None => heap_size,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +354,88 @@ mod tests {
             bytes,
             figure: MemoryFigure::VulkanDeviceLocalHeap,
         })
+    }
+
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    ))]
+    fn heap(device_local: bool, size: u64, budget: u64, usage: u64) -> HeapBudget {
+        HeapBudget {
+            device_local,
+            size,
+            budget,
+            usage,
+        }
+    }
+
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    ))]
+    #[test]
+    fn the_heap_budget_is_the_largest_device_local_budget_left_after_the_usage() {
+        let heaps = [
+            heap(false, 32 * GIB, 30 * GIB, 0),
+            heap(true, 8 * GIB, 7 * GIB, 2 * GIB),
+            heap(true, 256 << 20, 200 << 20, 0),
+        ];
+        assert_eq!(heap_budget_bytes(&heaps), Some(5 * GIB));
+        assert_eq!(
+            heap_budget_bytes(&[heap(true, 8 * GIB, 9 * GIB, GIB)]),
+            Some(7 * GIB)
+        );
+        assert_eq!(
+            heap_budget_bytes(&[heap(true, 8 * GIB, 7 * GIB, 8 * GIB)]),
+            Some(0)
+        );
+    }
+
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    ))]
+    #[test]
+    fn without_a_device_local_heap_reporting_a_budget_there_is_no_heap_budget() {
+        assert_eq!(heap_budget_bytes(&[]), None);
+        assert_eq!(
+            heap_budget_bytes(&[heap(false, 32 * GIB, 30 * GIB, 0)]),
+            None
+        );
+        assert_eq!(heap_budget_bytes(&[heap(true, 8 * GIB, 0, 0)]), None);
+        assert_eq!(heap_budget_bytes(&[heap(true, 0, 7 * GIB, 0)]), None);
+    }
+
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    ))]
+    #[test]
+    fn the_vulkan_figure_falls_back_to_the_heap_size_without_a_budget() {
+        let size = vulkan(8 * GIB);
+        let heaps = [heap(true, 8 * GIB, 7 * GIB, GIB)];
+        assert_eq!(
+            vulkan_figure(Some(&heaps), size),
+            Some(DeviceMemory {
+                bytes: 6 * GIB,
+                figure: MemoryFigure::VulkanHeapBudget
+            })
+        );
+        assert_eq!(vulkan_figure(None, size), size);
+        assert_eq!(vulkan_figure(Some(&[]), size), size);
+        assert_eq!(
+            vulkan_figure(Some(&[heap(true, 8 * GIB, 0, 0)]), size),
+            size
+        );
+        assert_eq!(vulkan_figure(None, None), None);
     }
 
     #[test]
