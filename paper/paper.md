@@ -8,25 +8,21 @@ tags:
   - neuroimaging
 authors:
   - name: Richard M. Köhler
-    orcid: 0000-0000-0000-0000
+    orcid: 0000-0002-5219-1289
     corresponding: true
-    affiliation: "1, 2"
+    affiliation: 1
   - name: Jan Philipp Payonk
     orcid: 0009-0005-8213-8736
-    affiliation: 3
+    affiliation: 2
   - name: Wolf-Julian Neumann
     orcid: 0000-0002-6758-9708
-    affiliation: "1, 2, 4"
+    affiliation: 1
 affiliations:
   - name: Wyss Center for Bio and Neuroengineering, Geneva, Switzerland
     index: 1
-  - name: Movement Disorder and Neuromodulation Unit, Department of Neurology, Charité – Universitätsmedizin Berlin, Berlin, Germany
+  - name: Institute of General Electrical Engineering, University of Rostock, Rostock, Germany
     index: 2
-  - name: Network Stimulation Institute, Department of Stereotactic and Functional Neurosurgery, University Hospital Cologne, Cologne, Germany
-    index: 3
-  - name: AI Hub for Care, Health and Innovation, Geneva, Switzerland
-    index: 4
-date: 1 January 2027 # TODO(author): submission date; replace 0000-0000-0000-0000 with the first author's ORCID iD
+date: 1 January 2027 # TODO(author): submission date
 bibliography: paper.bib
 ---
 
