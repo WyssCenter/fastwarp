@@ -1,5 +1,5 @@
 # GPU (wgpu) SyN registration from Wyss DBS Localizer, packaged as a Python extension.
-# crates/dbsloc-{core,niftiio,matfile,reg,gpu} are copies of WyssCenter/fastwarp 90c1df3 (2026-11-10)
+# crates/dbsloc-{core,niftiio,matfile,reg,gpu} come from Wyss DBS Localizer (engine revision 90c1df3, 2026-11-10)
 [workspace]
 resolver = "2"
 members = [
@@ -8,7 +8,7 @@ members = [
     "crates/dbsloc-matfile",
     "crates/dbsloc-reg",
     "crates/dbsloc-gpu",
-    "crates/dbsloc-gpureg-py",
+    "crates/fastwarp-py",
 ]
 
 [workspace.package]

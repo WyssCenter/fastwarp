@@ -3,7 +3,7 @@ requires = ["maturin>=1.9.4,<2"]
 build-backend = "maturin"
 
 [project]
-name = "dbsloc-gpureg"
+name = "fastwarp"
 dynamic = ["version"]  # from Cargo.toml [workspace.package]
 description = "GPU (wgpu: Vulkan / Metal / DX12) image registration from Wyss DBS Localizer (Rigid, Affine, SyN), with ANTs-compatible outputs"
 readme = "README.md"
@@ -27,9 +27,9 @@ environments = ["python_full_version >= '3.13' and python_full_version < '3.15'"
 constraint-dependencies = ["scipy>=1.15"]
 
 [tool.maturin]
-manifest-path = "crates/dbsloc-gpureg-py/Cargo.toml"
+manifest-path = "crates/fastwarp-py/Cargo.toml"
 python-source = "python"
-module-name = "dbsloc_gpureg._core"
+module-name = "fastwarp._core"
 
 [tool.ruff]
 line-length = 100

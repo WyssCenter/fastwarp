@@ -12,7 +12,7 @@ from __future__ import annotations
 import gzip
 from pathlib import Path
 
-import dbsloc_gpureg as g
+import fastwarp as g
 import numpy as np
 import pytest
 

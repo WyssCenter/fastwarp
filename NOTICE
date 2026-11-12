@@ -1,4 +1,4 @@
-dbsloc-gpureg
+fastwarp
 Copyright 2026 Wyss Center for Bio and Neuroengineering
 
 Licensed under the Apache License, Version 2.0 (LICENSE).
@@ -7,7 +7,7 @@ The registration engine (crates/dbsloc-core, dbsloc-niftiio, dbsloc-matfile, dbs
 dbsloc-gpu) is copied from Wyss DBS Localizer, an internal Wyss Center repository, written by
 Richard Köhler.
 
-Portions of dbsloc-reg, dbsloc-gpu and dbsloc-gpureg-py are derived from the Insight Toolkit
+Portions of dbsloc-reg, dbsloc-gpu and fastwarp-py are derived from the Insight Toolkit
 (ITK) v5.4.4 and from ANTs (Advanced Normalization Tools) v2.6.5, both licensed under the
 Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Each derived file
 carries the upstream copyright line and the Apache header and states what was changed;
@@ -22,5 +22,5 @@ This software is distributed under the Apache 2.0 License.
 ANTs: Copyright the ANTs developers, https://github.com/ANTsX/ANTs,
 licensed under the Apache License, Version 2.0.
 
-dbsloc-gpureg is an independent implementation. It is not affiliated with or
+fastwarp is an independent implementation. It is not affiliated with or
 endorsed by the ITK or ANTs projects.

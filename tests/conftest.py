@@ -14,7 +14,7 @@ def _flag(name: str) -> bool:
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     if _flag("DBSLOC_GPU_REQUIRE_ADAPTER"):
-        import dbsloc_gpureg as g
+        import fastwarp as g
 
         if not g.gpu_available():
             pytest.exit("DBSLOC_GPU_REQUIRE_ADAPTER is set but no usable GPU adapter opens", 1)

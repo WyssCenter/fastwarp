@@ -52,7 +52,7 @@ jobs:
         run: |
           uv sync --locked --no-install-project
           uv pip install --no-deps dist/*.whl
-          uv run --no-sync python -c "import dbsloc_gpureg as g; print(g.__version__, g.ENGINE_SOURCE); print('gpu:', g.gpu_info() if g.gpu_available() else 'none')"
+          uv run --no-sync python -c "import fastwarp as g; print(g.__version__, g.ENGINE_SOURCE); print('gpu:', g.gpu_info() if g.gpu_available() else 'none')"
           uv run --no-sync pytest tests -v -rs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

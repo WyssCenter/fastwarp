@@ -36,7 +36,7 @@ from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
 
 try:
-    __version__ = version("dbsloc-gpureg")
+    __version__ = version("fastwarp")
 except PackageNotFoundError:  # pragma: no cover - source tree without metadata
     __version__ = "0+unknown"
 

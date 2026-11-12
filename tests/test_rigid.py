@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import dbsloc_gpureg as g
+import fastwarp as g
 import numpy as np
 import pytest
 from test_register import SPACING, needs_gpu, phantom

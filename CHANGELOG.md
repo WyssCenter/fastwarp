@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+- Renamed from `dbsloc-gpureg` to `fastwarp`: the package is `fastwarp` (`pip install fastwarp`,
+  `import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
+  https://github.com/WyssCenter/fastwarp. The engine crates keep their `dbsloc-*` names. Code
+  that imports `dbsloc_gpureg` must import `fastwarp` instead; nothing else in the API changed.
 - Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
   `LICENSE` and `NOTICE`.
 - The `Private :: Do Not Upload` classifier is gone, so the wheels can go to PyPI.
 - README timings measured on five GPUs (NVIDIA RTX A4000, Apple M5 Pro, Intel Lunar Lake, AMD
   Radeon Pro 5500 XT, NVIDIA Quadro K620 on Windows).
-- Engine updated to WyssCenter/fastwarp `90c1df3`: wgpu 30, ndarray 0.17, nifti 0.18; the
+- Engine updated to revision `90c1df3` of its earlier standalone copy: wgpu 30, ndarray 0.17, nifti 0.18; the
   `dbsloc-matfile` tests carry their own data; the ANTs comparison tests read the programs from
   `DBSLOC_ANTS_DIR`. `ENGINE_SOURCE` is now `"fastwarp 90c1df3"`.
 - Licence labels in REUSE form: an SPDX header in every source file, `REUSE.toml` for the rest,

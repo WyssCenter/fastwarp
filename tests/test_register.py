@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-import dbsloc_gpureg as g
+import fastwarp as g
 import numpy as np
 import pytest
 
@@ -198,7 +198,7 @@ def test_non_finite_voxels_are_refused(tmp_path):
 
 
 def test_a_missing_output_folder_is_refused_before_any_work(tmp_path):
-    from dbsloc_gpureg import _core
+    from fastwarp import _core
 
     args = g._image_args(phantom())
     with pytest.raises(ValueError, match="does not exist"):

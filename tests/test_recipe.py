@@ -10,7 +10,7 @@ import hashlib
 from pathlib import Path
 from types import MappingProxyType
 
-import dbsloc_gpureg as g
+import fastwarp as g
 import pytest
 from test_register import SHIFT_MM, SPACING, needs_gpu, phantom
 
