@@ -13,7 +13,7 @@ use crate::capacity::DeviceMemory;
     target_os = "android",
     target_os = "freebsd"
 ))]
-use crate::capacity::MemoryFigure;
+use crate::capacity::{vulkan_figure, HeapBudget, MemoryFigure};
 use crate::caps::GpuCaps;
 use crate::error::{GpuError, GpuResult};
 use crate::profiler::Profiler;
@@ -510,6 +510,67 @@ fn dx12_memory(adapter: &wgpu::Adapter) -> Option<DeviceMemory> {
     target_os = "freebsd"
 ))]
 fn vulkan_memory(adapter: &wgpu::Adapter) -> Option<DeviceMemory> {
+    vulkan_figure(
+        vulkan_heap_budgets(adapter).as_deref(),
+        vulkan_heap_size(adapter),
+    )
+}
+
+/// The heaps with the budget and usage `VK_EXT_memory_budget` reports, or `None` when the adapter
+/// is not a Vulkan one, the device lacks the extension or the instance cannot query it.
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd"
+))]
+fn vulkan_heap_budgets(adapter: &wgpu::Adapter) -> Option<Vec<HeapBudget>> {
+    use ash::khr::get_physical_device_properties2 as properties2;
+    use ash::vk;
+    // SAFETY: read-only query on the live hal adapter; the adapter is never destroyed or modified while borrowed.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    if !hal
+        .physical_device_capabilities()
+        .supports_extension(ash::ext::memory_budget::NAME)
+    {
+        return None;
+    }
+    let shared = hal.shared_instance();
+    if !shared.extensions().contains(&properties2::NAME) {
+        return None;
+    }
+    let loader = properties2::Instance::new(shared.entry(), shared.raw_instance());
+    let mut budget = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+    let mut props = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut budget);
+    // SAFETY: the live instance enabled VK_KHR_get_physical_device_properties2 (checked above), so the loader's entry point is valid; the physical device belongs to that instance and supports VK_EXT_memory_budget (checked above), which permits the chained budget structure; both structures outlive the call, which only writes them.
+    unsafe { loader.get_physical_device_memory_properties2(hal.raw_physical_device(), &mut props) };
+    let base = props.memory_properties;
+    let count = usize::try_from(base.memory_heap_count).ok()?;
+    let heaps = base.memory_heaps.get(..count)?;
+    let budgets = budget.heap_budget.get(..count)?;
+    let usages = budget.heap_usage.get(..count)?;
+    Some(
+        heaps
+            .iter()
+            .zip(budgets)
+            .zip(usages)
+            .map(|((h, heap_budget), usage)| HeapBudget {
+                device_local: h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL),
+                size: h.size,
+                budget: *heap_budget,
+                usage: *usage,
+            })
+            .collect(),
+    )
+}
+
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd"
+))]
+fn vulkan_heap_size(adapter: &wgpu::Adapter) -> Option<DeviceMemory> {
     const VK_MEMORY_HEAP_DEVICE_LOCAL_BIT: u32 = 0x1;
     // SAFETY: read-only query on the live hal adapter; the adapter is never destroyed or modified while borrowed.
     let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
@@ -583,6 +644,54 @@ mod tests {
     fn new_instance_with_vulkan_keeps_an_idle_vulkan_instance() {
         drop(new_instance(wgpu::Backends::VULKAN));
         assert!(KEEP_VULKAN.get().is_some());
+    }
+
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    ))]
+    #[test]
+    fn the_vulkan_figure_is_the_live_heap_budget_when_the_device_reports_one() {
+        let force_software = env_truthy("WGPU_FORCE_FALLBACK_ADAPTER");
+        let sel = BackendSelect {
+            backend: BackendChoice::Vulkan,
+            adapter_substring: env_var("FASTWARP_GPU_ADAPTER").filter(|s| !s.trim().is_empty()),
+            allow_software: force_software || env_truthy("FASTWARP_GPU_ALLOW_SOFTWARE"),
+            force_software,
+        };
+        let instance = new_instance(wgpu::Backends::VULKAN);
+        let Some(adapter) = pick(enumerate(&instance, wgpu::Backends::VULKAN), &sel) else {
+            assert!(
+                !env_truthy("FASTWARP_GPU_REQUIRE_ADAPTER"),
+                "no Vulkan adapter with FASTWARP_GPU_REQUIRE_ADAPTER set"
+            );
+            eprintln!("skip: no Vulkan adapter");
+            return;
+        };
+        let name = adapter.get_info().name;
+        let Some(heaps) = vulkan_heap_budgets(&adapter) else {
+            eprintln!("skip: {name} does not report VK_EXT_memory_budget");
+            return;
+        };
+        let heap_size = vulkan_heap_size(&adapter).expect("a device-local heap");
+        let memory = vulkan_figure(Some(&heaps), Some(heap_size)).expect("a Vulkan memory figure");
+        eprintln!(
+            "{name}: heaps {heaps:?}; device-local heap {} bytes, live figure {memory:?}",
+            heap_size.bytes
+        );
+        assert!(heaps.iter().any(|h| h.device_local), "{heaps:?}");
+        if memory.figure == MemoryFigure::VulkanHeapBudget {
+            assert!(
+                memory.bytes <= heap_size.bytes,
+                "{} > {}",
+                memory.bytes,
+                heap_size.bytes
+            );
+        } else {
+            assert_eq!(memory, heap_size);
+        }
     }
 
     #[test]
