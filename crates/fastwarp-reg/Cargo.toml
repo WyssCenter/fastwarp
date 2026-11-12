@@ -3,7 +3,7 @@ name = "fastwarp-reg"
 version.workspace = true
 publish = false
 edition = "2021"
-description = "Wyss DBS Localizer registration engine: grids, volumes, ITK-compatible transform I/O and point mapping (CPU)"
+description = "FastWarp registration engine: grids, volumes, ITK-compatible transform I/O and point mapping (CPU)"
 license = "Apache-2.0"
 
 [lib]

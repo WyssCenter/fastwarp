@@ -3,7 +3,7 @@ name = "fastwarp-niftiio"
 version.workspace = true
 publish = false
 edition = "2021"
-description = "Fast NIfTI-1 reading (single pass, parallel decode) and writing (parallel single-member gzip) for Wyss DBS Localizer"
+description = "Fast NIfTI-1 reading (single pass, parallel decode) and writing (parallel single-member gzip) for FastWarp"
 license = "Apache-2.0"
 
 [lib]

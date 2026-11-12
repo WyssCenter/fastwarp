@@ -1,10 +1,10 @@
-fastwarp
+FastWarp
 Copyright 2026 Wyss Center for Bio and Neuroengineering
 
 Licensed under the Apache License, Version 2.0 (LICENSE).
 
 The registration engine (crates/fastwarp-core, fastwarp-niftiio, fastwarp-matfile, fastwarp-reg,
-fastwarp-gpu) is copied from Wyss DBS Localizer, an internal Wyss Center repository, written by
+fastwarp-gpu) is copied from Wyss DBS Localizer, the project in which the code was first developed, written by
 Richard Köhler.
 
 Portions of fastwarp-reg, fastwarp-gpu and fastwarp-py are derived from the Insight Toolkit
@@ -22,5 +22,5 @@ This software is distributed under the Apache 2.0 License.
 ANTs: Copyright the ANTs developers, https://github.com/ANTsX/ANTs,
 licensed under the Apache License, Version 2.0.
 
-fastwarp is an independent implementation. It is not affiliated with or
+FastWarp is an independent implementation. It is not affiliated with or
 endorsed by the ITK or ANTs projects.

@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "fastwarp"
 dynamic = ["version"]  # from Cargo.toml [workspace.package]
-description = "GPU (wgpu: Vulkan / Metal / DX12) image registration from Wyss DBS Localizer (Rigid, Affine, SyN), with ANTs-compatible outputs"
+description = "FastWarp: GPU (wgpu: Vulkan / Metal / DX12) image registration (Rigid, Affine, SyN), with ANTs-compatible outputs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

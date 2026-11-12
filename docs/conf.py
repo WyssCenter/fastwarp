@@ -1,4 +1,4 @@
-project = "fastwarp"
+project = "FastWarp"
 author = "Richard Köhler, Wyss Center for Bio and Neuroengineering"
 copyright = "2026 Wyss Center for Bio and Neuroengineering"
 
@@ -25,4 +25,4 @@ autoapi_python_class_content = "both"
 autoapi_keep_files = False
 
 html_theme = "furo"
-html_title = "fastwarp"
+html_title = "FastWarp"

@@ -1,4 +1,4 @@
-# Releasing fastwarp
+# Releasing FastWarp
 
 ## One-time setup
 

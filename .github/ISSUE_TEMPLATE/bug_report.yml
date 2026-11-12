@@ -5,7 +5,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: fastwarp version
+      label: FastWarp version
       description: "python -c \"import fastwarp; print(fastwarp.__version__)\""
     validations:
       required: true

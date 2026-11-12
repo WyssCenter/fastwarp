@@ -1,4 +1,4 @@
-# Contributing to fastwarp
+# Contributing to FastWarp
 
 Thank you for considering a contribution. This page says how to set up, check and submit a
 change. By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -6,7 +6,7 @@ change. By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Ask, report, get help
 
 - Questions and usage problems: open a [GitHub issue](https://github.com/WyssCenter/fastwarp/issues).
-- Bugs: open an issue with the bug report form. Give the `fastwarp` version, the operating
+- Bugs: open an issue with the bug report form. Give the FastWarp version, the operating
   system, the GPU and driver, the backend (Vulkan, Metal or DX12), the output of
   `fastwarp.gpu_info()` and a minimal reproduction.
 - Feature requests: open an issue with the feature request form and describe the use case
@@ -86,10 +86,10 @@ have no right to license under Apache-2.0.
 
 ## Licence of contributions
 
-`fastwarp` is licensed under [Apache-2.0](LICENSE). Unless you state otherwise, a contribution
+FastWarp is licensed under [Apache-2.0](LICENSE). Unless you state otherwise, a contribution
 you submit is licensed under Apache-2.0 as well (inbound = outbound, Apache-2.0 section 5).
 
 ## Governance and support
 
 TODO(author): state who decides on changes and releases, and what support users can expect.
-`fastwarp` is research software; support is by best effort through GitHub issues.
+FastWarp is research software; support is by best effort through GitHub issues.

@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this engine, please cite it as below."
-title: "fastwarp: the GPU registration engine of Wyss DBS Localizer"
+title: "FastWarp: the GPU registration engine of Wyss DBS Localizer"
 type: software
 authors:
   - family-names: "Köhler"
