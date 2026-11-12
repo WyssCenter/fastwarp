@@ -657,7 +657,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "RegistrationCancelled",
         py.get_type::<RegistrationCancelled>(),
     )?;
-    m.add("ENGINE_SOURCE", "fastwarp 90c1df3")?;
+    m.add("ENGINE_SOURCE", "fastwarp-legacy 90c1df3")?;
     m.add("VERSION", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

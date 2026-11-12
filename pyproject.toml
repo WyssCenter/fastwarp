@@ -18,6 +18,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
+[project.urls]
+Repository = "https://github.com/WyssCenter/fastwarp"
+Changelog = "https://github.com/WyssCenter/fastwarp/blob/main/CHANGELOG.md"
+
 [dependency-groups]
 dev = ["maturin>=1.9.4,<2", "pytest", "ruff"]
 ants = ["antspyx>=0.6.1"]

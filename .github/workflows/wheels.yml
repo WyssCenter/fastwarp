@@ -1,4 +1,4 @@
-# Wheels for every platform leaddbs-py supports; one abi3 wheel per platform covers Python >= 3.10.
+# Wheels for macOS, Linux and Windows; one abi3 wheel per platform covers Python >= 3.10.
 # A tag v* also creates a GitHub release with the wheels and the sdist attached.
 name: wheels
 

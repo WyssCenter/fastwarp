@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- Renamed from `dbsloc-gpureg` to `fastwarp`: the package is `fastwarp` (`pip install fastwarp`,
-  `import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
+- Renamed from `dbsloc-gpureg` to `fastwarp`: the package and the module are `fastwarp`
+  (`import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
   https://github.com/WyssCenter/fastwarp. The engine crates keep their `dbsloc-*` names. Code
   that imports `dbsloc_gpureg` must import `fastwarp` instead; nothing else in the API changed.
+- `ENGINE_SOURCE` is `"fastwarp-legacy 90c1df3"` (was `"fastwarp 90c1df3"`): the revision belongs
+  to the earlier standalone copy of the engine, not to this repository.
 - Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
   `LICENSE` and `NOTICE`.
 - The `Private :: Do Not Upload` classifier is gone, so the wheels can go to PyPI.

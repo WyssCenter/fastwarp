@@ -59,8 +59,8 @@ and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-
 From a release (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):
 
 ```bash
-gh release download -R WyssCenter/fastwarp -p "*.whl" -D wheels   # the latest release
-pip install --no-index --find-links wheels fastwarp
+gh release download -R WyssCenter/fastwarp -p "*.whl" -D wheels   # the latest release; needs the GitHub CLI
+pip install --find-links wheels fastwarp
 ```
 
 From source (needs a Rust toolchain; `rust-toolchain.toml` pins the version):
