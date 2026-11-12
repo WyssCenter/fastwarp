@@ -495,6 +495,11 @@ dependencies = [
 ants = [
     { name = "antspyx" },
 ]
+benchmark = [
+    { name = "antspyx" },
+    { name = "matplotlib" },
+    { name = "scipy" },
+]
 dev = [
     { name = "maturin" },
     { name = "pytest" },
@@ -514,6 +519,11 @@ requires-dist = [{ name = "numpy", specifier = ">=2.0" }]
 
 [package.metadata.requires-dev]
 ants = [{ name = "antspyx", specifier = ">=0.6.1" }]
+benchmark = [
+    { name = "antspyx", specifier = ">=0.6.1" },
+    { name = "matplotlib", specifier = ">=3.9" },
+    { name = "scipy", specifier = ">=1.15" },
+]
 dev = [
     { name = "maturin", specifier = ">=1.9.4,<2" },
     { name = "pytest", specifier = ">=9.2.0" },

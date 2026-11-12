@@ -47,6 +47,7 @@ user-guide
 api/index
 testing
 performance
+benchmarks
 changelog
 licence
 THIRD_PARTY_PORTS

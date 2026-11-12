@@ -63,6 +63,10 @@ and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS does next)
 | Inverse field (37 M voxels) | 20.9 s | 0.95 s |
 | Lanczos re-warp | 31.0 s | 2.7 s |
 
+An accuracy benchmark against manual labels, anatomical landmarks and ANTs on public data, which
+reviewers can run themselves, is described in [docs/benchmarks.md](docs/benchmarks.md) (no results
+yet).
+
 ## Install
 
 From PyPI (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):

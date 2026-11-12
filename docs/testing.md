@@ -50,6 +50,11 @@ uv run --no-sync pytest -rs
   `compose_field` and `apply_transforms`. Each starts with `pytest.importorskip("ants")`, so
   without ANTsPy the whole module is skipped, not just one test. In `test_post.py` the affine
   tests need no GPU; the composite tests do.
+- `test_benchmark_metrics.py`, `test_benchmark_fetch.py`, `test_benchmark_recipes.py`: the
+  accuracy benchmark's metrics, hash-pinned downloads, safe extraction, recipes and pair
+  selection, on tiny synthetic data (no GPU, no network). `test_benchmark_smoke.py` runs the
+  benchmark end to end on a synthetic phantom with FastWarp and ANTs (needs a GPU and ANTsPy;
+  about 30 s on a laptop GPU). See [Accuracy benchmark](benchmarks.md).
 
 ## Rust tests
 
