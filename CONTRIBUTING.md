@@ -24,14 +24,14 @@ You need:
   [rustup](https://rustup.rs), `rustup toolchain install` in the repository installs it.
 - [uv](https://docs.astral.sh/uv/) for the Python tools, which `uv.lock` pins (maturin, pytest,
   ruff, and ANTsPy in the `ants` group).
-- [cargo-nextest](https://nexte.st) to run the Rust tests; the copied `dbsloc-niftiio` tests
+- [cargo-nextest](https://nexte.st) to run the Rust tests; the copied `fastwarp-niftiio` tests
   need one process per test.
 - Python 3.14 for development (`.python-version`). ANTsPy has no 3.14 wheels yet, so work that
   uses the `ants` group sets `UV_PYTHON=3.13`, as CI does. The wheel supports Python 3.10 and
   later.
 - A GPU with a Vulkan, Metal or DX12 driver. Without one, the GPU tests skip. On Linux, Mesa's
   `lavapipe` software driver (`mesa-vulkan-drivers`) works with `WGPU_FORCE_FALLBACK_ADAPTER=1`
-  and `DBSLOC_GPU_ALLOW_SOFTWARE=1`, as in CI.
+  and `FASTWARP_GPU_ALLOW_SOFTWARE=1`, as in CI.
 
 ## Build, lint and test
 
@@ -43,20 +43,20 @@ export UV_PYTHON=3.13
 uv sync --locked --no-install-project --group ants
 uv run --no-sync maturin develop --uv --release
 uv run --no-sync pytest
-PYO3_PYTHON="$PWD/.venv/bin/python" cargo nextest run --locked --workspace --features dbsloc-gpu/dev-tools
+PYO3_PYTHON="$PWD/.venv/bin/python" cargo nextest run --locked --workspace --features fastwarp-gpu/dev-tools
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --features dbsloc-gpu/dev-tools -- -D warnings
-cargo clippy --locked -p dbsloc-gpu --all-targets -- -D warnings
+cargo clippy --locked --workspace --all-targets --features fastwarp-gpu/dev-tools -- -D warnings
+cargo clippy --locked -p fastwarp-gpu --all-targets -- -D warnings
 uv run --no-sync ruff check python tests
 uv run --no-sync ruff format --check python tests
 ```
 
-On Windows, `PYO3_PYTHON` is the full path of `.venv/Scripts/python.exe`. Set `DBSLOC_GPU_REQUIRE_ADAPTER=1` and
-`DBSLOC_REQUIRE_ANTSPY=1` to make a missing adapter or a missing ANTsPy fail the tests instead of
+On Windows, `PYO3_PYTHON` is the full path of `.venv/Scripts/python.exe`. Set `FASTWARP_GPU_REQUIRE_ADAPTER=1` and
+`FASTWARP_REQUIRE_ANTSPY=1` to make a missing adapter or a missing ANTsPy fail the tests instead of
 skipping them (CI does).
 
 The tests that compare the engine with the real ANTs programs are `#[ignore]`d. They run in
-`full.yml` on non-draft pull requests. To run them locally, use the `DBSLOC_ANTS_DIR` command in
+`full.yml` on non-draft pull requests. To run them locally, use the `FASTWARP_ANTS_DIR` command in
 the README.
 
 ## Commits
