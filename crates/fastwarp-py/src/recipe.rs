@@ -6,10 +6,10 @@
 //! keeps the dbs-localizer cohort value, an unknown one is an error, so a caller (leaddbs-py) can
 //! state the whole schedule and a typo never passes silently.
 
-use dbsloc_reg::linear::LinearRecipe;
-use dbsloc_reg::pyramid::SigmaUnits;
-use dbsloc_reg::recipe::SynRecipe;
-use dbsloc_reg::register::LinearPlan;
+use fastwarp_reg::linear::LinearRecipe;
+use fastwarp_reg::pyramid::SigmaUnits;
+use fastwarp_reg::recipe::SynRecipe;
+use fastwarp_reg::register::LinearPlan;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

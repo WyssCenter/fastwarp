@@ -33,13 +33,13 @@
 use std::f64::consts::PI;
 use std::path::Path;
 
-use dbsloc_niftiio::WriterOptions;
-use dbsloc_reg::apply::{apply_chain, Interpolation};
-use dbsloc_reg::interp::is_inside_point;
-use dbsloc_reg::nifti_io::header_from_grid;
-use dbsloc_reg::transform::field_nifti::INTENT_VECTOR;
-use dbsloc_reg::transform::{DisplacementField, TransformChain};
-use dbsloc_reg::{Grid, RegError, Result, Volume};
+use fastwarp_niftiio::WriterOptions;
+use fastwarp_reg::apply::{apply_chain, Interpolation};
+use fastwarp_reg::interp::is_inside_point;
+use fastwarp_reg::nifti_io::header_from_grid;
+use fastwarp_reg::transform::field_nifti::INTENT_VECTOR;
+use fastwarp_reg::transform::{DisplacementField, TransformChain};
+use fastwarp_reg::{Grid, RegError, Result, Volume};
 use ndarray::{ArrayView5, ShapeBuilder};
 use rayon::prelude::*;
 
@@ -77,7 +77,7 @@ pub fn compose_field(chain: &TransformChain, reference: &Grid) -> Result<Displac
     DisplacementField::new(*reference, data)
 }
 
-/// [`dbsloc_reg::transform::field_nifti::write_field_nifti`] without its serial copy of the
+/// [`fastwarp_reg::transform::field_nifti::write_field_nifti`] without its serial copy of the
 /// field into a fresh array: the writer reads the interleaved `[x y z]` data through a strided
 /// view. Same file: `f32`, `dim = [5, nx, ny, nz, 1, 3]`, intent `NIFTI_INTENT_VECTOR`.
 /// `level` is the gzip level of a `.nii.gz` (`None`: the writer's default, 1).
@@ -241,7 +241,7 @@ fn lanczos_resample(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use dbsloc_reg::transform::{AffineTransform, TransformElem};
+    use fastwarp_reg::transform::{AffineTransform, TransformElem};
 
     /// ITK's loop, literally: `x = d + R`, then `x -= 1` and `window(x) * sinc(x)` per tap.
     fn itk_weights(d: f64) -> [f64; TAPS] {
@@ -370,7 +370,7 @@ mod tests {
         for name in ["f.nii", "f.nii.gz"] {
             let (a, b) = (dir.join(format!("a_{name}")), dir.join(format!("b_{name}")));
             write_field(&a, &f, None).unwrap();
-            dbsloc_reg::transform::field_nifti::write_field_nifti(&b, &f).unwrap();
+            fastwarp_reg::transform::field_nifti::write_field_nifti(&b, &f).unwrap();
             assert_eq!(
                 std::fs::read(&a).unwrap(),
                 std::fs::read(&b).unwrap(),

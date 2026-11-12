@@ -11,9 +11,9 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-dbsloc-reg = { path = "../dbsloc-reg" }
-dbsloc-gpu = { path = "../dbsloc-gpu" }
-dbsloc-niftiio = { path = "../dbsloc-niftiio" }
+fastwarp-reg = { path = "../fastwarp-reg" }
+fastwarp-gpu = { path = "../fastwarp-gpu" }
+fastwarp-niftiio = { path = "../fastwarp-niftiio" }
 ndarray = "0.17"
 pyo3 = { version = "0.30", features = ["abi3-py310"] }
 numpy = "0.30"

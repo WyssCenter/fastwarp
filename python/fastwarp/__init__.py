@@ -192,7 +192,7 @@ def fits_gpu(
 
 def gpu_available(adapter: str | None = None) -> bool:
     """True when a usable hardware GPU adapter opens (software adapters only with
-    ``DBSLOC_GPU_ALLOW_SOFTWARE=1``)."""
+    ``FASTWARP_GPU_ALLOW_SOFTWARE=1``)."""
     try:
         gpu_info(adapter)
     except GpuUnavailableError:

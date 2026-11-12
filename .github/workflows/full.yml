@@ -97,6 +97,6 @@ jobs:
           CARGO_PROFILE_DEV_OPT_LEVEL: "1"
           ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS: "4"
         run: >-
-          DBSLOC_ANTS_DIR="$ANTS_DIR"
-          cargo nextest run --locked -p dbsloc-reg --profile ci --run-ignored only
-          -E 'binary_id(dbsloc-reg::ants_compat) | binary_id(dbsloc-reg::coreg_metric) | binary_id(dbsloc-reg::n4_ants)'
+          FASTWARP_ANTS_DIR="$ANTS_DIR"
+          cargo nextest run --locked -p fastwarp-reg --profile ci --run-ignored only
+          -E 'binary_id(fastwarp-reg::ants_compat) | binary_id(fastwarp-reg::coreg_metric) | binary_id(fastwarp-reg::n4_ants)'

@@ -4,8 +4,12 @@
 
 - Renamed from `dbsloc-gpureg` to `fastwarp`: the package and the module are `fastwarp`
   (`import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
-  https://github.com/WyssCenter/fastwarp. The engine crates keep their `dbsloc-*` names. Code
-  that imports `dbsloc_gpureg` must import `fastwarp` instead; nothing else in the API changed.
+  https://github.com/WyssCenter/fastwarp. The engine crates are now `fastwarp-core`, `fastwarp-niftiio`,
+  `fastwarp-matfile`, `fastwarp-reg` and `fastwarp-gpu` (were `dbsloc-*`), and the developer
+  binaries are `fastwarp_gpu_probe`, `fastwarp_reg_syn` and `fastwarp_reg_ab`. Code that imports
+  `dbsloc_gpureg` must import `fastwarp` instead; nothing else in the API changed.
+- The environment variables are `FASTWARP_*` (`FASTWARP_GPU_BACKEND`, `FASTWARP_GPU_ADAPTER`,
+  `FASTWARP_ANTS_DIR`, ...); the former `DBSLOC_*` names are still read when the new one is unset.
 - `ENGINE_SOURCE` is `"fastwarp-legacy 90c1df3"` (was `"fastwarp 90c1df3"`): the revision belongs
   to the earlier standalone copy of the engine, not to this repository.
 - Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
@@ -14,7 +18,7 @@
 - README timings measured on five GPUs (NVIDIA RTX A4000, Apple M5 Pro, Intel Lunar Lake, AMD
   Radeon Pro 5500 XT, NVIDIA Quadro K620 on Windows).
 - Engine updated to revision `90c1df3` of its earlier standalone copy: wgpu 30, ndarray 0.17, nifti 0.18; the
-  `dbsloc-matfile` tests carry their own data; the ANTs comparison tests read the programs from
+  `fastwarp-matfile` tests carry their own data; the ANTs comparison tests read the programs from
   `DBSLOC_ANTS_DIR`. `ENGINE_SOURCE` is now `"fastwarp 90c1df3"`.
 - Licence labels in REUSE form: an SPDX header in every source file, `REUSE.toml` for the rest,
   `LICENSES/Apache-2.0.txt`; `NOTICE` carries the ITK notice; `THIRD_PARTY_PORTS.md` moved to
@@ -25,7 +29,7 @@
   `PYO3_BUILD_EXTENSION_MODULE` itself), so the binding's Rust unit tests link on Linux and run
   in CI. `wheels.yml` pins maturin 1.16.0.
 - The idle Vulkan instance that keeps NVIDIA's Linux driver loaded lives in the engine
-  (`dbsloc_gpu::device::new_instance`) instead of the binding, so every user of the engine gets
+  (`fastwarp_gpu::device::new_instance`) instead of the binding, so every user of the engine gets
   it, not only the Python package; it is created only when Vulkan is among the requested APIs.
 
 ## 0.4.0 (2026-11-09)

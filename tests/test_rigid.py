@@ -103,7 +103,7 @@ def test_a_short_stage_and_winsorizing_run(pair):
 )
 def test_bad_arguments_are_refused_before_any_work(pair, monkeypatch, kwargs, match):
     fixed, moving, _, _ = pair
-    monkeypatch.setenv("DBSLOC_GPU_ADAPTER", "no such adapter")
+    monkeypatch.setenv("FASTWARP_GPU_ADAPTER", "no such adapter")
     if kwargs.pop("_no_mkdir", False):
         monkeypatch.setattr(g, "_prepared_prefix", str)
     with pytest.raises((ValueError, TypeError), match=match):

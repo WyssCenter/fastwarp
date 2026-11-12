@@ -19,7 +19,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// A fit is one stage of dbsloc-reg's `run_linear_chain_cached` (itself after ANTs'
+// A fit is one stage of fastwarp-reg's `run_linear_chain_cached` (itself after ANTs'
 // `--initial-moving-transform <start> --transform Rigid[...]` or `Affine[...]`: the start in the
 // moving initial composite, a fresh transform optimised on top, both collapsed into one affine),
 // with its smoothing cache kept across calls instead of made per call. See `docs/THIRD_PARTY_PORTS.md`.
@@ -31,14 +31,14 @@
 
 use std::sync::atomic::AtomicBool;
 
-use dbsloc_gpu::WgpuBackend;
-use dbsloc_reg::linalg::IDENTITY3;
-use dbsloc_reg::linear::{
+use fastwarp_gpu::WgpuBackend;
+use fastwarp_reg::linalg::IDENTITY3;
+use fastwarp_reg::linear::{
     run_linear_stage_cached, with_center, LinearKind, LinearRecipe, SmoothCache,
 };
-use dbsloc_reg::mask::MaskVolume;
-use dbsloc_reg::transform::{AffineTransform, ParametricTransform};
-use dbsloc_reg::{Result, Volume};
+use fastwarp_reg::mask::MaskVolume;
+use fastwarp_reg::transform::{AffineTransform, ParametricTransform};
+use fastwarp_reg::{Result, Volume};
 
 /// The prepared pair and everything reused between fits.
 pub struct Session {

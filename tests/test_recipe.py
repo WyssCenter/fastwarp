@@ -97,7 +97,7 @@ def _bad(**stages):
 )
 def test_a_bad_recipe_is_refused_before_any_work(tmp_path, monkeypatch, recipe, match):
     # The GPU is never opened: the check runs before the engine starts.
-    monkeypatch.setenv("DBSLOC_GPU_ADAPTER", "no such adapter")
+    monkeypatch.setenv("FASTWARP_GPU_ADAPTER", "no such adapter")
     with pytest.raises(ValueError, match=match):
         g.register_syn(phantom(), phantom(), tmp_path / "x_", iso_mm=SPACING, recipe=recipe)
     assert not list(tmp_path.iterdir())

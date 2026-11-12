@@ -18,15 +18,15 @@ mod post;
 mod recipe;
 mod session;
 
-use dbsloc_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
-use dbsloc_reg::init::{initial_transform, InitFeature};
-use dbsloc_reg::mask::MaskVolume;
-use dbsloc_reg::preprocess::preprocess_volume;
-use dbsloc_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
-use dbsloc_reg::syn::SynOptions;
-use dbsloc_reg::transform::AffineTransform;
-use dbsloc_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
-use dbsloc_reg::{Grid, Mat3, RegError, Vec3, Volume};
+use fastwarp_gpu::{plan_capacity, BackendSelect, CapacityCaps, WgpuBackend};
+use fastwarp_reg::init::{initial_transform, InitFeature};
+use fastwarp_reg::mask::MaskVolume;
+use fastwarp_reg::preprocess::preprocess_volume;
+use fastwarp_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
+use fastwarp_reg::syn::SynOptions;
+use fastwarp_reg::transform::AffineTransform;
+use fastwarp_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
+use fastwarp_reg::{Grid, Mat3, RegError, Vec3, Volume};
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
@@ -37,7 +37,7 @@ create_exception!(
     _core,
     GpuUnavailableError,
     PyRuntimeError,
-    "No usable hardware GPU adapter (software adapters are refused unless DBSLOC_GPU_ALLOW_SOFTWARE=1)."
+    "No usable hardware GPU adapter (software adapters are refused unless FASTWARP_GPU_ALLOW_SOFTWARE=1)."
 );
 create_exception!(
     _core,
