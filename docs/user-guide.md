@@ -155,10 +155,10 @@ start then fit, what `0GenericAffine.mat` holds), `initial_parameters` and `init
 iteration), `iterations` (per level), `total_s`, `transform` (`"rigid"` or `"affine"`) and
 `stage` (the schedule that ran).
 
-`register_rigid(fixed, moving, *, stage=None, initial=None, fixed_mask=None, winsorize=None,
-out_prefix=None, adapter=None, cancel=None)` makes one rigid fit in one call. It checks every
-argument before it opens the GPU. `rigid_session` and `RigidSession` are the 0.3 names of
-`linear_session` and `LinearSession`.
+`linear_session(fixed, moving).register(...)` makes one rigid fit; it checks every argument
+before it opens the GPU. `register_rigid`, `rigid_session` and `RigidSession` are deprecated:
+they still work, warn with a `DeprecationWarning` and will be removed in fastwarp 0.3.0. Use
+`linear_session(...).register()`, `linear_session` and `LinearSession`.
 
 ## Post-processing and resampling
 

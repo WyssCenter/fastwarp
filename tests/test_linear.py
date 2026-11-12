@@ -231,5 +231,16 @@ def test_bad_fit_arguments_are_refused(pair, kwargs, match):
         s.register(**kwargs)
 
 
-def test_the_0_3_names_still_work():
-    assert g.RigidSession is g.LinearSession and g.rigid_session is g.linear_session
+def test_the_0_3_names_still_work_but_warn():
+    with pytest.warns(DeprecationWarning, match="LinearSession") as record:
+        assert g.RigidSession is g.LinearSession
+    assert record[0].filename == __file__
+    with pytest.warns(DeprecationWarning, match="linear_session"):
+        assert g.rigid_session is g.linear_session
+    with pytest.warns(DeprecationWarning, match="register"):
+        assert callable(g.register_rigid)
+    with pytest.warns(DeprecationWarning):
+        from fastwarp import RigidSession
+    assert RigidSession is g.LinearSession
+    with pytest.raises(AttributeError):
+        _ = g.no_such_name

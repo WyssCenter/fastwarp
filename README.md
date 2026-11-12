@@ -124,9 +124,9 @@ else:
   after `--initial-moving-transform` does; `stage` the fields of `cohort_recipe()["rigid"]`;
   `transform` `"rigid"` or `"affine"`; `mask` a fixed-image mask for this fit (`None` = the
   session's `fixed_mask`; ANTs' moving-image mask has no equivalent); `out_prefix` writes
-  `<prefix>0GenericAffine.mat`. Use it in a `with` block. `register_rigid(...)` does one rigid
-  fit in one call. `rigid_session` / `RigidSession` are the 0.3 names of `linear_session` /
-  `LinearSession`.
+  `<prefix>0GenericAffine.mat`. Use it in a `with` block. `register_rigid`, `rigid_session` and
+  `RigidSession` are deprecated (they warn and will be removed in fastwarp 0.3.0); use
+  `linear_session(...).register()`, `linear_session` and `LinearSession`.
 - `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, iso_mm=, channels=)`,
   `iso_grid_dims(img, iso_mm)`.
 - Errors: `GpuUnavailableError` and `GpuCapacityError` (checked before any work: fall back to

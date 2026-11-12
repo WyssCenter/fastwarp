@@ -67,7 +67,8 @@ import fastwarp
 fixed = ants.image_read("anchor_T1w.nii.gz")
 moving = ants.image_read("post_op_CT.nii.gz")
 
-result = fastwarp.register_rigid(fixed, moving, out_prefix="out/coreg_")
+with fastwarp.linear_session(fixed, moving) as session:
+    result = session.register(out_prefix="out/coreg_")
 print(result["parameters"], result["center"], result["metric"])
 ```
 

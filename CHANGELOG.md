@@ -6,6 +6,12 @@
 - `dir(fastwarp)` lists only the public API (`__all__`); the implementation moved to the private
   module `fastwarp._api`, and the public functions and classes report `fastwarp` as their module.
 
+### Deprecated
+
+- `register_rigid`, `rigid_session` and `RigidSession` still work but emit a `DeprecationWarning`
+  and will be removed in fastwarp 0.3.0; use `linear_session(...).register()`,
+  `linear_session` and `LinearSession`. They are no longer in `fastwarp.__all__` or `dir(fastwarp)`.
+
 ## 0.1.0 (2026-11-12)
 
 - First public release, as `fastwarp`. The version restarts at 0.1.0; the internal
