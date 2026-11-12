@@ -66,7 +66,7 @@ jobs:
           uv run --no-sync python -c "import fastwarp as g; print(g.__version__, g.ENGINE_SOURCE); print('gpu:', g.gpu_info() if g.gpu_available() else 'none')"
           uv run --no-sync python -VV
           uv run --no-sync pytest tests -v -rs
-          uv pip install --require-hashes --no-deps -r ci/numpy-floor.txt
+          uv pip install --no-config --require-hashes --no-deps -r ci/numpy-floor.txt
           uv run --no-sync python -c "import numpy; print('numpy', numpy.__version__)"
           uv run --no-sync pytest tests -q -rs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
