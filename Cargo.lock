@@ -325,14 +325,14 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "fastwarp-core"
-version = "0.4.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "nifti",
 ]
 
 [[package]]
 name = "fastwarp-gpu"
-version = "0.4.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "ash",
  "bytemuck",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "fastwarp-matfile"
-version = "0.4.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "flate2",
  "miniz_oxide",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "fastwarp-niftiio"
-version = "0.4.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "bytemuck",
  "crc32fast",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "fastwarp-py"
-version = "0.4.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "fastwarp-gpu",
  "fastwarp-niftiio",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "fastwarp-reg"
-version = "0.4.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "fastwarp-core",
  "fastwarp-matfile",

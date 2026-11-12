@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- First public release, as `fastwarp`. The version restarts at 0.1.0; the internal
+  versions before it are listed under *Development versions*.
 - `NOTICE` and `crates/fastwarp-reg/NOTICE` reproduce the BSD-3-Clause notice of the Mersenne
   Twister code from which the sample-point generator derives through ITK.
 - Python 3.11 is the oldest supported version (was 3.10, which has reached its end of life); the
@@ -70,7 +72,13 @@
   `currentAllocatedSize` (`MemoryFigure::MetalRecommendedWorkingSet`) instead of the fallback of
   at most 4 GiB.
 
-## 0.4.0 (2026-11-09)
+## Development versions
+
+Internal builds of the engine under the name `dbsloc-gpureg`, before the rename and the
+Apache-2.0 licence. They were never published, and their tags and GitHub releases were
+removed.
+
+### dbsloc-gpureg 0.4.0 (2026-11-09)
 
 - `linear_session` / `LinearSession` (was `rigid_session` / `RigidSession`, still available under
   those names): a fit can be an `Affine` stage (`register(transform="affine")`), started as the
@@ -83,7 +91,7 @@
   ANTs runs land to each other) in 2.4-4.8 s instead of 5-11 s. `check_linear_stage` replaces
   `check_rigid_stage`.
 
-## 0.3.0 (2026-11-08)
+### dbsloc-gpureg 0.3.0 (2026-11-08)
 
 - `rigid_session` / `RigidSession` and `register_rigid`: rigid registration on the GPU (one
   `Rigid` stage on Mattes MI from any start, an optional fixed-image mask, winsorizing), for
@@ -92,7 +100,7 @@
   one: a post-op CT onto a T1w anchor in 17 s on a laptop GPU where ANTs takes 32 s, the fits
   within 0.7 mm of ANTs' over a head-sized cube. `check_rigid_stage` checks a stage without a GPU.
 
-## 0.2.1 (2026-11-07)
+### dbsloc-gpureg 0.2.1 (2026-11-07)
 
 - Fix: on Linux with an NVIDIA GPU, the GPU disappeared after ten registrations (or `gpu_info`
   calls) in one process: every call created and destroyed a Vulkan instance, the loader unloaded
@@ -102,7 +110,7 @@
   memory). Measured on an RTX A4000, driver 580: 30 `gpu_info` calls and 25 registrations in one
   process, all on the GPU.
 
-## 0.2.0 (2026-11-07)
+### dbsloc-gpureg 0.2.0 (2026-11-07)
 
 - `register_syn(recipe=...)`: the caller sets the whole schedule (Rigid, Affine, SyN: iterations,
   shrink factors, smoothing, metric parameters, channel weights) instead of the built-in cohort
@@ -115,7 +123,7 @@
   `float32` rounding. `compression_level=0` writes the field as stored gzip, which ANTs reads back
   about 7x faster than its own compressed `float64` field.
 
-## 0.1.1 (2026-11-07)
+### dbsloc-gpureg 0.1.1 (2026-11-07)
 
 - float32 images are passed to the engine without copies (a view) and converted to float64
   once: about 130 MB instead of 660 MB extra memory per 0.5 mm template.
@@ -126,7 +134,7 @@
 - The package version is read from `Cargo.toml` only; CI runs a RustSec dependency audit.
 - New tests: determinism, float32 vs float64, NaN input, output folder, integer input.
 
-## 0.1.0 (2026-11-06)
+### dbsloc-gpureg 0.1.0 (2026-11-06)
 
 - First version: the dbs-localizer GPU registration engine (commit `00faf42`) as a Python
   wheel. `register_syn` runs the cohort recipe (centre of mass, Rigid, Affine, SyN; one or two

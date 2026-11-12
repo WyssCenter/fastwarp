@@ -22,7 +22,7 @@ Documentation: <https://fastwarp.readthedocs.io>
 ## Speed
 
 T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the MNI
-2009b template (0.5 mm), 1 mm registration grid, default recipe, `fastwarp` 0.4.0; median
+2009b template (0.5 mm), 1 mm registration grid, default recipe, `fastwarp` before 0.1.0; median
 of three runs, the engine's own `linear_s` / `syn_s` / `total_s` (2026-11-09):
 
 | Hardware | Linear | SyN | Registration total |
