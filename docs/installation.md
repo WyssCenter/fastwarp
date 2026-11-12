@@ -39,7 +39,15 @@ software Vulkan driver. Hardware GPUs are not tested in CI. The hardware in
 test on Python 3.11, the oldest supported version, with the locked NumPy and again with
 NumPy 2.0.2 (`ci/numpy-floor.txt`). Python 3.12 is not tested separately.
 
+## From PyPI
+
+```bash
+pip install fastwarp
+```
+
 ## From a release wheel
+
+The same wheels are attached to each GitHub release:
 
 ```bash
 gh release download -R WyssCenter/fastwarp -p "*.whl" -D wheels
@@ -47,9 +55,7 @@ pip install --find-links wheels fastwarp
 ```
 
 The first command downloads the wheels of the latest release and needs the
-[GitHub CLI](https://cli.github.com/). TODO(author): add the `pip install fastwarp` line once
-the wheels are on PyPI. The changelog says the `Private :: Do Not Upload` classifier is gone,
-but the repository does not say that a PyPI release exists.
+[GitHub CLI](https://cli.github.com/).
 
 ## From source
 

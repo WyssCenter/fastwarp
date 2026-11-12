@@ -20,8 +20,6 @@
 - The environment variables are `FASTWARP_*` (`FASTWARP_GPU_BACKEND`, `FASTWARP_GPU_ADAPTER`,
   `FASTWARP_ANTS_DIR`, ...). The former `DBSLOC_*` names are still read when the new name is
   unset; a new name set to an empty value takes precedence over the old one.
-- `ENGINE_SOURCE` is `"fastwarp-legacy 90c1df3"` (was `"fastwarp 90c1df3"`): the revision belongs
-  to the earlier standalone copy of the engine, not to this repository.
 - Licensed under Apache-2.0 (`LICENSE`); the wheel and the crates declare the licence and ship
   `LICENSE` and `NOTICE`.
 - The `Private :: Do Not Upload` classifier is gone, so the wheels can go to PyPI.
@@ -29,7 +27,8 @@
   Radeon Pro 5500 XT, NVIDIA Quadro K620 on Windows).
 - Engine updated to revision `90c1df3` of its earlier standalone copy: wgpu 30, ndarray 0.17, nifti 0.18; the
   `fastwarp-matfile` tests carry their own data; the ANTs comparison tests read the programs from
-  `FASTWARP_ANTS_DIR`. `ENGINE_SOURCE` is now `"fastwarp 90c1df3"`.
+  `FASTWARP_ANTS_DIR`. `ENGINE_SOURCE` is `"fastwarp-legacy 90c1df3"`: the revision belongs to
+  the earlier standalone copy of the engine, not to this repository.
 - Licence labels in REUSE form: an SPDX header in every source file, `REUSE.toml` for the rest,
   `LICENSES/Apache-2.0.txt`; `NOTICE` carries the ITK notice; `THIRD_PARTY_PORTS.md` moved to
   `docs/`.
