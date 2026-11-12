@@ -7,18 +7,35 @@ import numpy as np
 import numpy.typing as npt
 
 ENGINE_SOURCE: str
+"""The revision of the engine this build was taken from."""
 VERSION: str
+"""The version of the compiled module (from Cargo.toml)."""
 
-class GpuUnavailableError(RuntimeError): ...
-class GpuCapacityError(RuntimeError): ...
-class RegistrationError(RuntimeError): ...
-class RegistrationCancelled(Exception): ...
+class GpuUnavailableError(RuntimeError):
+    """No usable hardware GPU adapter.
+
+    Software adapters are refused unless DBSLOC_GPU_ALLOW_SOFTWARE=1.
+    """
+
+class GpuCapacityError(RuntimeError):
+    """The registration grid does not fit the GPU's memory budget or binding limit."""
+
+class RegistrationError(RuntimeError):
+    """The registration failed."""
+
+class RegistrationCancelled(Exception):
+    """The registration was cancelled through its CancelToken."""
 
 class CancelToken:
+    """A flag another thread sets to stop a running registration at its next iteration."""
+
     def __init__(self) -> None: ...
-    def cancel(self) -> None: ...
+    def cancel(self) -> None:
+        """Asks the registration using this token to stop; it raises RegistrationCancelled."""
+
     @property
-    def cancelled(self) -> bool: ...
+    def cancelled(self) -> bool:
+        """Whether cancel() has been called."""
 
 _Image = tuple[
     npt.NDArray[np.float32] | npt.NDArray[np.float64],
@@ -38,7 +55,12 @@ def register_syn(
     cancel: CancelToken | None = None,
     recipe: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]: ...
-def gpu_info(adapter: str | None = None) -> dict[str, Any]: ...
+def gpu_info(adapter: str | None = None) -> dict[str, Any]:
+    """Opens the GPU the engine would use and describes it.
+
+    Raises GpuUnavailableError when there is none.
+    """
+
 def fits_gpu(dims: tuple[int, int, int], channels: int, adapter: str | None = None) -> bool: ...
 def compose_field(
     transforms: list[str],

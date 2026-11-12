@@ -11,20 +11,41 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 dependencies = ["numpy"]
-authors = [{ name = "Richard Köhler" }, { name = "Wyss Center for Bio and Neuroengineering" }]
+authors = [
+    { name = "Richard M. Köhler" },
+    { name = "Jan Philipp Payonk" },
+    { name = "Wolf-Julian Neumann" },
+]
+maintainers = [{ name = "Wyss Center for Bio and Neuroengineering" }]
+keywords = ["image registration", "GPU", "wgpu", "ANTs", "SyN", "neuroimaging", "MRI"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering :: Image Processing",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
 [project.urls]
 Repository = "https://github.com/WyssCenter/fastwarp"
+Documentation = "https://fastwarp.readthedocs.io"
+Issues = "https://github.com/WyssCenter/fastwarp/issues"
 Changelog = "https://github.com/WyssCenter/fastwarp/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = ["maturin>=1.9.4,<2", "pytest", "ruff"]
 ants = ["antspyx>=0.6.1"]
+docs = [
+    "sphinx",
+    "myst-parser",
+    "sphinx-autoapi",
+    "furo",
+]
 
 [tool.uv]
 environments = ["python_full_version >= '3.13' and python_full_version < '3.15'"]
