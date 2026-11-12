@@ -16,6 +16,8 @@ Licence: [Apache-2.0](LICENSE). The files ported from ANTs/ITK carry their Apach
 (`NOTICE`, [`docs/THIRD_PARTY_PORTS.md`](docs/THIRD_PARTY_PORTS.md)). Every file states its
 licence in an SPDX header or through `REUSE.toml` ([REUSE](https://reuse.software/)).
 
+Documentation: <https://fastwarp.readthedocs.io>
+
 ## Speed
 
 T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the MNI
@@ -158,6 +160,15 @@ returns in full: Rigid and Affine `MI[32 bins, regular 25 %]`, `1000x500x250x100
 `8x4x2x1`, smoothing `3x2x1x0 vox`. An unknown key, a value of the wrong type, mismatched level
 counts, or what the GPU kernels do not support (MI bins other than 32, a CC radius above 8) is a
 `ValueError` before any work. The result's `"recipe"` is the full recipe that ran.
+
+## Tests
+
+The commands are under Development below; the same commands with the CI settings, the tests
+against real ANTs and the software-GPU runs are in [docs/testing.md](docs/testing.md).
+
+```bash
+uv run --no-sync pytest -rs   # -rs lists every skipped test and its reason
+```
 
 ## Development
 
