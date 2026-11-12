@@ -15,6 +15,7 @@ from pathlib import Path
 import fastwarp as g
 import numpy as np
 import pytest
+from fastwarp._api import _image_args
 
 SPACING = 2.0
 SHAPE = (56, 64, 48)
@@ -185,7 +186,7 @@ def test_float32_input_equals_the_same_values_as_float64(tmp_path):
 
 def test_float32_fortran_data_is_passed_without_a_copy():
     arr = np.asfortranarray(np.zeros((4, 5, 6), dtype=np.float32))
-    flat = g._image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0]
+    flat = _image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0]
     assert flat.dtype == np.float32 and np.shares_memory(flat, arr)
 
 
@@ -200,7 +201,7 @@ def test_non_finite_voxels_are_refused(tmp_path):
 def test_a_missing_output_folder_is_refused_before_any_work(tmp_path):
     from fastwarp import _core
 
-    args = g._image_args(phantom())
+    args = _image_args(phantom())
     with pytest.raises(ValueError, match="does not exist"):
         _core.register_syn([args], [args], str(tmp_path / "missing" / "x_"))
 
@@ -213,7 +214,7 @@ def test_the_wrapper_creates_the_output_folder(tmp_path):
 
 def test_integer_images_are_accepted():
     arr = np.ones((4, 5, 6), dtype=np.int16)
-    assert g._image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0].dtype == np.float32
+    assert _image_args((arr, (1.0,) * 3, (0.0,) * 3, np.eye(3)))[0].dtype == np.float32
 
 
 @needs_gpu
