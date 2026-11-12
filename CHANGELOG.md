@@ -48,6 +48,9 @@
 - The GPU Mattes mutual-information metric of the linear stages reads its derivative partials
   through a staging buffer kept with the level instead of creating and dropping one on every
   derivative evaluation. Results are unchanged.
+- Less host work per GPU SyN iteration, with bit-identical results: a displacement-field
+  inversion creates its five bind groups once instead of four per inversion step (20 instead of
+  320 per iteration).
 
 ## 0.4.0 (2026-11-09)
 
