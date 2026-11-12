@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
+#[cfg(target_os = "macos")]
+use crate::capacity::metal_figure;
 use crate::capacity::DeviceMemory;
 #[cfg(any(
     windows,
@@ -485,8 +487,22 @@ fn device_memory(adapter: &wgpu::Adapter) -> Option<DeviceMemory> {
     if let Some(m) = vulkan_memory(adapter) {
         return Some(m);
     }
+    #[cfg(target_os = "macos")]
+    if let Some(m) = metal_memory(adapter) {
+        return Some(m);
+    }
     let _ = adapter;
     None
+}
+
+#[cfg(target_os = "macos")]
+fn metal_memory(adapter: &wgpu::Adapter) -> Option<DeviceMemory> {
+    use objc2_metal::MTLDevice as _;
+    // SAFETY: read-only query on the live hal adapter; the adapter is never destroyed or modified while borrowed.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Metal>() }?;
+    let device = hal.raw_device();
+    let allocated = u64::try_from(device.currentAllocatedSize()).unwrap_or(u64::MAX);
+    metal_figure(device.recommendedMaxWorkingSetSize(), allocated)
 }
 
 #[cfg(windows)]
@@ -691,6 +707,27 @@ mod tests {
             );
         } else {
             assert_eq!(memory, heap_size);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_metal_figure_is_read_from_the_adapter() {
+        let instance = new_instance(wgpu::Backends::METAL);
+        let Some(adapter) = enumerate(&instance, wgpu::Backends::METAL)
+            .into_iter()
+            .next()
+        else {
+            eprintln!("skip: no Metal adapter");
+            return;
+        };
+        let memory = metal_memory(&adapter);
+        eprintln!("{}: {memory:?}", adapter.get_info().name);
+        if let Some(m) = memory {
+            assert_eq!(
+                m.figure,
+                crate::capacity::MemoryFigure::MetalRecommendedWorkingSet
+            );
         }
     }
 

@@ -40,6 +40,7 @@ pub enum MemoryFigure {
     DxgiLocalBudget,
     VulkanDeviceLocalHeap,
     VulkanHeapBudget,
+    MetalRecommendedWorkingSet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -97,6 +98,16 @@ pub(crate) fn vulkan_figure(
         }),
         None => heap_size,
     }
+}
+
+/// The Metal memory figure: the device's `recommendedMaxWorkingSetSize` minus its
+/// `currentAllocatedSize`, or `None` when the device recommends nothing.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn metal_figure(recommended: u64, allocated: u64) -> Option<DeviceMemory> {
+    (recommended > 0).then_some(DeviceMemory {
+        bytes: recommended.saturating_sub(allocated),
+        figure: MemoryFigure::MetalRecommendedWorkingSet,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,6 +447,20 @@ mod tests {
             size
         );
         assert_eq!(vulkan_figure(None, None), None);
+    }
+
+    #[test]
+    fn the_metal_figure_is_the_recommended_working_set_left_after_the_allocations() {
+        let metal = |bytes| {
+            Some(DeviceMemory {
+                bytes,
+                figure: MemoryFigure::MetalRecommendedWorkingSet,
+            })
+        };
+        assert_eq!(metal_figure(12 * GIB, GIB), metal(11 * GIB));
+        assert_eq!(metal_figure(12 * GIB, 0), metal(12 * GIB));
+        assert_eq!(metal_figure(GIB, 2 * GIB), metal(0));
+        assert_eq!(metal_figure(0, 0), None);
     }
 
     #[test]

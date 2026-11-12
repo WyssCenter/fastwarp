@@ -338,6 +338,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "fastwarp-reg",
+ "objc2-metal",
  "pollster",
  "rayon",
  "serde",
