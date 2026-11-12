@@ -1,5 +1,6 @@
 # Wheels for macOS, Linux and Windows; one abi3 wheel per platform covers Python >= 3.10.
-# A tag v* also creates a GitHub release with the wheels and the sdist attached, and publishes them to PyPI.
+# A tag v* also drafts a GitHub release with the wheels and the sdist attached, publishes them to PyPI,
+# and then publishes the release.
 name: wheels
 
 on:
@@ -17,7 +18,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
@@ -37,6 +38,8 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
@@ -69,6 +72,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           maturin-version: "1.16.0"
@@ -80,7 +85,7 @@ jobs:
           path: dist/*.tar.gz
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [build, sdist]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -88,6 +93,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
@@ -96,7 +103,7 @@ jobs:
         run: |
           v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != Cargo.toml $v"; exit 1; }
-      - name: GitHub release with wheels
+      - name: Draft GitHub release with wheels
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -105,7 +112,7 @@ jobs:
           [ -s notes.md ] || { echo "CHANGELOG.md has no section for $v"; exit 1; }
           (cd dist && sha256sum * > SHA256SUMS)
           gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" \
-            --notes-file notes.md
+            --notes-file notes.md --draft --verify-tag
 
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -118,13 +125,28 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: "{wheel-*,sdist}"
           path: dist
           merge-multiple: true
       - name: PyPI trusted publishing
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true
+
+  publish-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the drafted GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false --repo "${GITHUB_REPOSITORY}"
 
   publish-testpypi:
     if: github.event_name == 'workflow_dispatch' && inputs.testpypi && github.ref == 'refs/heads/main'
@@ -137,7 +159,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: "{wheel-*,sdist}"
           path: dist
