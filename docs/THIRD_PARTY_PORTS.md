@@ -48,6 +48,10 @@ Record of FastWarp source files derived from ANTs or ITK (both Apache License 2.
 
 `crates/fastwarp-reg/src/transform/hdf5.rs` is written from the public HDF5 file-format specification, not from ITK or HDF5 sources, and carries no upstream notice.
 
+## Mersenne Twister notice
+
+`crates/fastwarp-reg/src/sampling.rs` is derived from ITK's `itkMersenneTwisterRandomVariateGenerator.h`, which ITK derived from the Mersenne Twister code of Makoto Matsumoto, Takuji Nishimura, Shawn Cokus and Richard J. Wagner (BSD-3-Clause). Its copyright notice, conditions and disclaimer are reproduced in `NOTICE` and in `crates/fastwarp-reg/NOTICE` and must stay with source and binary distributions.
+
 ## Header template for ported files
 
 Ported Rust and WGSL files carry this header verbatim; replace the upstream path and change description in the last paragraph. Add `// SPDX-FileCopyrightText: ANTs developers` after the NumFOCUS line when an upstream file is from ANTs. Python files use the same text with `#`. Every crate in this repository is Apache-2.0.

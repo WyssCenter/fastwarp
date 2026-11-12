@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `NOTICE` and `crates/fastwarp-reg/NOTICE` reproduce the BSD-3-Clause notice of the Mersenne
+  Twister code from which the sample-point generator derives through ITK.
 - Renamed from `dbsloc-gpureg` to `fastwarp`: the package and the module are `fastwarp`
   (`import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
   https://github.com/WyssCenter/fastwarp. The engine crates are now `fastwarp-core`, `fastwarp-niftiio`,
