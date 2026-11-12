@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- README badges: CI, PyPI version, Python versions, licence, documentation.
+
 ## 0.1.0 (2026-11-12)
 
 - First public release, as `fastwarp`. The version restarts at 0.1.0; the internal
