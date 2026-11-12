@@ -123,6 +123,7 @@ pub struct GpuMiLevel<'a> {
     ratio: PoolBuf,
     gk: PoolBuf,
     dpart: PoolBuf,
+    deriv_staging: wgpu::Buffer,
     count: usize,
     groups: u32,
     per_stripe: u32,
@@ -135,6 +136,10 @@ pub struct GpuMiLevel<'a> {
 
 fn sub(a: Vec3, b: Vec3) -> Vec3 {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn deriv_bytes(groups: u32) -> u64 {
+    u64::from(groups) * MAX_PARAMS as u64 * 4
 }
 
 fn v4(v: Vec3, w: f64) -> [f32; 4] {
@@ -201,7 +206,11 @@ impl<'a> GpuMiLevel<'a> {
                 .map_err(gerr)?,
             ratio: backend.acquire("mi ratio", (BINS * BINS * 4) as u64)?,
             gk: backend.acquire("mi jacobian", (MAX_PARAMS * 3 * 16) as u64)?,
-            dpart: backend.acquire("mi derivative partials", u64::from(groups) * 12 * 4)?,
+            dpart: backend.acquire("mi derivative partials", deriv_bytes(groups))?,
+            deriv_staging: backend
+                .ctx
+                .staging_buffer(deriv_bytes(groups))
+                .map_err(gerr)?,
             count,
             groups,
             per_stripe,
@@ -386,11 +395,22 @@ impl LinearMetric for GpuMiLevel<'_> {
                 [self.groups, 1, 1],
             )
         })?;
-        let parts = be.read_scalars(self.dpart.buffer(), self.groups as usize * 12)?;
+        be.scalar_readbacks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let parts: Vec<f32> = bytemuck::pod_collect_to_vec(
+            &be.ctx
+                .read_bytes_staged(
+                    self.dpart.buffer(),
+                    0,
+                    deriv_bytes(self.groups),
+                    &self.deriv_staging,
+                )
+                .map_err(gerr)?,
+        );
         let mut derivative = vec![0.0f64; params];
         for g in 0..self.groups as usize {
             for (p, d) in derivative.iter_mut().enumerate() {
-                *d += f64::from(parts[g * 12 + p]);
+                *d += f64::from(parts[g * MAX_PARAMS + p]);
             }
         }
         Ok((fin.value, derivative))

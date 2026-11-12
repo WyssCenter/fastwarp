@@ -43,6 +43,9 @@
   address. The dataset size cap is checked before the chunk index is walked, chunks outside the
   dataset are skipped before they are decompressed, the shuffle element size is capped at the
   chunk length, and the output buffers are allocated fallibly.
+- The GPU Mattes mutual-information metric of the linear stages reads its derivative partials
+  through a staging buffer kept with the level instead of creating and dropping one on every
+  derivative evaluation. Results are unchanged.
 
 ## 0.4.0 (2026-11-09)
 
