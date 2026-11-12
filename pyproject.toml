@@ -7,15 +7,14 @@ name = "fastwarp"
 dynamic = ["version"]  # from Cargo.toml [workspace.package]
 description = "FastWarp: GPU (wgpu: Vulkan / Metal / DX12) image registration (Rigid, Affine, SyN), with ANTs-compatible outputs"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-dependencies = ["numpy"]
+dependencies = ["numpy>=2.0"]
 authors = [
     { name = "Richard M. Köhler" },
     { name = "Jan Philipp Payonk" },
 ]
-maintainers = [{ name = "Wyss Center for Bio and Neuroengineering" }]
 keywords = ["image registration", "GPU", "wgpu", "ANTs", "SyN", "neuroimaging", "MRI"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -37,17 +36,16 @@ Issues = "https://github.com/WyssCenter/fastwarp/issues"
 Changelog = "https://github.com/WyssCenter/fastwarp/blob/main/CHANGELOG.md"
 
 [dependency-groups]
-dev = ["maturin>=1.9.4,<2", "pytest", "ruff"]
+dev = ["maturin>=1.9.4,<2", "pytest>=9.2", "ruff>=0.17.4"]
 ants = ["antspyx>=0.6.1"]
 docs = [
-    "sphinx",
-    "myst-parser",
-    "sphinx-autoapi",
-    "furo",
+    "sphinx>=9.0",
+    "myst-parser>=5.1",
+    "sphinx-autoapi>=3.9",
+    "furo>=2025.12.19",
 ]
 
 [tool.uv]
-environments = ["python_full_version >= '3.13' and python_full_version < '3.15'"]
 constraint-dependencies = ["scipy>=1.15"]
 
 [tool.maturin]
@@ -57,7 +55,6 @@ module-name = "fastwarp._core"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "W605"]

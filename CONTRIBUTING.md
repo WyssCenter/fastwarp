@@ -27,7 +27,7 @@ You need:
 - [cargo-nextest](https://nexte.st) to run the Rust tests; the copied `fastwarp-niftiio` tests
   need one process per test.
 - Python 3.14 for development (`.python-version`). ANTsPy has no 3.14 wheels yet, so work that
-  uses the `ants` group sets `UV_PYTHON=3.13`, as CI does. The wheel supports Python 3.10 and
+  uses the `ants` group sets `UV_PYTHON=3.13`, as CI does. The wheel supports Python 3.11 and
   later.
 - A GPU with a Vulkan, Metal or DX12 driver. Without one, the GPU tests skip. On Linux, Mesa's
   `lavapipe` software driver (`mesa-vulkan-drivers`) works with `WGPU_FORCE_FALLBACK_ADAPTER=1`

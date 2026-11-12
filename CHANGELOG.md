@@ -4,6 +4,9 @@
 
 - `NOTICE` and `crates/fastwarp-reg/NOTICE` reproduce the BSD-3-Clause notice of the Mersenne
   Twister code from which the sample-point generator derives through ITK.
+- Python 3.11 is the oldest supported version (was 3.10, which has reached its end of life); the
+  wheels are `abi3` wheels for Python 3.11 and later, and their smoke test runs on Python 3.11.
+  The package declares `numpy>=2.0`.
 - Renamed from `dbsloc-gpureg` to `fastwarp`: the package and the module are `fastwarp`
   (`import fastwarp`), the binding crate is `crates/fastwarp-py`, and the repository is
   https://github.com/WyssCenter/fastwarp. The engine crates are now `fastwarp-core`, `fastwarp-niftiio`,
