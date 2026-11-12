@@ -318,14 +318,14 @@ class LinearSession:
 
         Returns the collapsed affine (start then fit) as ``parameters`` / ``center`` (what
         ``0GenericAffine.mat`` holds, written as ``<out_prefix>0GenericAffine.mat`` when
-        ``out_prefix`` is given), the final MI value ``metric`` (lower is better), the start,
-        iterations per level and the time.
+        ``out_prefix`` is given; its folder is created), the final MI value ``metric`` (lower is
+        better), the start, iterations per level and the time.
         """
         return self._core.register(
             stage=None if stage is None else dict(stage),
             initial=_initial(initial),
             use_mask=use_mask,
-            out_prefix=None if out_prefix is None else str(out_prefix),
+            out_prefix=None if out_prefix is None else _prepared_prefix(out_prefix),
             cancel=cancel,
             transform=transform,
             mask=None if mask is None else _image_args(mask),
@@ -343,7 +343,7 @@ class LinearSession:
         return False
 
 
-#: The 0.3 name of :class:`LinearSession`.
+#: Deprecated alias of :class:`LinearSession`; removed in fastwarp 0.3.0.
 RigidSession = LinearSession
 
 
@@ -365,7 +365,7 @@ def linear_session(
     return LinearSession(fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter)
 
 
-#: The 0.3 name of :func:`linear_session`.
+#: Deprecated alias of :func:`linear_session`; removed in fastwarp 0.3.0.
 rigid_session = linear_session
 
 
@@ -387,8 +387,8 @@ def register_rigid(
     ``initial``: ``(parameters, center)`` of an ITK affine mapping fixed points to moving ones
     (12 parameters: the row-major matrix, then the translation); ``None`` starts from the
     centres of intensity mass, like ``antsRegistration --initial-moving-transform [f,m,1]``.
-    ``fixed_mask`` / ``winsorize``: as :func:`rigid_session`. For several fits of one pair (a
-    multi-start), a :func:`rigid_session` prepares the images once.
+    ``fixed_mask`` / ``winsorize``: as :func:`linear_session`. For several fits of one pair (a
+    multi-start), a :func:`linear_session` prepares the images once.
 
     Returns the collapsed affine as ``parameters`` / ``center`` (what ``0GenericAffine.mat`` holds,
     written as ``<out_prefix>0GenericAffine.mat`` when ``out_prefix`` is given), the final MI

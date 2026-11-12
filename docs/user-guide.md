@@ -155,10 +155,18 @@ start then fit, what `0GenericAffine.mat` holds), `initial_parameters` and `init
 iteration), `iterations` (per level), `total_s`, `transform` (`"rigid"` or `"affine"`) and
 `stage` (the schedule that ran).
 
-`linear_session(fixed, moving).register(...)` makes one rigid fit; it checks every argument
-before it opens the GPU. `register_rigid`, `rigid_session` and `RigidSession` are deprecated:
-they still work, warn with a `DeprecationWarning` and will be removed in fastwarp 0.3.0. Use
-`linear_session(...).register()`, `linear_session` and `LinearSession`.
+One rigid fit is a session with one `register` call:
+
+```python
+with fastwarp.linear_session(fixed, moving) as session:
+    result = session.register(out_prefix="out/coreg_")
+```
+
+`linear_session` opens the GPU and uploads the images when it is called; `register` checks
+`stage` and `initial` before it runs and creates the folder of `out_prefix`. `register_rigid`,
+`rigid_session` and `RigidSession` are deprecated: they still work, warn with a
+`DeprecationWarning` and will be removed in fastwarp 0.3.0. Use `linear_session(...).register()`,
+`linear_session` and `LinearSession`.
 
 ## Post-processing and resampling
 
