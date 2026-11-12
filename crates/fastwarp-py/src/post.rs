@@ -365,7 +365,7 @@ mod tests {
         let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let g = Grid::new([4, 5, 6], [1.5, 2.0, 2.5], [1.0, -2.0, 3.0], id).unwrap();
         let f = DisplacementField::from_fn(g, |p| [p[0] * 0.1, -p[1], p[2] * p[0]]);
-        let dir = std::env::temp_dir().join(format!("dbsloc_gpureg_post_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fastwarp_post_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for name in ["f.nii", "f.nii.gz"] {
             let (a, b) = (dir.join(format!("a_{name}")), dir.join(format!("b_{name}")));

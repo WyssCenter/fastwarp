@@ -1,4 +1,4 @@
-# dbsloc-gpureg
+# fastwarp
 
 GPU image registration for Python: the registration engine of **Wyss DBS Localizer** by
 **Richard Köhler** (Wyss Center for Bio and Neuroengineering), packaged as a wheel. It runs a
@@ -14,13 +14,12 @@ platform for every Python ≥ 3.10. Outputs are ANTs files (`Composite.h5`,
 
 Licence: [Apache-2.0](LICENSE). The files ported from ANTs/ITK carry their Apache-2.0 notices
 (`NOTICE`, [`docs/THIRD_PARTY_PORTS.md`](docs/THIRD_PARTY_PORTS.md)). Every file states its
-licence in an SPDX header or through `REUSE.toml` ([REUSE](https://reuse.software/)). The
-repository is still private.
+licence in an SPDX header or through `REUSE.toml` ([REUSE](https://reuse.software/)).
 
 ## Speed
 
 T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the MNI
-2009b template (0.5 mm), 1 mm registration grid, default recipe, `dbsloc-gpureg` 0.4.0; median
+2009b template (0.5 mm), 1 mm registration grid, default recipe, `fastwarp` 0.4.0; median
 of three runs, the engine's own `linear_s` / `syn_s` / `total_s` (2026-11-09):
 
 | Hardware | Linear | SyN | Registration total |
@@ -60,27 +59,27 @@ and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-
 From a release (wheels for macOS arm64 / x86_64, Linux x86_64 / aarch64, Windows x86_64):
 
 ```bash
-gh release download v0.4.0 -R JPPayonk/dbsloc-gpureg -p "*.whl" -D wheels   # private repo: needs gh access
-pip install --no-index --find-links wheels dbsloc-gpureg
+gh release download -R WyssCenter/fastwarp -p "*.whl" -D wheels   # the latest release
+pip install --no-index --find-links wheels fastwarp
 ```
 
 From source (needs a Rust toolchain; `rust-toolchain.toml` pins the version):
 
 ```bash
-pip install "git+ssh://git@github.com/JPPayonk/dbsloc-gpureg.git"
+pip install "git+https://github.com/WyssCenter/fastwarp.git"
 ```
 
 ## Use
 
 ```python
 import ants
-import dbsloc_gpureg as gpureg
+import fastwarp
 
 fixed = [ants.image_read("tpl_t1.nii"), ants.image_read("tpl_t2.nii")]
 moving = [ants.image_read("sub_T1w.nii.gz"), ants.image_read("sub_T2w_in_T1w.nii.gz")]
 
-if gpureg.fits_gpu(fixed[0], iso_mm=1.0, channels=2):
-    info = gpureg.register_syn(fixed, moving, "out/sub_", iso_mm=1.0)
+if fastwarp.fits_gpu(fixed[0], iso_mm=1.0, channels=2):
+    info = fastwarp.register_syn(fixed, moving, "out/sub_", iso_mm=1.0)
     warped = ants.apply_transforms(fixed[0], moving[0], ["out/sub_Composite.h5"])
     print(info["adapter"], f'{info["total_s"]:.1f} s')
 else:
@@ -216,7 +215,7 @@ Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes 
 ## Source and credit
 
 `crates/dbsloc-{core,niftiio,matfile,reg,gpu}` are copies of the registration engine of
-Wyss DBS Localizer (an internal Wyss Center repository), taken from its standalone copy
-WyssCenter/fastwarp at commit `90c1df3` (2026-11-10), unchanged apart from the project name
-in the crate `NOTICE` files. `crates/dbsloc-gpureg-py` is the Python binding (PyO3). Please
+Wyss DBS Localizer (an internal Wyss Center repository), taken at revision `90c1df3`
+(2026-11-10) of an earlier standalone copy of that engine, which this repository replaces
+(`ENGINE_SOURCE` names that revision); later changes are in `CHANGELOG.md`. `crates/fastwarp-py` is the Python binding (PyO3). Please
 cite the engine as in `CITATION.cff`.

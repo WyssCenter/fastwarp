@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
-//! Python extension `dbsloc_gpureg._core`: the dbs-localizer cohort registration (centre of mass,
+//! Python extension `fastwarp._core`: the dbs-localizer cohort registration (centre of mass,
 //! Rigid, Affine, SyN) on the GPU, with ANTs-compatible `Composite.h5` / `InverseComposite.h5`.
 //!
 //! Images arrive as flat `float32` or `float64` arrays in ITK voxel order (x fastest) with ITK
@@ -59,7 +59,7 @@ create_exception!(
 );
 
 /// A flag another thread sets to stop a running registration at its next iteration.
-#[pyclass(module = "dbsloc_gpureg", frozen)]
+#[pyclass(module = "fastwarp", frozen)]
 struct CancelToken {
     flag: Arc<AtomicBool>,
 }
@@ -425,7 +425,7 @@ fn apply_transforms<'py>(
 /// a multi-start, or a rigid fit followed by an affine one, pays the preparation once.
 /// `fixed_mask`: its non-zero voxels are where the metric samples, in fits that ask for it (a fit
 /// can bring its own mask instead). Holds the GPU until `close()` (or the `with` block ends).
-#[pyclass(module = "dbsloc_gpureg", frozen)]
+#[pyclass(module = "fastwarp", frozen)]
 struct LinearSession {
     inner: Mutex<Option<session::Session>>,
     com: AffineTransform,

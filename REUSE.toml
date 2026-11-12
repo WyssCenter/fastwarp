@@ -1,7 +1,7 @@
 version = 1
-SPDX-PackageName = "dbsloc-gpureg"
+SPDX-PackageName = "fastwarp"
 SPDX-PackageSupplier = "Wyss Center for Bio and Neuroengineering"
-SPDX-PackageDownloadLocation = "https://github.com/JPPayonk/dbsloc-gpureg"
+SPDX-PackageDownloadLocation = "https://github.com/WyssCenter/fastwarp"
 
 [[annotations]]
 path = "**"

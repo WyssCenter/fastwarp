@@ -1,5 +1,5 @@
 [package]
-name = "dbsloc-gpureg-py"
+name = "fastwarp-py"
 version.workspace = true
 license.workspace = true
 edition = "2021"

@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this engine, please cite it as below."
-title: "Wyss DBS Localizer GPU registration engine (dbsloc-gpureg)"
+title: "fastwarp: the GPU registration engine of Wyss DBS Localizer"
 type: software
 authors:
   - family-names: "Köhler"
@@ -8,7 +8,7 @@ authors:
     affiliation: "Wyss Center for Bio and Neuroengineering"
 version: "0.4.0"
 license: Apache-2.0
-repository-code: "https://github.com/JPPayonk/dbsloc-gpureg"
+repository-code: "https://github.com/WyssCenter/fastwarp"
 abstract: >-
   A wgpu (Metal / Vulkan / DX12) port of the ANTs registration (Rigid, Affine, SyN) with
   ANTs-compatible transform outputs.
