@@ -4,7 +4,9 @@
 
 - README badges: CI, PyPI version, Python versions, licence, documentation.
 - `dir(fastwarp)` lists only the public API (`__all__`); the implementation moved to the private
-  module `fastwarp._api`, and the public functions and classes report `fastwarp` as their module.
+  module `fastwarp._api`, and the public Python functions report `fastwarp` as their module.
+- `LinearSession.register` creates the folder of `out_prefix`, as `register_syn` and
+  `register_rigid` do.
 
 ### Deprecated
 
