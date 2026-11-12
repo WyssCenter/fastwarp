@@ -1,7 +1,8 @@
-# fastwarp
+# FastWarp
 
-GPU image registration for Python: the registration engine of **Wyss DBS Localizer** by
-**Richard Köhler** (Wyss Center for Bio and Neuroengineering), packaged as a wheel. It runs a
+GPU image registration for Python, packaged as a wheel. FastWarp was developed by
+**Richard Köhler** at the Wyss Center for Bio and Neuroengineering as the registration engine of
+Wyss DBS Localizer. It runs a
 full Rigid → Affine → SyN normalization in one call, and rigid or affine fits (coregistration,
 template alignment, brain-shift refinement) in a session that keeps the image pair on the GPU.
 
@@ -42,13 +43,13 @@ load (load average about 110 on 48 cores) during its runs.
 
 Linear sessions: one rigid fit of the T2w onto the T1w (the default rigid stage) takes 1.2 s on
 the M5 Pro, 1.6 s on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and
-2.7 s on the Quadro K620. As leaddbs-py runs them on the Lead-Tutor cohort: a post-op CT onto
+2.7 s on the Quadro K620. In a typical DBS localisation workflow on the Lead-Tutor cohort: a post-op CT onto
 the T1w anchor, five coarse and two full rigid fits, takes 17 s on the laptop GPU where ANTs
 takes 32 s; the masked affine brain-shift fit takes 2.4–4.8 s on the RTX A4000 where ANTs takes
 5–11 s.
 
 After the registration, turning the composites into displacement fields on the 0.5 mm template
-and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS / leaddbs-py do next):
+and anchor grids and the Lanczos re-warp of the anchor (what Lead-DBS does next):
 
 | Laptop, 8 threads | ANTs (ITK) | `compose_field` / `apply_transforms` |
 | --- | --- | --- |
@@ -229,7 +230,7 @@ Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes 
 ## Source and credit
 
 `crates/fastwarp-{core,niftiio,matfile,reg,gpu}` are copies of the registration engine of
-Wyss DBS Localizer (an internal Wyss Center repository), taken at revision `90c1df3`
+Wyss DBS Localizer, the project in which the code was first developed, taken at revision `90c1df3`
 (2026-11-10) of an earlier standalone copy of that engine, which this repository replaces
 (`ENGINE_SOURCE` names that revision); later changes are in `CHANGELOG.md`. `crates/fastwarp-py` is the Python binding (PyO3). Please
 cite the engine as in `CITATION.cff`.

@@ -1,10 +1,10 @@
-# fastwarp
+# FastWarp
 
-fastwarp is a Python package for GPU image registration. It runs a full Rigid, Affine and SyN
+FastWarp is a Python package for GPU image registration. It runs a full Rigid, Affine and SyN
 normalization of 3-D images in one call, and rigid or affine fits (coregistration, template
-alignment, brain-shift refinement) in a session that keeps the image pair on the GPU. It is the
-registration engine of Wyss DBS Localizer by Richard Köhler, Wyss Center for Bio and
-Neuroengineering, packaged as a wheel.
+alignment, brain-shift refinement) in a session that keeps the image pair on the GPU. It was
+developed by Richard Köhler at the Wyss Center for Bio and Neuroengineering as the
+registration engine of Wyss DBS Localizer, and is packaged as a wheel.
 
 The engine ports the registration of ANTs/ITK to GPU compute shaders through
 [wgpu](https://wgpu.rs). It supports the Mattes mutual information and cross-correlation
@@ -20,7 +20,7 @@ CPU threads. On a desktop or laptop GPU the same registration takes 12 to 24 s i
 [measurements](performance.md). A pipeline that registers many subjects, or runs several linear
 fits per subject, gains from that difference.
 
-fastwarp keeps the ANTs recipe, file formats and conventions, so that a pipeline replaces the
+FastWarp keeps the ANTs recipe, file formats and conventions, so that a pipeline replaces the
 `antsRegistration` call and keeps the rest. It reports a GPU that is missing or too small before
 any work starts (`GpuUnavailableError`, `GpuCapacityError`), so that the caller can fall back to
 ANTs.

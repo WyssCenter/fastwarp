@@ -3,7 +3,7 @@ name = "fastwarp-core"
 version.workspace = true
 publish = false
 edition = "2021"
-description = "Shared math (affine, vectors) for Wyss DBS Localizer Rust crates"
+description = "Shared math (affine, vectors) for FastWarp Rust crates"
 license = "Apache-2.0"
 
 [lib]

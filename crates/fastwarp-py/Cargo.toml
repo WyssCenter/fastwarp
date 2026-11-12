@@ -3,7 +3,7 @@ name = "fastwarp-py"
 version.workspace = true
 license.workspace = true
 edition = "2021"
-description = "Python bindings (PyO3) for the dbs-localizer GPU registration engine"
+description = "Python bindings (PyO3) for the FastWarp GPU registration engine"
 publish = false
 
 [lib]

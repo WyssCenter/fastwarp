@@ -30,14 +30,14 @@ One rigid fit of the T2w onto the T1w (the default rigid stage) takes 1.2 s on t
 on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and 2.7 s on the Quadro
 K620.
 
-As leaddbs-py runs them on the Lead-Tutor cohort: a post-op CT onto the T1w anchor, five coarse
+In a typical DBS localisation workflow on the Lead-Tutor cohort: a post-op CT onto the T1w anchor, five coarse
 and two full rigid fits, takes 17 s on the laptop GPU where ANTs takes 32 s. The masked affine
 brain-shift fit takes 2.4 to 4.8 s on the RTX A4000 where ANTs takes 5 to 11 s.
 
 ## Post-processing
 
 Turning the composites into displacement fields on the 0.5 mm template and anchor grids, and
-the Lanczos re-warp of the anchor (what Lead-DBS and leaddbs-py do next), on a laptop with 8
+the Lanczos re-warp of the anchor (what Lead-DBS does next), on a laptop with 8
 threads:
 
 | Step | ANTs (ITK) | `compose_field` / `apply_transforms` |
