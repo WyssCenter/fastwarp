@@ -195,7 +195,7 @@ derives from `Exception`; the others derive from `RuntimeError`.
 
 The capacity check uses the device memory the graphics API reports, halved on integrated GPUs
 because they share memory with the host. Software adapters are refused unless
-`DBSLOC_GPU_ALLOW_SOFTWARE=1`. The variables are listed under
+`FASTWARP_GPU_ALLOW_SOFTWARE=1`. The variables are listed under
 [Installation](installation.md#environment-variables).
 
 ## How ANTs tools read the outputs

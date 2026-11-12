@@ -21,7 +21,7 @@ load (load average about 110 on 48 cores) during its runs.
 
 [^1]: 2 GB is too little for T1w + T2w at 1 mm (1.6 GB): the capacity check refuses it up
     front (`GpuCapacityError`), so a caller falls back to ANTs. T1w alone needs 1.4 GB and ran
-    only with `DBSLOC_GPU_MEMORY_BUDGET_MB=1900`, since the default budget keeps 1 GB free for
+    only with `FASTWARP_GPU_MEMORY_BUDGET_MB=1900`, since the default budget keeps 1 GB free for
     the desktop.
 
 ## Linear sessions
@@ -48,6 +48,6 @@ threads:
 
 TODO(author): state how the ANTs timings were produced (command lines, the ANTs version for the
 registration timings) and which laptop the post-processing table used. The repository README
-does not say. The GPU benchmarks in `crates/dbsloc-gpu/tests/syn_bench.rs` run with
-`DBSLOC_GPU_BENCH`; TODO(author): say whether the table above came from them or from another
+does not say. The GPU benchmarks in `crates/fastwarp-gpu/tests/syn_bench.rs` run with
+`FASTWARP_GPU_BENCH`; TODO(author): say whether the table above came from them or from another
 script, and where that script is.
