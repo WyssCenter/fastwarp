@@ -616,19 +616,6 @@ impl LinearSession {
     }
 }
 
-/// `stage` checked as `LinearSession.register` checks it for `transform` (unknown keys, types,
-/// level counts, the GPU's 32 MI bins), returned complete; raises `ValueError` without touching
-/// the GPU.
-#[pyfunction]
-#[pyo3(signature = (stage=None, transform="rigid"))]
-fn check_linear_stage<'py>(
-    py: Python<'py>,
-    stage: Option<Bound<'py, PyDict>>,
-    transform: &str,
-) -> PyResult<Bound<'py, PyDict>> {
-    recipe::linear_stage_dict(py, &recipe::linear_stage(stage.as_ref(), transform)?)
-}
-
 /// The dbs-localizer cohort recipe for 1 or 2 channels, in the form `register_syn(recipe=...)`
 /// takes; every field present.
 #[pyfunction]
@@ -650,7 +637,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;
     m.add_class::<LinearSession>()?;
-    m.add_function(wrap_pyfunction!(check_linear_stage, m)?)?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;

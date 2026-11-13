@@ -19,7 +19,6 @@ from ._core import (
 )
 from ._core import LinearSession as _LinearSession
 from ._core import apply_transforms as _apply_transforms
-from ._core import check_linear_stage as _check_linear_stage
 from ._core import cohort_recipe as _cohort_recipe
 from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
@@ -350,10 +349,6 @@ class LinearSession:
         return False
 
 
-#: Deprecated alias of :class:`LinearSession`; removed in fastwarp 0.3.0.
-RigidSession = LinearSession
-
-
 def linear_session(
     fixed: Any,
     moving: Any,
@@ -370,52 +365,3 @@ def linear_session(
     intensity quantiles, as ``--winsorize-image-intensities``.
     """
     return LinearSession(fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter)
-
-
-#: Deprecated alias of :func:`linear_session`; removed in fastwarp 0.3.0.
-rigid_session = linear_session
-
-
-def register_rigid(
-    fixed: Any,
-    moving: Any,
-    *,
-    stage: Mapping[str, Any] | None = None,
-    initial: tuple[Any, Any] | None = None,
-    fixed_mask: Any | None = None,
-    winsorize: tuple[float, float] | None = None,
-    out_prefix: str | PathLike[str] | None = None,
-    adapter: str | None = None,
-    cancel: CancelToken | None = None,
-) -> dict[str, Any]:
-    """One rigid fit of ``moving`` onto ``fixed`` on the GPU (Mattes MI, regular sampling).
-
-    ``stage``: the schedule, the fields of ``cohort_recipe()["rigid"]`` (left out = that value).
-    ``initial``: ``(parameters, center)`` of an ITK affine mapping fixed points to moving ones
-    (12 parameters: the row-major matrix, then the translation); ``None`` starts from the
-    centres of intensity mass, like ``antsRegistration --initial-moving-transform [f,m,1]``.
-    ``fixed_mask`` / ``winsorize``: as :func:`linear_session`. For several fits of one pair (a
-    multi-start), a :func:`linear_session` prepares the images once.
-
-    Returns the collapsed affine as ``parameters`` / ``center`` (what ``0GenericAffine.mat`` holds,
-    written as ``<out_prefix>0GenericAffine.mat`` when ``out_prefix`` is given), the final MI
-    value ``metric`` (lower is better), the start, iterations per level and the time.
-    """
-    # Everything a caller can get wrong is refused before the GPU is opened.
-    stage_dict = _check_linear_stage(None if stage is None else dict(stage), "rigid")
-    start = _initial(initial)
-    prefix = None if out_prefix is None else _prepared_prefix(out_prefix)
-    if prefix is not None and not _prefix_folder(prefix).is_dir():
-        raise ValueError(f"output folder {_prefix_folder(prefix)} does not exist")
-    if winsorize is not None and not 0.0 <= winsorize[0] < winsorize[1] <= 1.0:
-        raise ValueError("winsorize must be (lower, upper) quantiles with 0 <= lower < upper <= 1")
-    with linear_session(
-        fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter
-    ) as session:
-        return session.register(
-            stage=stage_dict,
-            initial=start,
-            use_mask=fixed_mask is not None,
-            out_prefix=prefix,
-            cancel=cancel,
-        )

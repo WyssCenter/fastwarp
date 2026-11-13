@@ -32,6 +32,14 @@
   and will be removed in fastwarp 0.3.0; use `linear_session(...).register()`,
   `linear_session` and `LinearSession`. They are no longer in `fastwarp.__all__` or `dir(fastwarp)`.
 
+### Removed
+
+- `register_rigid`, `rigid_session` and `RigidSession`, deprecated in 0.2.0, are removed; use
+  `LinearSession` for `RigidSession` and `linear_session(...)` for `rigid_session(...)`. For
+  `register_rigid(fixed, moving, ...)`, use `with fastwarp.linear_session(fixed, moving,
+  fixed_mask=..., winsorize=..., adapter=...) as s: s.register(stage=..., initial=...,
+  out_prefix=..., cancel=...)`.
+
 ## 0.1.0 (2026-11-12)
 
 First public release.
