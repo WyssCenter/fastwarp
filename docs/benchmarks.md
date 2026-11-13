@@ -64,21 +64,24 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   labelling protocol of these files is not documented next to them. The archive's
   `labels.DKT31.manual+aseg.nii.gz` files, whose subcortical part is FreeSurfer's automatic
   `aseg`, are not used.
-- Licence. The project README: "All labeled data, including nifti volumes (nii), vtk surfaces
-  (vtk), and FreeSurfer files (mgh, etc.) for each scanned "GROUP" … are licensed under a
-  by-attribution Creative Commons License" (<http://creativecommons.org/licenses/by/4.0>), and
-  "The manually labeled subcortical portions of the "WholeBrain" OASIS-TRT-20 labels are
-  licensed under a similar Creative Commons License" (<http://creativecommons.org/licenses/by-nc-nd/4.0>).
-  The `README_subcortical_labels.txt` beside the label files says the same: "released under a
-  different Creative Commons License (http://creativecommons.org/licenses/by-nc-sd/4.0)" (sic).
-  The OSF component itself shows CC BY 4.0. We follow the stricter statement: the subcortical
-  labels are for non-commercial use without derivatives being distributed. The images derive
-  from OASIS-1, whose own terms ("OASIS data are provided for non-commercial, academic research
-  purposes only", <https://sites.wustl.edu/oasisbrains/>) ask for the acknowledgement "Data were
-  provided [in part] by OASIS"; whether they still bind Mindboggle's CC BY redistribution is not
-  stated, so treat the images as non-commercial research data as well.
 - Cite: Klein A, Tourville J (2012), *Front Neurosci* 6:171, doi:10.3389/fnins.2012.00171;
   Marcus DS et al. (2007), *J Cogn Neurosci* 19(9):1498–1507, doi:10.1162/jocn.2007.19.9.1498.
+
+```{dropdown} Licence
+The project README: "All labeled data, including nifti volumes (nii), vtk surfaces
+(vtk), and FreeSurfer files (mgh, etc.) for each scanned "GROUP" … are licensed under a
+by-attribution Creative Commons License" (<http://creativecommons.org/licenses/by/4.0>), and
+"The manually labeled subcortical portions of the "WholeBrain" OASIS-TRT-20 labels are
+licensed under a similar Creative Commons License" (<http://creativecommons.org/licenses/by-nc-nd/4.0>).
+The `README_subcortical_labels.txt` beside the label files says the same: "released under a
+different Creative Commons License (http://creativecommons.org/licenses/by-nc-sd/4.0)" (sic).
+The OSF component itself shows CC BY 4.0. We follow the stricter statement: the subcortical
+labels are for non-commercial use without derivatives being distributed. The images derive
+from OASIS-1, whose own terms ("OASIS data are provided for non-commercial, academic research
+purposes only", <https://sites.wustl.edu/oasisbrains/>) ask for the acknowledgement "Data were
+provided [in part] by OASIS"; whether they still bind Mindboggle's CC BY redistribution is not
+stated, so treat the images as non-commercial research data as well.
+```
 
 ### 7 T deep nuclei (STN, SN, RN, GPe, GPi)
 
@@ -95,13 +98,16 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 - Ground truth: subthalamic nucleus, substantia nigra, red nucleus, external and internal
   globus pallidus, left and right, delineated by hand by two raters (AA and BI); the `AA-BI_conj`
   files are the voxels both raters included (the conjunction masks of the article).
-- Licence: the article's data availability statement: "All anonymized data and analysis scripts
-  are available from https://osf.io/4nrku/, under the terms of the Creative Commons Attribution
-  License and complies with the rules of the General Data Protection Regulation (EU) 2016/679."
-  The OSF project itself shows no licence. The 3 T part of the archive is not used: its masks lie
-  on the grid of a separate T2\*-weighted scan, so a T1w registration would add the motion
-  between two scans to the error.
+- Not used: the 3 T part of the archive. Its masks lie on the grid of a separate T2\*-weighted
+  scan, so a T1w registration would add the motion between two scans to the error.
 - Cite: Isaacs BR et al. (2020), *PLoS One* 15:e0236208, doi:10.1371/journal.pone.0236208.
+
+```{dropdown} Licence
+The article's data availability statement: "All anonymized data and analysis scripts
+are available from https://osf.io/4nrku/, under the terms of the Creative Commons Attribution
+License and complies with the rules of the General Data Protection Regulation (EU) 2016/679."
+The OSF project itself shows no licence.
+```
 
 ### SNSX: AFIDs on 7 T images (landmarks)
 
@@ -113,8 +119,6 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   `derivatives/afids_groundtruth` ("Placed each point within 3D Slicer, in subject space"), the
   mean of three placements according to the dataset README ("performed a total of 3 times on all
   subject scans"). Taha et al. (2023) report rater accuracy within 1–2 mm.
-- Licence: `LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
-  `"License": "CC0"`. No data-use agreement.
 - Template: MNI ICBM 2009c nonlinear asymmetric (`MNI152NLin2009cAsym`) at 1 mm from
   TemplateFlow
   ([`tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz`](https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz)
@@ -133,6 +137,11 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   10:449, doi:10.1038/s41597-023-02330-9; Lau JC et al. (2019), *Hum Brain Mapp* 40:4163–4179,
   doi:10.1002/hbm.24695; Fonov V et al. (2011), *NeuroImage* 54:313–327,
   doi:10.1016/j.neuroimage.2010.07.033.
+
+```{dropdown} Licence
+`LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
+`"License": "CC0"`. No data-use agreement.
+```
 
 ### LHSCPD: AFIDs on 1.5 T images (optional)
 
@@ -191,17 +200,8 @@ et al. (2023).
 `--recipe cohort` (default) is FastWarp's default recipe (`fastwarp.cohort_recipe(1)`), the one
 the benchmark timings in [Performance](performance.md) use. ANTs gets the identical schedule:
 
-```text
-antsRegistration --dimensionality 3 --output [<out>/reg_]
-  --winsorize-image-intensities [0.005,0.995] --use-histogram-matching 0
-  --initial-moving-transform [<fixed>,<moving>,1]
-  --transform Rigid[0.1]  --metric MI[<fixed>,<moving>,1,32,Regular,0.25]
-    --convergence [1000x500x250x100,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --transform Affine[0.1] --metric MI[<fixed>,<moving>,1,32,Regular,0.25]
-    --convergence [1000x500x250x100,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --transform SyN[0.1,3,0] --metric CC[<fixed>,<moving>,1,4]
-    --convergence [100x70x50x20,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --write-composite-transform 1 --random-seed 20260910 --verbose 1
+```{literalinclude} _includes/ants-cohort-command.txt
+:language: text
 ```
 
 `--recipe syn-sh` is what `antsRegistrationSyN.sh -t s` of ANTs 2.6.5 runs on an image below its
@@ -355,6 +355,10 @@ again since.
 The benchmark needs Python 3.13 (ANTsPy has no 3.14 wheels yet), ANTsPy and a GPU for FastWarp.
 The `benchmark` dependency group adds `scipy` and `matplotlib` (both already pinned in `uv.lock`
 as ANTsPy dependencies) to the `ants` group.
+
+The benchmark is not part of the wheel. Run it from a clone of the repository, in the
+environment that `uv.lock` pins (`uv sync --locked`); for results that you report, check out a
+release tag first, so that others can run the same code.
 
 ```bash
 git clone https://github.com/WyssCenter/fastwarp && cd fastwarp

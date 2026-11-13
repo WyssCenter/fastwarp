@@ -28,17 +28,16 @@ inverse file instead, for example `InverseComposite.h5`. A missing file raises
 
 ## Resample an image
 
-```{eval-rst}
-.. py:function:: fastwarp.apply_transforms(moving, reference, transforms, *, interpolation="linear", default_value=0.0)
-   :no-index:
-```
+{func}`~fastwarp.apply_transforms` resamples an image. All parameters:
+{func}`fastwarp.apply_transforms` in the API reference.
 
-- `moving` is the [image](images.md) to resample.
-- `reference` gives the output grid: an `ANTsImage` or a tuple `(shape, spacing, origin,
-  direction)`.
-- `interpolation` is one of {data}`~fastwarp.INTERPOLATORS`: `"linear"`, `"nearestNeighbor"`
-  (for label images) or `"lanczosWindowedSinc"`.
-- Output voxels that map outside `moving` get `default_value`.
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `moving` | required | The [image](images.md) to resample. |
+| `reference` | required | The output grid: an `ANTsImage` or a tuple `(shape, spacing, origin, direction)`. |
+| `transforms` | required | A file or a list of files (see [Transform lists](#transform-lists)). |
+| `interpolation` | `"linear"` | One of {data}`~fastwarp.INTERPOLATORS`: `"linear"`, `"nearestNeighbor"` (for label images) or `"lanczosWindowedSinc"`. |
+| `default_value` | `0.0` | The value of output voxels that map outside `moving`. |
 
 The result is an `ANTsImage` like `reference` when `reference` is an `ANTsImage`, and otherwise a
 `float32` NumPy array of the reference's shape.
@@ -58,7 +57,8 @@ array = fastwarp.apply_transforms(moving, grid, ["out/ch2_to_mni_Composite.h5"])
 print(type(image).__name__, type(array).__name__, array.dtype, array.shape)
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 ANTsImage ndarray float32 (182, 218, 182)
 ```
 
@@ -66,22 +66,22 @@ The transform file comes from the [quickstart](../quickstart.md) example.
 
 ## Write one displacement field
 
-```{eval-rst}
-.. py:function:: fastwarp.compose_field(transforms, reference, out_path, *, compression_level=None)
-   :no-index:
-```
-
 {func}`~fastwarp.compose_field` evaluates the whole transform list at every voxel of the
-reference grid and writes the result as one displacement field. It is the file that
+reference grid and writes the result as one {term}`displacement field`. It is the file that
 `antsApplyTransforms -o [field.nii.gz,1]` writes: a NIfTI vector image of `float32` displacements
-in LPS millimetres, which ANTs and FastWarp read back as a single transform.
+in {term}`LPS` millimetres, which ANTs and FastWarp read back as a single transform. All
+parameters: {func}`fastwarp.compose_field` in the API reference.
 
-- `out_path` ending in `.nii.gz` is written with gzip compression, using several threads;
-  `.nii` is written uncompressed. The folder is created when it is missing.
-- `compression_level` sets the gzip level from 0 to 9; `None` uses level 1. Level 0 writes a
-  valid gzip file without compressing the data, which suits displacement fields: they barely
-  compress, and the file is written and read faster.
-- It returns the output path as a {class}`pathlib.Path`.
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `transforms` | required | A file or a list of files (see [Transform lists](#transform-lists)). |
+| `reference` | required | The output grid: an `ANTsImage` or a tuple `(shape, spacing, origin, direction)`. |
+| `out_path` | required | The output file. `.nii.gz` is written with gzip compression on several threads; `.nii` uncompressed. |
+| `compression_level` | `None` | The gzip level from 0 to 9; `None` uses level 1. Level 0 writes a valid gzip file without compressing the data, which suits displacement fields: they barely compress, and the file is written and read faster. |
+
+It returns the output path as a {class}`pathlib.Path`. The output folder is created when it is
+missing, before the transform files are checked, so a call that then raises
+`FileNotFoundError` can leave an empty folder behind.
 
 ```python
 import ants
@@ -95,7 +95,8 @@ field = ants.image_read(str(path))
 print(field.shape, field.components)
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 (182, 218, 182) 3
 ```
 
@@ -104,3 +105,7 @@ print(field.shape, field.components)
 The tests compare both functions with ANTsPy on the same transforms (`tests/test_post.py`). For
 every interpolator, the resampled images may differ by at most 0.001 in absolute value on test
 images with values up to about 110, and the composed displacement fields by at most 0.0001 mm.
+Running the commands of [Output files](outputs.md#with-antsapplytransforms) with
+`antsApplyTransforms` 2.6.5 on the quickstart's transforms gave the same resampled image as
+{func}`~fastwarp.apply_transforms` (largest difference 0) and a displacement field that differs
+from {func}`~fastwarp.compose_field`'s by at most 6 × 10⁻⁸ mm, on one Windows laptop.

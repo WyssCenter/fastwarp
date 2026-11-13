@@ -26,7 +26,7 @@ from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
 
-#: Citation for the engine, for method logs and reference lists.
+#: The citation of FastWarp as one line of text, for method sections and logs.
 CITATION = (
     "Köhler RM, Payonk JP, Neumann WJ. FastWarp: the GPU registration engine of "
     "Wyss DBS Localizer. https://github.com/WyssCenter/fastwarp; 2026."
@@ -88,28 +88,77 @@ def register_syn(
     cancel: CancelToken | None = None,
     recipe: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Register ``moving`` to ``fixed`` on the GPU: Rigid and Affine (Mattes MI, first channel),
-    then SyN (CC, every channel), from a centre-of-mass start.
+    """Register ``moving`` onto ``fixed`` on the GPU and write ANTs transform files.
 
-    ``fixed`` / ``moving``: one image, or a list of two (T1w + T2w) for the multispectral SyN
-    stage, the moving T2w already in the moving T1w's space. Writes
-    ``<out_prefix>Composite.h5`` and ``<out_prefix>InverseComposite.h5`` (ANTs layout:
-    ``[Affine, Warp]`` and ``[InverseWarp, Affine^-1]``) plus ``<out_prefix>0GenericAffine.mat``.
-    A prefix string ending in a path separator, such as ``"out/sub/"``, is a folder, as in ANTs
-    (a ``pathlib.Path`` drops a trailing separator). Returns timings and per-level diagnostics.
+    The registration runs a centre-of-mass start, a rigid and an affine stage (Mattes mutual
+    information on the first image of each side), then a SyN stage (symmetric normalization, the
+    deformable registration of ANTs; neighbourhood cross-correlation on every image), on an
+    isotropic grid of ``iso_mm`` millimetres built from the first fixed image.
 
-    ``recipe`` sets the schedule: ``{"rigid": {...}, "affine": {...}, "syn": {...}}`` with the
-    fields :func:`cohort_recipe` returns. A stage or field left out keeps the dbs-localizer cohort
-    value; an unknown key or a value the GPU kernels do not support (MI bins other than 32, a CC
-    radius above 8) raises ``ValueError`` before any work. The result's ``"recipe"`` is the full
-    recipe that ran.
+    Parameters
+    ----------
+    fixed : ANTsImage, tuple or list
+        The image to register onto, or a list of two images (for example a T1-weighted and a
+        T2-weighted scan). An image is an ``ANTsImage`` or a tuple
+        ``(array, spacing, origin, direction)`` in ITK (LPS) geometry.
+    moving : ANTsImage, tuple or list
+        The image to register, or a list of as many images as ``fixed``. A second moving image
+        must already be aligned to the first one.
+    out_prefix : str or os.PathLike
+        Prefix of the output files, joined to the file names as text, as in ANTs: ``"out/sub_"``
+        gives ``out/sub_Composite.h5``. A string that ends in a path separator, such as
+        ``"out/sub/"``, names a folder (a :class:`pathlib.Path` drops the trailing separator). The
+        folder is created when it is missing.
+    iso_mm : float, default 1.0
+        Voxel size of the registration grid, in millimetres. Must be positive.
+    write_warped : bool, default False
+        Also write ``<out_prefix>_Warped.nii.gz``: the first moving image warped onto the
+        registration grid.
+    adapter : str, optional
+        Use the GPU whose name contains this text (case-insensitive). By default the
+        ``FASTWARP_GPU_ADAPTER`` environment variable applies, if set, and otherwise FastWarp
+        chooses.
+    cancel : CancelToken, optional
+        A token that another thread can use to stop the run.
+    recipe : dict, optional
+        The registration schedule, ``{"rigid": {...}, "affine": {...}, "syn": {...}}``, with the
+        fields :func:`cohort_recipe` returns. A stage or field left out keeps its default.
 
-    ``adapter`` picks a GPU by a substring of its name. ``cancel`` stops the run at the next
-    iteration when another thread calls ``cancel.cancel()``; the GIL is released while it runs.
+    Returns
+    -------
+    dict
+        Timings in seconds (``total_s``, ``resample_s``, ``preprocess_s``, ``linear_s``, ``syn_s``,
+        ``warp_s``, ``write_s``), the GPU with its graphics API and type (``adapter``), the
+        registration grid size (``grid``), one ``(level, grid_size, iterations, converged,
+        energy)`` tuple per SyN level (``levels``),
+        the affine (``affine_parameters``, ``affine_center``), ``peak_gpu_bytes``,
+        ``memory_budget_bytes`` and the full ``recipe`` that ran.
 
-    Raises :class:`GpuUnavailableError` (no hardware GPU), :class:`GpuCapacityError` (the
-    ``iso_mm`` grid does not fit; checked before any work), :class:`RegistrationCancelled` and
-    :class:`RegistrationError`. The first two mean "use another engine".
+    Raises
+    ------
+    ValueError
+        An argument or the recipe is invalid. Checked before the GPU is opened.
+    GpuUnavailableError
+        No usable GPU. Raised before any work, so the caller can run ANTs instead.
+    GpuCapacityError
+        The registration grid does not fit the GPU's memory. Raised before any work.
+    RegistrationCancelled
+        ``cancel`` was cancelled. No files are written.
+    RegistrationError
+        The registration failed, for example on an image with NaN voxels.
+
+    See Also
+    --------
+    fits_gpu : Check the GPU memory without registering.
+    cohort_recipe : The default recipe.
+    linear_session : Rigid or affine fits only.
+
+    Notes
+    -----
+    The call releases Python's global interpreter lock while it runs, so other Python threads keep
+    running. The files are ``<out_prefix>Composite.h5`` (warps the moving image onto the fixed
+    image), ``<out_prefix>InverseComposite.h5`` (the inverse) and ``<out_prefix>0GenericAffine.mat``
+    (the affine part).
     """
     return _register_syn(
         [_image_args(i) for i in _as_list(fixed)],
@@ -128,15 +177,53 @@ def _as_dict(stage: Any) -> Any:
 
 
 def cohort_recipe(channels: int = 1) -> dict[str, dict[str, Any]]:
-    """The dbs-localizer cohort recipe for 1 or 2 channels as :func:`register_syn` takes it:
-    ``MI[32, Regular 0.25]`` Rigid and Affine at ``1000x500x250x100``, then ``SyN[0.1,3,0]``
-    with ``CC`` radius 4 at ``100x70x50x20`` (weights 0.5 each for two channels); shrink
-    ``8x4x2x1``, smoothing ``3x2x1x0`` voxels."""
+    """Return the default registration recipe in full.
+
+    The rigid and affine stages use Mattes mutual information with 32 histogram bins on 25 % of
+    the voxels, sampled on a regular grid, and at most 1000, 500, 250 and 100 iterations on four
+    levels. The SyN stage uses cross-correlation in a window of radius 4 voxels, a gradient step of
+    0.1, an update-field variance of 3 voxels² and no total-field smoothing, with at most 100, 70,
+    50 and 20 iterations. All stages shrink the images by 8, 4, 2 and 1 and smooth them with
+    Gaussian sigmas of 3, 2, 1 and 0 voxels. It is the recipe of Wyss DBS Localizer.
+
+    Parameters
+    ----------
+    channels : int, default 1
+        Number of images per side, 1 or 2. With 2 the SyN stage weights each channel 0.5.
+
+    Returns
+    -------
+    dict
+        ``{"rigid": {...}, "affine": {...}, "syn": {...}}`` with every field present, in the form
+        :func:`register_syn` takes as ``recipe``.
+
+    Raises
+    ------
+    ValueError
+        ``channels`` is not 1 or 2.
+    """
     return _cohort_recipe(channels)
 
 
 def iso_grid_dims(img: Any, iso_mm: float = 1.0) -> tuple[int, int, int]:
-    """Voxels per axis of the registration grid :func:`register_syn` builds from ``img``."""
+    """Return the size of the registration grid that :func:`register_syn` builds.
+
+    Along each axis the grid has ``floor((n - 1) * spacing / iso_mm) + 1`` voxels, where ``n`` and
+    ``spacing`` are the image's size and spacing along that axis; an axis whose spacing already
+    equals ``iso_mm`` keeps its size.
+
+    Parameters
+    ----------
+    img : ANTsImage or tuple
+        The fixed image, as an ``ANTsImage`` or a tuple ``(array, spacing, origin, direction)``.
+    iso_mm : float, default 1.0
+        Voxel size of the registration grid, in millimetres.
+
+    Returns
+    -------
+    tuple of int
+        Voxels along each of the three axes.
+    """
     shape = img.shape if not isinstance(img, tuple) else np.shape(img[0])
     spacing = img.spacing if not isinstance(img, tuple) else img[1]
     out = []
@@ -156,15 +243,43 @@ def fits_gpu(
     channels: int | None = None,
     adapter: str | None = None,
 ) -> bool:
-    """Whether :func:`register_syn` of ``fixed`` at ``iso_mm`` fits the GPU (False without one).
+    """Check whether :func:`register_syn` would fit the GPU's memory, without registering.
 
-    ``fixed`` / ``moving`` are what :func:`register_syn` takes: an image or a list of 1 or 2 of
-    them (the first fixed image sets the grid; the moving grid is the largest of the moving
-    images, and there are as many moving images as fixed ones). ``channels`` defaults to the number
-    of fixed images; give it to ask about a second channel when passing one image. Give ``moving``
-    to get exactly the answer of the capacity check ``register_syn`` runs; without it the moving
-    image is assumed to have the fixed grid, which undercounts when it is larger. Invalid
-    arguments raise ``ValueError`` as in :func:`register_syn`.
+    Runs the same capacity check as :func:`register_syn`. Returns ``False`` when there is no usable
+    GPU.
+
+    Parameters
+    ----------
+    fixed : ANTsImage, tuple or list
+        The fixed image, or a list of one or two, as :func:`register_syn` takes them. The first
+        fixed image sets the registration grid.
+    moving : ANTsImage, tuple or list, optional
+        The moving image or images, as many as ``fixed``. The largest of their registration grids
+        counts. Without it, the moving image is assumed to have the fixed image's grid, which
+        undercounts when the moving image is larger; pass it for the exact answer.
+    iso_mm : float, default 1.0
+        Voxel size of the registration grid, in millimetres. Must be positive.
+    channels : int, optional
+        Number of channels, 1 or 2. Defaults to the number of fixed images. Give ``channels=2``
+        to ask about a second channel while passing one image.
+    adapter : str, optional
+        Check the GPU whose name contains this text.
+
+    Returns
+    -------
+    bool
+        ``True`` when the registration fits, ``False`` when it does not or there is no GPU.
+
+    Raises
+    ------
+    ValueError
+        Not one or two fixed images, not as many moving images as fixed ones, ``channels`` not 1
+        or 2 or not equal to the number of fixed images in a list, or ``iso_mm`` not positive.
+
+    See Also
+    --------
+    iso_grid_dims : The size of the registration grid.
+    gpu_info : The GPU and its memory budget.
     """
     fixed_list = _as_list(fixed)
     if not 1 <= len(fixed_list) <= 2:
@@ -193,8 +308,21 @@ def fits_gpu(
 
 
 def gpu_available(adapter: str | None = None) -> bool:
-    """True when a usable hardware GPU adapter opens (software adapters only with
-    ``FASTWARP_GPU_ALLOW_SOFTWARE=1``)."""
+    """Return whether a usable GPU opens.
+
+    Software adapters, which emulate a GPU on the CPU, count only when
+    ``FASTWARP_GPU_ALLOW_SOFTWARE=1`` is set.
+
+    Parameters
+    ----------
+    adapter : str, optional
+        Check the GPU whose name contains this text.
+
+    Returns
+    -------
+    bool
+        ``True`` when :func:`gpu_info` would succeed.
+    """
     try:
         gpu_info(adapter)
     except GpuUnavailableError:
@@ -202,7 +330,7 @@ def gpu_available(adapter: str | None = None) -> bool:
     return True
 
 
-#: Interpolators :func:`apply_transforms` runs (ANTs names).
+#: The interpolators :func:`apply_transforms` accepts, by their ANTs names.
 INTERPOLATORS = ("linear", "nearestNeighbor", "lanczosWindowedSinc")
 
 
@@ -239,14 +367,41 @@ def compose_field(
     *,
     compression_level: int | None = None,
 ) -> Path:
-    """Write the transforms as one displacement field on ``reference``'s grid.
+    """Write a list of transforms as one displacement field on a reference grid.
 
-    The file ``antsApplyTransforms --compose`` / ``ants.apply_transforms(compose=...)`` writes
-    (vectors in LPS mm, ``float32``), computed in parallel and written with parallel gzip when
-    ``out_path`` ends in ``.nii.gz``. ``transforms`` is a list as ``ants.apply_transforms`` takes
-    it, with the same meaning.
-    ``compression_level`` (0 to 9) sets the gzip level; 0 stores the data in valid gzip without
-    compressing it, which suits displacement fields (they barely compress).
+    This is the file that ``antsApplyTransforms -o [field.nii.gz,1]`` writes: a NIfTI image of
+    ``float32`` displacement vectors in LPS millimetres. It runs in parallel on the CPU and needs no
+    GPU.
+
+    Parameters
+    ----------
+    transforms : str, os.PathLike or list
+        One transform file or a list of them, with the same meaning as the ``transformlist`` of
+        ``ants.apply_transforms``: a point of the reference grid goes through the first file first.
+        Files can be ``.h5``, ``.mat``, ``.txt``, ``.tfm``, ``.nii`` or ``.nii.gz``.
+    reference : ANTsImage or tuple
+        The output grid: an ``ANTsImage``, or a tuple ``(shape, spacing, origin, direction)``.
+    out_path : str or os.PathLike
+        The output file. ``.nii.gz`` is compressed with gzip on several threads; ``.nii`` is
+        written uncompressed. The folder is created when it is missing, before the transform
+        files are checked.
+    compression_level : int, optional
+        Gzip level from 0 to 9; by default 1. Level 0 writes a valid gzip file without
+        compressing it, which suits displacement fields because they barely compress.
+
+    Returns
+    -------
+    pathlib.Path
+        The output path.
+
+    Raises
+    ------
+    FileNotFoundError
+        A transform file does not exist.
+    ValueError
+        ``compression_level`` is above 9, or the transform list is empty.
+    RegistrationError
+        A transform file cannot be read, or the output cannot be written.
     """
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -267,12 +422,40 @@ def apply_transforms(
     interpolation: str = "linear",
     default_value: float = 0.0,
 ) -> Any:
-    """Resample ``moving`` onto ``reference`` through ``transforms`` (``antsApplyTransforms``).
+    """Resample an image through a list of transforms, like ``antsApplyTransforms``.
 
-    ``transforms`` is a list as ``ants.apply_transforms`` takes it, with the same meaning.
-    ``interpolation`` is one of :data:`INTERPOLATORS`. Returns an ``ANTsImage`` like
-    ``reference`` when it is one, else a ``float32`` array of the reference's shape. Points that
-    map outside ``moving`` take ``default_value``.
+    Runs in parallel on the CPU and needs no GPU.
+
+    Parameters
+    ----------
+    moving : ANTsImage or tuple
+        The image to resample.
+    reference : ANTsImage or tuple
+        The output grid: an ``ANTsImage``, or a tuple ``(shape, spacing, origin, direction)``.
+    transforms : str, os.PathLike or list
+        One transform file or a list of them, with the same meaning as the ``transformlist`` of
+        ``ants.apply_transforms``. To warp a moving image onto the fixed image of a
+        :func:`register_syn` run, pass its ``Composite.h5``.
+    interpolation : str, default "linear"
+        One of :data:`INTERPOLATORS`: ``"linear"``, ``"nearestNeighbor"`` (for label images) or
+        ``"lanczosWindowedSinc"``.
+    default_value : float, default 0.0
+        Value of output voxels that map outside ``moving``.
+
+    Returns
+    -------
+    ANTsImage or numpy.ndarray
+        An ``ANTsImage`` like ``reference`` when ``reference`` is one, otherwise a ``float32``
+        array of the reference's shape.
+
+    Raises
+    ------
+    FileNotFoundError
+        A transform file does not exist.
+    ValueError
+        ``interpolation`` is not supported, or the transform list is empty.
+    RegistrationError
+        A transform file cannot be read.
     """
     size, spacing, origin, direction = _grid_args(reference)
     flat = _apply_transforms(
@@ -301,13 +484,14 @@ def _initial(initial: tuple[Any, Any] | None) -> tuple[tuple[float, ...], tuple[
 
 
 class LinearSession:
-    """Linear (rigid or affine) fits of one image pair on the GPU, the pair prepared once.
+    """Rigid and affine fits of one image pair on the GPU.
 
-    Made by :func:`linear_session`. Each :meth:`register` runs one ``Rigid`` or ``Affine`` stage
-    on Mattes MI with regular sampling from a given start; the images are converted, winsorized
-    and uploaded once, and their smoothed copies are kept between fits, so a multi-start, or a
-    rigid fit followed by an affine one, pays the preparation once. Use it in a ``with`` block, or
-    :meth:`close` it, to release the GPU and the kept images.
+    Made by :func:`linear_session`. The two images are prepared once (converted, and winsorized
+    when ``winsorize`` is given), and their smoothed copies are kept between fits.
+    Several fits of the same pair, such as a search from several starting positions or a rigid fit
+    followed by an affine one, then pay for this preparation only once.
+
+    Use the session in a ``with`` block, or call :meth:`close`, to free the GPU and the images.
     """
 
     def __init__(
@@ -329,12 +513,17 @@ class LinearSession:
 
     @property
     def adapter(self) -> str:
-        """The GPU in use."""
+        """Name of the GPU the session uses, with its graphics API and type."""
         return self._core.adapter
 
     @property
     def com_initial(self) -> tuple[tuple[float, ...], tuple[float, float, float]]:
-        """The centre-of-mass start ``(parameters, center)``, what ``initial=None`` uses."""
+        """The start that ``initial=None`` uses: ``(parameters, center)``.
+
+        An affine that translates the centre of intensity mass of the fixed image onto that of the
+        moving image: 12 parameters (identity matrix, then the translation in millimetres) and its
+        centre in LPS millimetres.
+        """
         return self._core.com_initial
 
     def register(
@@ -348,20 +537,51 @@ class LinearSession:
         transform: str = "rigid",
         mask: Any | None = None,
     ) -> dict[str, Any]:
-        """One ``transform`` (``"rigid"`` or ``"affine"``) fit from ``initial``.
+        """Run one rigid or affine fit and return its result.
 
-        ``stage``: the schedule, the fields of ``cohort_recipe()["rigid"]`` (left out = that
-        value). ``initial``: ``(parameters, center)`` of an ITK affine mapping fixed points to
-        moving ones (12 parameters: the row-major matrix, then the translation); ``None`` starts
-        from the centres of intensity mass, like ``--initial-moving-transform [f,m,1]``. The
-        fitted transform starts as the identity, centred where ``initial`` is. With ``use_mask``
-        the metric samples only the fixed points inside ``mask`` (an image on any grid, its
-        non-zero voxels; ``None`` = the session's ``fixed_mask``, if any).
+        Parameters
+        ----------
+        stage : dict, optional
+            The schedule: the fields of ``cohort_recipe()["rigid"]``. Fields left out keep their
+            defaults.
+        initial : tuple, optional
+            The start, ``(parameters, center)`` of an affine that maps points of the fixed image to
+            points of the moving image: 12 parameters (the 3 x 3 matrix row by row, then the
+            translation in millimetres) and 3 centre coordinates in LPS millimetres. By default the
+            centres of intensity mass (:attr:`com_initial`), as ``antsRegistration
+            --initial-moving-transform [fixed,moving,1]``. The fit starts from the identity centred
+            there and is combined with ``initial``.
+        use_mask : bool, default True
+            Sample the metric only inside the mask: ``mask`` if given, otherwise the session's
+            ``fixed_mask``, if any.
+        out_prefix : str or os.PathLike, optional
+            Write the result as ``<out_prefix>0GenericAffine.mat``. A string ending in a path
+            separator names a folder; the folder is created when it is missing.
+        cancel : CancelToken, optional
+            A token that another thread can use to stop the fit.
+        transform : {"rigid", "affine"}, default "rigid"
+            Rotation and translation, or also scaling and shearing.
+        mask : ANTsImage or tuple, optional
+            A fixed-image mask for this fit only, on any grid; its non-zero voxels are inside.
 
-        Returns the collapsed affine (start then fit) as ``parameters`` / ``center`` (what
-        ``0GenericAffine.mat`` holds, written as ``<out_prefix>0GenericAffine.mat`` when
-        ``out_prefix`` is given, ``"out/sub/"`` being a folder; its folder is created), the final
-        MI value ``metric`` (lower is better), the start, iterations per level and the time.
+        Returns
+        -------
+        dict
+            ``parameters`` and ``center`` (start and fit combined, what ``0GenericAffine.mat``
+            holds), ``initial_parameters`` and ``initial_center``, ``metric`` (the final value
+            of the negative mutual information, lower is better; ``None`` when the last level ran no
+            iteration), ``iterations`` per level, ``total_s``, ``transform``, ``stage`` (the full
+            schedule) and ``adapter``.
+
+        Raises
+        ------
+        ValueError
+            An argument or the stage is invalid, a ``mask`` is given with ``use_mask=False``, or the
+            session is closed or busy with another fit.
+        RegistrationCancelled
+            ``cancel`` was cancelled.
+        RegistrationError
+            The fit failed, for example because the GPU ran out of memory.
         """
         return self._core.register(
             stage=None if stage is None else dict(stage),
@@ -374,7 +594,7 @@ class LinearSession:
         )
 
     def close(self) -> None:
-        """Release the GPU and the kept images."""
+        """Free the GPU and the images. Using the session afterwards raises ``ValueError``."""
         self._core.close()
 
     def __enter__(self) -> LinearSession:
@@ -397,12 +617,46 @@ def linear_session(
     winsorize: tuple[float, float] | None = None,
     adapter: str | None = None,
 ) -> LinearSession:
-    """A :class:`LinearSession` for ``fixed`` / ``moving`` (``ANTsImage`` or tuples, as
-    :func:`register_syn` takes them): the pair prepared once for several fits.
+    """Prepare an image pair for rigid and affine fits on the GPU.
 
-    ``fixed_mask``: an image on any grid whose non-zero voxels are where the metric samples (in
-    fits with ``use_mask`` that bring no mask of their own). ``winsorize``: ``(lower, upper)``
-    intensity quantiles, as ``--winsorize-image-intensities``.
+    Opens the GPU and prepares the images now; each :meth:`LinearSession.register` call then runs
+    one fit. Unlike :func:`register_syn`, the session registers the images on their own grids,
+    without resampling them, and changes their intensities only when ``winsorize`` is given.
+
+    Parameters
+    ----------
+    fixed : ANTsImage or tuple
+        The image to register onto.
+    moving : ANTsImage or tuple
+        The image to register.
+    fixed_mask : ANTsImage or tuple, optional
+        A mask on any grid whose non-zero voxels mark where the metric samples the fixed image, in
+        every fit with ``use_mask=True`` that brings no mask of its own.
+    winsorize : tuple of float, optional
+        ``(lower, upper)`` quantiles, as ``antsRegistration --winsorize-image-intensities``:
+        intensities below the lower or above the upper quantile are clipped to it, and the result
+        is rescaled to [0, 1]. By default the intensities are used as they are.
+    adapter : str, optional
+        Use the GPU whose name contains this text.
+
+    Returns
+    -------
+    LinearSession
+        The prepared session; use it in a ``with`` block.
+
+    Raises
+    ------
+    ValueError
+        ``winsorize`` is not ``(lower, upper)`` with ``0 <= lower < upper <= 1``, or an image is
+        not 3-D.
+    GpuUnavailableError
+        No usable GPU.
+    RegistrationError
+        The images cannot be prepared, for example because they have NaN voxels.
+
+    See Also
+    --------
+    register_syn : Full normalization, including the rigid and affine stages.
     """
     return LinearSession(fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter)
 
@@ -423,18 +677,11 @@ def register_rigid(
     adapter: str | None = None,
     cancel: CancelToken | None = None,
 ) -> dict[str, Any]:
-    """One rigid fit of ``moving`` onto ``fixed`` on the GPU (Mattes MI, regular sampling).
+    """One rigid fit of ``moving`` onto ``fixed``.
 
-    ``stage``: the schedule, the fields of ``cohort_recipe()["rigid"]`` (left out = that value).
-    ``initial``: ``(parameters, center)`` of an ITK affine mapping fixed points to moving ones
-    (12 parameters: the row-major matrix, then the translation); ``None`` starts from the
-    centres of intensity mass, like ``antsRegistration --initial-moving-transform [f,m,1]``.
-    ``fixed_mask`` / ``winsorize``: as :func:`linear_session`. For several fits of one pair (a
-    multi-start), a :func:`linear_session` prepares the images once.
-
-    Returns the collapsed affine as ``parameters`` / ``center`` (what ``0GenericAffine.mat`` holds,
-    written as ``<out_prefix>0GenericAffine.mat`` when ``out_prefix`` is given), the final MI
-    value ``metric`` (lower is better), the start, iterations per level and the time.
+    Deprecated: use ``linear_session(fixed, moving).register()`` in a ``with`` block instead.
+    Looking it up as ``fastwarp.register_rigid`` emits a ``DeprecationWarning``; it will be removed
+    in FastWarp 0.3.0.
     """
     # Everything a caller can get wrong is refused before the GPU is opened.
     stage_dict = _check_linear_stage(None if stage is None else dict(stage), "rigid")
