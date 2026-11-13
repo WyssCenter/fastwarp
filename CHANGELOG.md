@@ -36,11 +36,14 @@
   locked as ANTsPy dependencies). No results yet.
 - README badges: CI, PyPI version, Python versions, licence, documentation.
 - The documentation is reworked: the PyData Sphinx theme with light and dark modes, a user guide
-  in short pages (images, normalization, output files and the direction each one maps, recipes
-  with the type, unit and limits of every field, linear fits, resampling, GPU memory), reference
-  pages for the API, the environment variables and the errors, and project pages for citing,
-  security, the code of conduct and related projects. The README is shorter and links into it.
-  The API reference moved from `api/index.html` to `api.html`.
+  in short pages (how it works, images, normalization, output files and the direction each one
+  maps, recipes with the type, unit and limits of every field, linear fits, resampling, GPU
+  memory, limitations), troubleshooting, a glossary, reference pages for the API, the
+  environment variables and the errors, and project pages for citing, security, the code of
+  conduct and related projects. The README is shorter and links into it. The API reference moved
+  from `api/index.html` to `api.html`.
+- The docstrings of the public API are rewritten in NumPy style, with parameters, defaults,
+  units, return values and the exceptions each function raises.
 - `dir(fastwarp)` lists only the public API (`__all__`); the implementation moved to the private
   module `fastwarp._api`, and the public Python functions report `fastwarp` as their module.
 - `LinearSession.register` creates the folder of `out_prefix`, as `register_syn` and

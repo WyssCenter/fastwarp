@@ -14,6 +14,11 @@ Every file in the repository states its licence, in an SPDX header or through `R
 following the [REUSE](https://reuse.software/) specification. The Code of Conduct is adapted from
 the Contributor Covenant and licensed under CC BY 4.0.
 
+The figure on the home page shows the MNI ICBM 2009c template (Copyright 1993–2004 Louis
+Collins, McConnell Brain Imaging Centre, Montreal Neurological Institute, McGill University,
+distributed under its own permissive notice, `LICENSES/LicenseRef-MNI-ICBM2009.txt`) and a scan
+of the SNSX dataset (OpenNeuro ds004470, CC0 1.0). Neither image is part of the Python package.
+
 ## LICENSE
 
 ```{literalinclude} ../LICENSE

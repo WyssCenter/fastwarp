@@ -7,19 +7,34 @@ small.
 
 ## Requirements
 
-- A hardware GPU with a driver for one of the graphics APIs below. Discrete and integrated GPUs
-  both work; the measured examples in [Performance](../performance.md) include an NVIDIA
-  RTX A4000, an Apple M5 Pro, an Intel Lunar Lake integrated GPU, an AMD Radeon Pro 5500 XT and
-  an NVIDIA Quadro K620.
-- Enough memory for the registration grid (see [What fits](#what-fits)).
+- A hardware GPU with a driver for one of the {term}`graphics APIs <graphics API>` below.
+  Discrete and integrated GPUs both work.
+- Enough memory for the {term}`registration grid` (see [What fits](#what-fits)).
 - Software adapters, which emulate a GPU on the CPU (Mesa's lavapipe, Microsoft WARP), are
   refused unless `FASTWARP_GPU_ALLOW_SOFTWARE=1` is set. They work but are slow; the tests use
   them on machines without a GPU.
 
-The repository does not record minimum driver versions. If {func}`~fastwarp.gpu_info` raises
-{class}`~fastwarp.GpuUnavailableError` on a machine with a GPU, update the graphics driver first;
-the error message lists each graphics API tried, how many adapters it found, and the filters
-that excluded them.
+FastWarp requires no optional GPU feature: it uses timestamp queries only when the GPU offers
+them, and it adapts its buffer and workgroup limits to what the GPU reports
+(`crates/fastwarp-gpu/src/device.rs`). When it opens a GPU it compiles its compute shaders and
+checks them on a small known-answer test; a GPU that fails it is reported as unavailable. No minimum driver
+version is defined yet.
+
+FastWarp has run on these GPUs:
+
+| GPU | System | Graphics API | Source |
+| --- | --- | --- | --- |
+| NVIDIA RTX A4000 | Linux | Vulkan | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
+| Apple M5 Pro | macOS (MacBook Pro) | Metal | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
+| Intel Lunar Lake, integrated | Linux (laptop) | Vulkan | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
+| AMD Radeon Pro 5500 XT | macOS (Intel iMac) | Metal | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
+| NVIDIA Quadro K620, 2 GB | Windows Server 2022 | Vulkan | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
+| Intel Arc 140V, integrated | Windows 11 (laptop) | Vulkan | the examples of this documentation |
+| Mesa lavapipe (software) | Ubuntu, GitHub Actions | Vulkan | every CI run ([Testing](../testing.md#what-ci-runs)) |
+
+No measurement on DirectX 12 is published. If {func}`~fastwarp.gpu_info` raises
+{class}`~fastwarp.GpuUnavailableError` on a machine with a GPU, see
+[Troubleshooting](../troubleshooting.md#no-gpu-is-found).
 
 ## Which GPU is used
 
@@ -48,7 +63,8 @@ import fastwarp
 print(fastwarp.gpu_info(adapter="arc")["name"])
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 Intel(R) Arc(TM) 140V GPU (16GB)
 ```
 
@@ -67,8 +83,8 @@ Before a registration starts, FastWarp compares the memory it will need with a b
    Intel Lunar Lake), and on a software adapter, this figure is halved.
 3. 1 GiB is subtracted and kept free for the desktop and other programs.
 
-`FASTWARP_GPU_MEMORY_BUDGET_MB` replaces this budget with a number of mebibytes; nothing is
-subtracted from it. When the API reports no memory figure and the variable is unset, the budget
+`FASTWARP_GPU_MEMORY_BUDGET_MB` replaces this budget with a number of mebibytes (MiB, 1024 × 1024
+bytes); nothing is subtracted from it. When the API reports no memory figure and the variable is unset, the budget
 is the device's largest buffer size, at most 4 GiB, minus 1 GiB, and FastWarp prints a note.
 
 {func}`~fastwarp.gpu_info` reports the budget as `memory_budget_bytes`.
@@ -83,8 +99,8 @@ registration grid ({func}`~fastwarp.iso_grid_dims`) and on the number of channel
 | 1 | 168 |
 | 2 | 188 |
 
-These figures come from the engine's capacity check (`crates/fastwarp-gpu/src/capacity.rs`),
-which bounds the measured peak allocation of a SyN run. If a moving image has more voxels than
+These figures come from the engine's {term}`capacity check` (`crates/fastwarp-gpu/src/capacity.rs`),
+which bounds the measured peak allocation of a SyN run. 1 GiB is 1024³ bytes. If a moving image has more voxels than
 the fixed image at the same spacing, each extra voxel adds 4 bytes per channel. In addition, the
 largest single buffer, the displacement field at 12 bytes per voxel, must fit the device's limit
 on one storage buffer.
@@ -98,37 +114,42 @@ For the 1 mm MNI template that ANTsPy ships (182 × 218 × 182 voxels), at three
 | 0.5 | 363 × 435 × 363 | 57.3 million | 8.97 GiB | 10.04 GiB |
 
 With the 1 GiB reserve, a 1 mm registration of one channel on this template needs a discrete
-GPU that reports a little over 2 GiB of free memory. The measurements on the
-[Performance](../performance.md) page used a different template, MNI 2009b, on a 1 mm grid of
-197 × 233 × 189 voxels (8.7 million): there, one channel needs 1.4 GB and two channels 1.6 GB.
-On a 2 GB NVIDIA Quadro K620, the two-channel registration was refused, and the one-channel one
-ran only with `FASTWARP_GPU_MEMORY_BUDGET_MB=1900`.
+GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
+[Performance](../performance.md#earlier-measurements-on-non-public-data) page used a different
+template, MNI 2009b, on a 1 mm grid of 197 × 233 × 189 voxels (8.7 million): there, one channel
+needs 1.36 GiB and two channels 1.52 GiB. On a 2 GB NVIDIA Quadro K620, the two-channel
+registration was refused, and the one-channel one ran only with
+`FASTWARP_GPU_MEMORY_BUDGET_MB=1900` (1.86 GiB).
 
 ## Check before you run
 
-{func}`~fastwarp.fits_gpu` answers whether a registration of `fixed` at `iso_mm` with `channels`
-channels fits the GPU, without running it. It returns `False` when there is no usable GPU.
+{func}`~fastwarp.fits_gpu` runs the capacity check of {func}`~fastwarp.register_syn` without
+registering. Pass it the same `fixed` and `moving` images and the same `iso_mm`; the number of
+channels follows from the number of fixed images. It returns `False` when there is no usable GPU.
 
 ```python
 import ants
 import fastwarp
 
 fixed = ants.image_read(ants.get_ants_data("mni"))
+moving = ants.image_read(ants.get_ants_data("ch2"))
 for iso_mm in (2.0, 1.0, 0.5):
-    print(iso_mm, fastwarp.fits_gpu(fixed, iso_mm=iso_mm, channels=1))
+    print(iso_mm, fastwarp.fits_gpu(fixed, moving, iso_mm=iso_mm))
 ```
 
 On the laptop of the other examples (Intel Arc 140V, memory budget 7.5 GiB) this printed:
 
-```text
+```{code-block} text
+:class: fw-output
 2.0 True
 1.0 True
 0.5 False
 ```
 
-{func}`~fastwarp.fits_gpu` checks the fixed image's grid only. {func}`~fastwarp.register_syn`
-repeats the check with the moving images as well, so it can still raise
-{class}`~fastwarp.GpuCapacityError` when a moving image has many more voxels than the fixed one.
+Without `moving`, {func}`~fastwarp.fits_gpu` assumes that the moving image has the fixed image's
+grid, which undercounts when the moving image is larger; pass it for the exact answer. Arguments
+that {func}`~fastwarp.register_syn` would refuse, such as three fixed images or a non-positive
+`iso_mm`, raise `ValueError`.
 
 The [linear fits](linear.md) have no capacity check: a session that does not fit fails with
 {class}`~fastwarp.RegistrationError` when the GPU runs out of memory.

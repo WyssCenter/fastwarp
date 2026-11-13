@@ -1,6 +1,6 @@
 # Recipes
 
-A recipe is the schedule of a registration: for each stage, the iterations per resolution level,
+A {term}`recipe` is the schedule of a registration: for each stage, the iterations per resolution level,
 the shrink factors and smoothing, and the metric settings. It is a plain dictionary with up to
 three stages:
 
@@ -8,9 +8,10 @@ three stages:
 {"rigid": {...}, "affine": {...}, "syn": {...}}
 ```
 
-{func}`~fastwarp.cohort_recipe` returns the default recipe in full. It is the recipe of Wyss DBS
-Localizer, which calls it the cohort recipe. {func}`~fastwarp.register_syn` takes a recipe through `recipe=`; a stage or field that you leave
-out keeps its default value. The result's `"recipe"` entry is the full recipe that ran.
+{func}`~fastwarp.cohort_recipe` returns the default recipe in full. It is the recipe of
+[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), which calls it the cohort
+recipe. {func}`~fastwarp.register_syn` takes a recipe through `recipe=`; a stage or field that
+you leave out keeps its default value. The result's `"recipe"` entry is the full recipe that ran.
 
 ## Change a few fields
 
@@ -29,7 +30,8 @@ info = fastwarp.register_syn(fixed, moving, "out/short_", recipe=recipe)
 print(info["recipe"]["syn"]["iterations"], info["recipe"]["syn"]["cc_radius"])
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 [50, 35, 25, 10] 2
 ```
 
@@ -50,8 +52,8 @@ levels. The lists run from the coarsest level to the finest.
 
 ## Rigid and affine stages
 
-The `rigid` and `affine` stages use Mattes mutual information on the first channel, with samples
-on a regular grid. They have the same fields and the same defaults.
+The `rigid` and `affine` stages use {term}`Mattes mutual information` on the first channel, with
+samples on a regular grid. They have the same fields and the same defaults.
 
 | Field | Type | Default | Meaning and limits |
 | --- | --- | --- | --- |
@@ -68,7 +70,7 @@ on a regular grid. They have the same fields and the same defaults.
 
 ## SyN stage
 
-The `syn` stage uses neighbourhood cross-correlation on every channel.
+The `syn` stage uses neighbourhood {term}`cross-correlation` on every channel.
 
 | Field | Type | Default | Meaning and limits |
 | --- | --- | --- | --- |
@@ -104,7 +106,8 @@ except ValueError as error:
     print(error)
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 recipe['syn']['cc_radius']: the GPU kernels support 1 to 8, not 12
 ```
 
@@ -112,19 +115,11 @@ recipe['syn']['cc_radius']: the GPU kernels support 1 to 8, not 12
 
 The default recipe for one channel is this `antsRegistration` command. The
 [accuracy benchmark](../benchmarks.md#recipe) runs ANTs with it, and its tests check that the
-command and {func}`~fastwarp.cohort_recipe` agree:
+command and {func}`~fastwarp.cohort_recipe` agree. `--verbose 1` only makes ANTs print its
+progress and stage times; it does not change the registration.
 
-```text
-antsRegistration --dimensionality 3 --output [<out>/reg_]
-  --winsorize-image-intensities [0.005,0.995] --use-histogram-matching 0
-  --initial-moving-transform [<fixed>,<moving>,1]
-  --transform Rigid[0.1]  --metric MI[<fixed>,<moving>,1,32,Regular,0.25]
-    --convergence [1000x500x250x100,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --transform Affine[0.1] --metric MI[<fixed>,<moving>,1,32,Regular,0.25]
-    --convergence [1000x500x250x100,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --transform SyN[0.1,3,0] --metric CC[<fixed>,<moving>,1,4]
-    --convergence [100x70x50x20,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --write-composite-transform 1 --random-seed 20260910
+```{literalinclude} ../_includes/ants-cohort-command.txt
+:language: text
 ```
 
 The recipe fields map onto it as follows: `gradient_step` is the first argument of `Rigid[...]`,

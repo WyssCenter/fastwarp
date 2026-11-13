@@ -1,7 +1,8 @@
 # Errors
 
 FastWarp raises four exceptions of its own, and the standard `ValueError` and
-`FileNotFoundError` for mistakes in the arguments.
+`FileNotFoundError` for mistakes in the arguments. [Troubleshooting](troubleshooting.md) says
+what to do about the most common ones.
 
 | Exception | Base class | Meaning |
 | --- | --- | --- |
@@ -29,19 +30,22 @@ Raised by every function that opens the GPU when:
 
 The message lists what was tried, for example:
 
-```text
+```{code-block} text
+:class: fw-output
 no usable GPU adapter: Backends(VULKAN): 1 adapter(s), none eligible; Backends(DX12): 2 adapter(s), none eligible; adapter filter 'no-such-gpu'; software adapters not allowed (FASTWARP_GPU_ALLOW_SOFTWARE=1)
 ```
 
 {func}`~fastwarp.gpu_available` and {func}`~fastwarp.fits_gpu` return `False` in these cases
-instead of raising.
+instead of raising. [Troubleshooting](troubleshooting.md#no-gpu-is-found) explains each part of
+the message.
 
 ## GpuCapacityError
 
 Raised by {func}`~fastwarp.register_syn` when the finest registration grid needs more GPU memory
 than the budget, or a buffer larger than the device allows. The message gives the grid, the bytes
 needed and the budget. Use a coarser `iso_mm`, a GPU with more memory, or ANTs. See
-[What fits](guide/gpu.md#what-fits).
+[What fits](guide/gpu.md#what-fits) and
+[Troubleshooting](troubleshooting.md#the-registration-does-not-fit).
 
 ## RegistrationError
 
@@ -73,11 +77,12 @@ These come from the arguments and are raised before any registration work starts
 | --- | --- |
 | all | An image is not 3-D; a geometry is invalid. |
 | {func}`~fastwarp.register_syn` | Not one or two fixed images, or not as many moving as fixed images; `iso_mm` is not a positive number; the recipe has an unknown key, a value of the wrong type, lists of different lengths, or a value outside its [limits](guide/recipes.md). |
+| {func}`~fastwarp.fits_gpu` | The same image counts and `iso_mm` checks as `register_syn`; `channels` is not 1 or 2, or differs from the number of fixed images in a list. |
 | {func}`~fastwarp.cohort_recipe` | `channels` is not 1 or 2. |
 | {func}`~fastwarp.linear_session` | `winsorize` is not `(lower, upper)` with `0 <= lower < upper <= 1`. |
 | {meth}`~fastwarp.LinearSession.register` | `transform` is not `"rigid"` or `"affine"`; the stage is wrong as for a recipe; `initial` does not hold 12 parameters and 3 centre values; a `mask` is given with `use_mask=False`; the session is closed or busy with another fit. |
 | {func}`~fastwarp.apply_transforms` | `interpolation` is not one of {data}`~fastwarp.INTERPOLATORS`; the transform list is empty; a transform file does not exist (`FileNotFoundError`). |
-| {func}`~fastwarp.compose_field` | `compression_level` is above 9 (a negative value raises `OverflowError`); the transform list is empty; a transform file does not exist (`FileNotFoundError`). |
+| {func}`~fastwarp.compose_field` | `compression_level` is above 9 (a negative value raises `OverflowError`); the transform list is empty; a transform file does not exist (`FileNotFoundError`). The output folder is created before the transform files are checked, so it may exist after this error. |
 
 The message names the argument or the recipe field, for example
 `recipe['rigid']['bins']: the GPU MI kernels support 32 bins, not 64`.

@@ -3,6 +3,11 @@
 Everything below is imported from the package itself, `import fastwarp`, and listed in
 `fastwarp.__all__`. Modules whose names start with an underscore are private.
 
+An *image* is an `ANTsImage` or a tuple `(array, spacing, origin, direction)` (see
+[Images](guide/images.md)); a *reference grid* is an `ANTsImage` or a tuple
+`(shape, spacing, origin, direction)`. Lengths are in millimetres and coordinates in
+{term}`LPS`.
+
 ## Registration
 
 Full normalization and linear fits on the GPU. Guides: [Normalization](guide/normalization.md),
@@ -93,7 +98,11 @@ When each one is raised: [Errors](errors.md).
 ## Package information
 
 ```{eval-rst}
-.. autoapidata:: fastwarp.__version__
+.. py:data:: fastwarp.__version__
+   :type: str
+
+   The installed version of FastWarp, for example ``"0.1.0"``, read from the package metadata.
+   It is ``"0+unknown"`` when FastWarp runs from a source tree that was not installed.
 ```
 
 ```{eval-rst}

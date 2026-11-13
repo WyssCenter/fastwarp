@@ -1,23 +1,19 @@
 # Linear fits
 
-{func}`~fastwarp.linear_session` aligns one image pair with rigid or affine transforms, for
-example a post-operative CT onto a pre-operative MRI. It returns a
-{class}`~fastwarp.LinearSession`: the two images are converted, uploaded to the GPU once, and
-their smoothed copies are kept between fits. Several fits of the same pair, such as a search
-from several starting positions, or a rigid fit followed by an affine one, then pay for that
-preparation only once.
+{func}`~fastwarp.linear_session` aligns one image pair with {term}`rigid` or {term}`affine`
+transforms, for example in a {term}`coregistration` of a CT scan onto an MRI scan of the same
+patient. It returns a {class}`~fastwarp.LinearSession`: the two images are prepared once, and
+their smoothed copies are kept between fits. Several fits of the
+same pair, such as a search from several starting positions, or a rigid fit followed by an
+affine one, then pay for that preparation only once. All parameters:
+{func}`fastwarp.linear_session` in the API reference.
 
-```{eval-rst}
-.. py:function:: fastwarp.linear_session(fixed, moving, *, fixed_mask=None, winsorize=None, adapter=None)
-   :no-index:
-```
-
-| Argument | Meaning |
-| --- | --- |
-| `fixed`, `moving` | One [image](images.md) each. |
-| `fixed_mask` | An image whose non-zero voxels mark where the metric samples the fixed image, in every fit that asks for a mask (see [Masks](#masks)). |
-| `winsorize` | `(lower, upper)` quantiles, as `antsRegistration --winsorize-image-intensities [lower,upper]`. The intensities are clipped to these quantiles and rescaled to [0, 1]. `None` (the default) leaves the intensities as they are. |
-| `adapter` | Use the GPU whose name contains this text. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `fixed`, `moving` | required | One [image](images.md) each. |
+| `fixed_mask` | `None` | An image whose non-zero voxels mark where the metric samples the fixed image, in every fit that asks for a mask (see [Masks](#masks)). |
+| `winsorize` | `None` | `(lower, upper)` quantiles, as `antsRegistration --winsorize-image-intensities [lower,upper]`: intensities are clipped to these quantiles and rescaled to [0, 1]. `None` leaves the intensities as they are. |
+| `adapter` | `None` | Use the GPU whose name contains this text. |
 
 Unlike {func}`~fastwarp.register_syn`, a session registers the images on their own grids,
 without resampling them to an isotropic grid, and does not winsorize unless you ask for it.
@@ -27,22 +23,18 @@ GPU and the kept images. A closed session raises `ValueError` when it is used ag
 
 ## One fit
 
-{meth}`~fastwarp.LinearSession.register` runs one `Rigid` or `Affine` stage:
+{meth}`~fastwarp.LinearSession.register` runs one `Rigid` or `Affine` stage. All parameters:
+{meth}`fastwarp.LinearSession.register` in the API reference.
 
-```{eval-rst}
-.. py:method:: LinearSession.register(stage=None, initial=None, use_mask=True, out_prefix=None, cancel=None, *, transform="rigid", mask=None)
-   :no-index:
-```
-
-| Argument | Meaning |
-| --- | --- |
-| `stage` | The schedule: the fields of a linear [recipe stage](recipes.md#rigid-and-affine-stages). Fields left out keep their defaults. |
-| `initial` | The start, as `(parameters, center)` of an affine (see below). `None` starts from the centres of intensity mass. |
-| `use_mask` | Sample only inside the mask. With `False`, the fit ignores `fixed_mask`. |
-| `out_prefix` | Write the result as `<out_prefix>0GenericAffine.mat`. The [prefix rules](normalization.md#output-prefix) of `register_syn` apply. |
-| `cancel` | A {class}`~fastwarp.CancelToken`. |
-| `transform` | `"rigid"` (rotation and translation) or `"affine"` (also scaling and shearing). |
-| `mask` | A mask for this fit only, in place of the session's `fixed_mask`. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `stage` | `None` | The schedule: the fields of a linear [recipe stage](recipes.md#rigid-and-affine-stages). Fields left out keep their defaults. |
+| `initial` | `None` | The start, as `(parameters, center)` of an affine (see below). `None` starts from the {term}`centres of mass <centre of mass>`. |
+| `use_mask` | `True` | Sample only inside the mask. With `False`, the fit ignores `fixed_mask`. |
+| `out_prefix` | `None` | Write the result as `<out_prefix>0GenericAffine.mat`. The [prefix rules](normalization.md#output-prefix) of `register_syn` apply. |
+| `cancel` | `None` | A {class}`~fastwarp.CancelToken`. |
+| `transform` | `"rigid"` | `"rigid"` (rotation and translation) or `"affine"` (also scaling and shearing). |
+| `mask` | `None` | A mask for this fit only, in place of the session's `fixed_mask`. |
 
 An affine is given as `(parameters, center)`, in the form ITK uses: 12 parameters (the 3 × 3
 matrix row by row, then the translation) and the centre of rotation (3 values, LPS
