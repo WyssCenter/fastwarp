@@ -35,25 +35,25 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 create_exception!(
-    _core,
+    fastwarp,
     GpuUnavailableError,
     PyRuntimeError,
     "No usable hardware GPU adapter (software adapters are refused unless FASTWARP_GPU_ALLOW_SOFTWARE=1)."
 );
 create_exception!(
-    _core,
+    fastwarp,
     GpuCapacityError,
     PyRuntimeError,
     "The registration grid does not fit the GPU's memory budget or binding limit."
 );
 create_exception!(
-    _core,
+    fastwarp,
     RegistrationError,
     PyRuntimeError,
     "The registration failed."
 );
 create_exception!(
-    _core,
+    fastwarp,
     RegistrationCancelled,
     PyException,
     "The registration was cancelled through its CancelToken."
@@ -432,7 +432,7 @@ fn apply_transforms<'py>(
 /// a multi-start, or a rigid fit followed by an affine one, pays the preparation once.
 /// `fixed_mask`: its non-zero voxels are where the metric samples, in fits that ask for it (a fit
 /// can bring its own mask instead). Holds the GPU until `close()` (or the `with` block ends).
-#[pyclass(module = "fastwarp", frozen)]
+#[pyclass(module = "fastwarp._core", frozen)]
 struct LinearSession {
     inner: Mutex<Option<session::Session>>,
     com: AffineTransform,
