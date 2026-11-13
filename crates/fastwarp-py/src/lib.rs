@@ -9,7 +9,7 @@
 //! (a view, no copy, for an `ANTsImage`). They are converted to the engine's `f64` once, here.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -24,6 +24,7 @@ use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
 use fastwarp_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
 use fastwarp_reg::syn::SynOptions;
+use fastwarp_reg::transform::ants_io::{with_suffix, COMPOSITE_SUFFIX};
 use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
 use fastwarp_reg::{Grid, Mat3, RegError, Vec3, Volume};
@@ -152,6 +153,15 @@ fn open_gpu(adapter_substring: Option<String>) -> PyResult<WgpuBackend> {
     WgpuBackend::new(&sel).map_err(|e| GpuUnavailableError::new_err(e.to_string()))
 }
 
+fn check_out_folder(out_prefix: &Path) -> PyResult<()> {
+    match with_suffix(out_prefix, COMPOSITE_SUFFIX).parent() {
+        Some(dir) if !dir.as_os_str().is_empty() && !dir.is_dir() => Err(PyValueError::new_err(
+            format!("output folder {} does not exist", dir.display()),
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn reg_err(e: RegError) -> PyErr {
     match e {
         RegError::Cancelled => RegistrationCancelled::new_err("registration cancelled"),
@@ -207,15 +217,7 @@ fn register_syn<'py>(
         return Err(PyValueError::new_err("iso_mm must be a positive number"));
     }
     // Checked up front: otherwise a missing folder only shows when the outputs are written.
-    match out_prefix.parent() {
-        Some(dir) if !dir.as_os_str().is_empty() && !dir.is_dir() => {
-            return Err(PyValueError::new_err(format!(
-                "output folder {} does not exist",
-                dir.display()
-            )));
-        }
-        _ => {}
-    }
+    check_out_folder(&out_prefix)?;
     let fixed: Vec<Volume<f64>> = fixed.iter().map(to_volume).collect::<PyResult<_>>()?;
     let moving: Vec<Volume<f64>> = moving.iter().map(to_volume).collect::<PyResult<_>>()?;
     let flag = cancel.map(|c| Arc::clone(&c.flag));
@@ -547,13 +549,8 @@ impl LinearSession {
                 .map_err(|e| PyValueError::new_err(format!("bad initial transform: {e}")))?,
             None => self.com,
         };
-        if let Some(dir) = out_prefix.as_ref().and_then(|p| p.parent()) {
-            if !dir.as_os_str().is_empty() && !dir.is_dir() {
-                return Err(PyValueError::new_err(format!(
-                    "output folder {} does not exist",
-                    dir.display()
-                )));
-            }
+        if let Some(prefix) = &out_prefix {
+            check_out_folder(prefix)?;
         }
         let flag = cancel.map(|c| Arc::clone(&c.flag));
         // Taken out for the fit (it runs without the GIL) and put back after, so a second

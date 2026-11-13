@@ -23,6 +23,7 @@ use crate::linear::{
 use crate::preprocess::preprocess_volume;
 use crate::recipe::SynRecipe;
 use crate::syn::{run_syn_pair_cached, SynChannel, SynLevelTrace, SynOptions};
+use crate::transform::ants_io::{with_suffix, AFFINE_SUFFIX};
 use crate::transform::itk_mat::write_mat_file;
 use crate::transform::{write_composite_pair, AffineTransform, CompositePair, TransformElem};
 use crate::volume::Volume;
@@ -341,22 +342,14 @@ pub fn register_full<B: Backend, E: LinearEngine>(
 /// Writes `<prefix>0GenericAffine.mat`, the collapsed linear transform (what ANTs writes for
 /// `--collapse-output-transforms`).
 pub fn write_linear_output(prefix: &Path, total: &AffineTransform) -> Result<()> {
-    let name = prefix
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let path = prefix.with_file_name(format!("{name}0GenericAffine.mat"));
+    let path = with_suffix(prefix, AFFINE_SUFFIX);
     write_mat_file(&path, &[TransformElem::Affine(*total)])
 }
 
 /// Writes `<prefix>Composite.h5`, `<prefix>InverseComposite.h5` and `<prefix>_Warped.nii.gz`.
 pub fn write_outputs(prefix: &Path, out: &RegisterOutput) -> Result<()> {
     write_composite_pair(prefix, &out.pair)?;
-    let name = prefix
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let warped_path = prefix.with_file_name(format!("{name}_Warped.nii.gz"));
+    let warped_path = with_suffix(prefix, "_Warped.nii.gz");
     let f32_data: Vec<f32> = out.warped.data().iter().map(|v| *v as f32).collect();
     Volume::from_vec(*out.warped.grid(), f32_data)?.save_nifti(&warped_path)
 }

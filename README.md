@@ -104,7 +104,8 @@ else:
   cancel=None, recipe=None)`: one image or a list of two (T1w + T2w) on each side; images are `ANTsImage`s
   or `(array, spacing, origin, direction)` tuples in ITK (LPS) geometry. Writes
   `<out_prefix>Composite.h5` (`[Affine, Warp]`), `<out_prefix>InverseComposite.h5`
-  (`[InverseWarp, Affine⁻¹]`) and `<out_prefix>0GenericAffine.mat`. Returns timings, the
+  (`[InverseWarp, Affine⁻¹]`) and `<out_prefix>0GenericAffine.mat` (a prefix ending in a path
+  separator, such as `"out/sub/"`, is a folder, as in ANTs). Returns timings, the
   registration grid, per-level SyN diagnostics, the affine and peak GPU memory. Releases the GIL.
 - `CancelToken()`: pass as `cancel=`, call `.cancel()` from another thread; the run stops at
   the next iteration with `RegistrationCancelled`.
