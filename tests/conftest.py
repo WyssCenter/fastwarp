@@ -7,6 +7,8 @@ import os
 
 import pytest
 
+os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "1"
+
 
 def _env(name: str) -> str:
     value = os.environ.get(name)

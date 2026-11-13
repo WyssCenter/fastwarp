@@ -79,14 +79,15 @@ def test_run_evaluate_report_on_a_phantom(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(datasets, "registry", lambda: {"smoke": ds})
     monkeypatch.setitem(recipes.RECIPES, "tiny", _tiny_recipe())
+    monkeypatch.setenv("ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS", "1")
 
     kw = {"data": data, "work": work, "keys": ["smoke"], "recipe_name": "tiny", "pairs": 1}
-    rows = run.run(**kw, quick=False, iso_mm=SPACING, threads=2, log=lambda s: None)
+    rows = run.run(**kw, quick=False, iso_mm=SPACING, threads=1, log=lambda s: None)
     assert [(r["engine"], r["status"], r["ran"]) for r in rows] == [
         ("fastwarp", "ok", True),
         ("ants", "ok", True),
     ]
-    again = run.run(**kw, quick=False, iso_mm=SPACING, threads=2, log=lambda s: None)
+    again = run.run(**kw, quick=False, iso_mm=SPACING, threads=1, log=lambda s: None)
     assert not any(r["ran"] for r in again)
 
     pair = work / "smoke" / "tiny" / "s-1__s-2"
