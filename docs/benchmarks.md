@@ -116,8 +116,11 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 - Licence: `LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
   `"License": "CC0"`. No data-use agreement.
 - Template: MNI ICBM 2009c nonlinear asymmetric (`MNI152NLin2009cAsym`) at 1 mm from
-  TemplateFlow (`tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz` and `..._desc-brain_mask.nii.gz`,
-  <https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/>), with the AFIDs placed on it
+  TemplateFlow
+  ([`tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz`](https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz)
+  and
+  [`..._desc-brain_mask.nii.gz`](https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_desc-brain_mask.nii.gz)),
+  with the AFIDs placed on it
   (`tpl-MNI152NLin2009cAsym_res-01_desc-groundtruth_afids.fcsv` of
   <https://github.com/afids/tpl-MNI152NLin2009cAsym>, commit `a44e5a7`). The template image's
   MD5 equals the git-annex key of the image the AFIDs were placed on in that repository. Template
