@@ -49,7 +49,15 @@ uv run --no-sync pytest -rs
 - `test_rigid.py`, `test_linear.py`, `test_post.py`: rigid and affine fits and masks,
   `compose_field` and `apply_transforms`. Each starts with `pytest.importorskip("ants")`, so
   without ANTsPy the whole module is skipped, not just one test. In `test_post.py` the affine
-  tests need no GPU; the composite tests do.
+  tests need no GPU; the composite tests do. `conftest.py` sets
+  `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1` before ITK starts in the test process (ITK reads it
+  once), and `test_linear.py` gives each ANTs fit a seed through `ANTS_RANDOM_SEED` (ANTsPy
+  ignores a `random_seed` argument), so its ANTs fits give the same result on every run. ITK in
+  the test process must stay at one thread for these ANTs comparisons: a test that changes the
+  variable restores it (`monkeypatch.setenv`). The GPU's affine fit is compared with the
+  per-corner median of five seeded ANTs fits, since single ANTs fits of the phantom scatter
+  between 0.1 and 0.8 mm from the truth. The bounds were measured on Windows with an Intel Arc
+  140V; the values on Linux CI (lavapipe) are not measured yet.
 - `test_benchmark_metrics.py`, `test_benchmark_fetch.py`, `test_benchmark_recipes.py`: the
   accuracy benchmark's metrics, hash-pinned downloads, safe extraction, recipes and pair
   selection, on tiny synthetic data (no GPU, no network). `test_benchmark_smoke.py` runs the
