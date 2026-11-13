@@ -92,7 +92,7 @@ import fastwarp
 fixed = [ants.image_read("tpl_t1.nii"), ants.image_read("tpl_t2.nii")]
 moving = [ants.image_read("sub_T1w.nii.gz"), ants.image_read("sub_T2w_in_T1w.nii.gz")]
 
-if fastwarp.fits_gpu(fixed[0], iso_mm=1.0, channels=2):
+if fastwarp.fits_gpu(fixed, moving, iso_mm=1.0):
     info = fastwarp.register_syn(fixed, moving, "out/sub_", iso_mm=1.0)
     warped = ants.apply_transforms(fixed[0], moving[0], ["out/sub_Composite.h5"])
     print(info["adapter"], f'{info["total_s"]:.1f} s')
@@ -132,7 +132,7 @@ else:
   `<prefix>0GenericAffine.mat`. Use it in a `with` block. `register_rigid`, `rigid_session` and
   `RigidSession` are deprecated (they warn and will be removed in fastwarp 0.3.0); use
   `linear_session(...).register()`, `linear_session` and `LinearSession`.
-- `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, iso_mm=, channels=)`,
+- `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, moving=None, iso_mm=, channels=)`,
   `iso_grid_dims(img, iso_mm)`.
 - Errors: `GpuUnavailableError` and `GpuCapacityError` (checked before any work: fall back to
   ANTs), `RegistrationError`, `RegistrationCancelled`.

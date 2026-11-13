@@ -61,7 +61,12 @@ def gpu_info(adapter: str | None = None) -> dict[str, Any]:
     Raises GpuUnavailableError when there is none.
     """
 
-def fits_gpu(dims: tuple[int, int, int], channels: int, adapter: str | None = None) -> bool: ...
+def fits_gpu(
+    dims: tuple[int, int, int],
+    channels: int,
+    adapter: str | None = None,
+    moving_dims: tuple[int, int, int] | None = None,
+) -> bool: ...
 def compose_field(
     transforms: list[str],
     reference: tuple[
