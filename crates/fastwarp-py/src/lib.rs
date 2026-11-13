@@ -18,7 +18,7 @@ mod post;
 mod recipe;
 mod session;
 
-use fastwarp_gpu::{plan_capacity, plan_capacity_pair, BackendSelect, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::{plan_capacity_pair, BackendSelect, CapacityCaps, WgpuBackend};
 use fastwarp_reg::init::{initial_transform, InitFeature};
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
@@ -330,18 +330,21 @@ fn gpu_info<'py>(py: Python<'py>, adapter: Option<String>) -> PyResult<Bound<'py
     Ok(d)
 }
 
-/// Whether a registration grid of `dims` voxels and `channels` channels fits the GPU.
+/// Whether a registration of a `dims` fixed grid and a `moving_dims` moving grid (default: the
+/// fixed grid) with `channels` channels fits the GPU, as `register_syn` checks it.
 #[pyfunction]
-#[pyo3(signature = (dims, channels, adapter=None))]
+#[pyo3(signature = (dims, channels, adapter=None, moving_dims=None))]
 fn fits_gpu(
     py: Python<'_>,
     dims: [usize; 3],
     channels: usize,
     adapter: Option<String>,
+    moving_dims: Option<[usize; 3]>,
 ) -> PyResult<bool> {
     py.detach(move || {
         let g = open_gpu(adapter)?;
-        Ok(plan_capacity(dims, channels, &CapacityCaps::from_context(g.context())).is_ok())
+        let caps = CapacityCaps::from_context(g.context());
+        Ok(plan_capacity_pair(dims, moving_dims.unwrap_or(dims), channels, &caps).is_ok())
     })
 }
 

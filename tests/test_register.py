@@ -120,6 +120,41 @@ def test_capacity_refused_before_work(tmp_path, monkeypatch):
     assert not Path(f"{tmp_path}/cap_Composite.h5").exists()
 
 
+def blank(shape, spacing=SPACING):
+    return (np.zeros(shape), (spacing,) * 3, (0.0,) * 3, np.eye(3))
+
+
+def test_fits_gpu_rejects_an_empty_moving_list():
+    with pytest.raises(ValueError):
+        g.fits_gpu(phantom(), [], iso_mm=SPACING)
+
+
+def test_fits_gpu_without_a_gpu_is_false(monkeypatch):
+    monkeypatch.setattr(
+        "fastwarp._api._fits_gpu", lambda *a: (_ for _ in ()).throw(g.GpuUnavailableError("x"))
+    )
+    assert not g.fits_gpu(phantom(), phantom(), iso_mm=SPACING)
+    assert not g.fits_gpu([phantom()], [phantom()], iso_mm=SPACING)
+
+
+def test_fits_gpu_passes_the_largest_moving_grid(monkeypatch):
+    seen = []
+    monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a) or True)
+    g.fits_gpu(phantom(), iso_mm=SPACING)
+    g.fits_gpu(phantom(), [blank((10, 10, 10)), blank((90, 20, 20))], iso_mm=SPACING, channels=2)
+    assert seen[0] == (SHAPE, 1, None, None)
+    assert seen[1] == (SHAPE, 2, None, (90, 20, 20))
+
+
+@needs_gpu
+def test_fits_gpu_checks_the_moving_grid(monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "40")
+    big = blank((SHAPE[0] * 4, SHAPE[1] * 4, SHAPE[2] * 4))
+    assert g.fits_gpu(phantom(), iso_mm=SPACING)
+    assert not g.fits_gpu(phantom(), big, iso_mm=SPACING)
+    assert g.fits_gpu(phantom(), phantom(), iso_mm=SPACING)
+
+
 @needs_gpu
 def test_gpu_info():
     info = g.gpu_info()

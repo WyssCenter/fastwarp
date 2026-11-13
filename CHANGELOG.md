@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `fits_gpu` takes the moving image(s) as an optional second argument and checks the moving grid
+  as `register_syn` does; without it a moving image larger than the fixed one could pass
+  `fits_gpu` and still raise `GpuCapacityError`.
 - An accuracy benchmark that reviewers can run (`benchmarks/accuracy`, `docs/benchmarks.md`):
   FastWarp and ANTs register the same pairs with the same recipe on public data with manual
   cortical, subcortical and deep-nuclei labels and anatomical fiducials; every download is checked

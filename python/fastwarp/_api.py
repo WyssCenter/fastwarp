@@ -148,11 +148,29 @@ def iso_grid_dims(img: Any, iso_mm: float = 1.0) -> tuple[int, int, int]:
 
 
 def fits_gpu(
-    fixed: Any, *, iso_mm: float = 1.0, channels: int = 1, adapter: str | None = None
+    fixed: Any,
+    moving: Any | None = None,
+    *,
+    iso_mm: float = 1.0,
+    channels: int = 1,
+    adapter: str | None = None,
 ) -> bool:
-    """Whether :func:`register_syn` of ``fixed`` at ``iso_mm`` fits the GPU (False without one)."""
+    """Whether :func:`register_syn` of ``fixed`` at ``iso_mm`` fits the GPU (False without one).
+
+    ``fixed`` / ``moving`` are what :func:`register_syn` takes: an image or a list of them (the
+    first fixed image sets the grid; the moving grid is the largest of the moving images). Give
+    ``moving`` to get exactly the answer of the capacity check ``register_syn`` runs; without it
+    the moving image is assumed to have the fixed grid, which undercounts when it is larger.
+    """
+    fixed_img = _as_list(fixed)[0]
+    moving_dims = None
+    if moving is not None:
+        grids = [iso_grid_dims(m, iso_mm) for m in _as_list(moving)]
+        if not grids:
+            raise ValueError("moving is an empty list")
+        moving_dims = max(grids, key=lambda d: d[0] * d[1] * d[2])
     try:
-        return _fits_gpu(iso_grid_dims(fixed, iso_mm), channels, adapter)
+        return _fits_gpu(iso_grid_dims(fixed_img, iso_mm), channels, adapter, moving_dims)
     except GpuUnavailableError:
         return False
 
