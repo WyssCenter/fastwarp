@@ -28,8 +28,8 @@ while it runs.
 
 ### Output files
 
-`out_prefix` is not a folder. The engine appends the file names to it as text, so the prefix
-`out/sub_` gives these files:
+`out_prefix` is a file-name prefix: the engine appends the file names to it as text, so the
+prefix `out/sub_` gives these files:
 
 | File | Content |
 | --- | --- |
@@ -38,8 +38,12 @@ while it runs.
 | `out/sub_0GenericAffine.mat` | the collapsed affine |
 | `out/sub__Warped.nii.gz` | the warped moving image, only with `write_warped=True` (two underscores: the prefix ends in one) |
 
-The folder of the prefix is created when it is missing. A prefix without a trailing separator
-or underscore, such as `out/sub`, gives `out/subComposite.h5`.
+A prefix that ends in a path separator names a folder, as in ANTs: `out/sub/` gives
+`out/sub/Composite.h5` and the other files in `out/sub/`. The separator is `/`, and on Windows
+also `\`. Pass such a prefix as a string: `pathlib.Path` drops a trailing separator, so
+`Path("out/sub/")` is the prefix `out/sub`. A prefix without a trailing separator or underscore,
+such as `out/sub`, gives `out/subComposite.h5`. The folder the files go to is created when it is
+missing. The same rule applies to `out_prefix` of `session.register`.
 
 ### Result
 

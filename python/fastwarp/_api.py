@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from os import PathLike
+from os import PathLike, fspath
 from pathlib import Path
 from typing import Any
 
@@ -64,10 +64,16 @@ def _as_list(x: Any) -> list[Any]:
     return x if isinstance(x, list) else [x]
 
 
+def _prefix_folder(prefix: str) -> Path:
+    return Path(prefix + "Composite.h5").parent
+
+
 def _prepared_prefix(out_prefix: str | PathLike[str]) -> str:
-    """``out_prefix`` as a string, its folder created (checked before the registration runs)."""
-    Path(out_prefix).parent.mkdir(parents=True, exist_ok=True)
-    return str(out_prefix)
+    """``out_prefix`` as a string, a trailing separator kept, its folder created (checked before
+    the registration runs)."""
+    prefix = fspath(out_prefix)
+    _prefix_folder(prefix).mkdir(parents=True, exist_ok=True)
+    return prefix
 
 
 def register_syn(
@@ -88,7 +94,8 @@ def register_syn(
     stage, the moving T2w already in the moving T1w's space. Writes
     ``<out_prefix>Composite.h5`` and ``<out_prefix>InverseComposite.h5`` (ANTs layout:
     ``[Affine, Warp]`` and ``[InverseWarp, Affine^-1]``) plus ``<out_prefix>0GenericAffine.mat``.
-    Returns timings and per-level diagnostics.
+    A prefix string ending in a path separator, such as ``"out/sub/"``, is a folder, as in ANTs
+    (a ``pathlib.Path`` drops a trailing separator). Returns timings and per-level diagnostics.
 
     ``recipe`` sets the schedule: ``{"rigid": {...}, "affine": {...}, "syn": {...}}`` with the
     fields :func:`cohort_recipe` returns. A stage or field left out keeps the dbs-localizer cohort
@@ -318,8 +325,8 @@ class LinearSession:
 
         Returns the collapsed affine (start then fit) as ``parameters`` / ``center`` (what
         ``0GenericAffine.mat`` holds, written as ``<out_prefix>0GenericAffine.mat`` when
-        ``out_prefix`` is given; its folder is created), the final MI value ``metric`` (lower is
-        better), the start, iterations per level and the time.
+        ``out_prefix`` is given, ``"out/sub/"`` being a folder; its folder is created), the final
+        MI value ``metric`` (lower is better), the start, iterations per level and the time.
         """
         return self._core.register(
             stage=None if stage is None else dict(stage),
@@ -398,8 +405,8 @@ def register_rigid(
     stage_dict = _check_linear_stage(None if stage is None else dict(stage), "rigid")
     start = _initial(initial)
     prefix = None if out_prefix is None else _prepared_prefix(out_prefix)
-    if prefix is not None and not Path(prefix).parent.is_dir():
-        raise ValueError(f"output folder {Path(prefix).parent} does not exist")
+    if prefix is not None and not _prefix_folder(prefix).is_dir():
+        raise ValueError(f"output folder {_prefix_folder(prefix)} does not exist")
     if winsorize is not None and not 0.0 <= winsorize[0] < winsorize[1] <= 1.0:
         raise ValueError("winsorize must be (lower, upper) quantiles with 0 <= lower < upper <= 1")
     with linear_session(

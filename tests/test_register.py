@@ -9,13 +9,14 @@ FASTWARP_GPU_ALLOW_SOFTWARE=1.
 
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 
 import fastwarp as g
 import numpy as np
 import pytest
-from fastwarp._api import _image_args
+from fastwarp._api import _image_args, _prepared_prefix
 
 SPACING = 2.0
 SHAPE = (56, 64, 48)
@@ -204,12 +205,46 @@ def test_a_missing_output_folder_is_refused_before_any_work(tmp_path):
     args = _image_args(phantom())
     with pytest.raises(ValueError, match="does not exist"):
         _core.register_syn([args], [args], str(tmp_path / "missing" / "x_"))
+    with pytest.raises(ValueError, match="does not exist"):
+        _core.register_syn([args], [args], f"{tmp_path}/missing/")
+
+
+def test_a_folder_prefix_is_kept_and_its_folder_created(tmp_path):
+    prefix = f"{tmp_path}/a/b/"
+    assert _prepared_prefix(prefix) == prefix
+    assert (tmp_path / "a" / "b").is_dir()
 
 
 @needs_gpu
 def test_the_wrapper_creates_the_output_folder(tmp_path):
     g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "new" / "dir" / "x_", iso_mm=3.0)
     assert (tmp_path / "new" / "dir" / "x_Composite.h5").is_file()
+
+
+FOLDER_PREFIXES = ["{}/out/sub/", "{}/out/sub"]
+if sys.platform == "win32":
+    FOLDER_PREFIXES.append("{}\\out\\sub\\")
+OUTPUTS = ("Composite.h5", "InverseComposite.h5", "0GenericAffine.mat", "_Warped.nii.gz")
+
+
+def _written(root: Path) -> set[str]:
+    return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("prefix", FOLDER_PREFIXES)
+@needs_gpu
+def test_a_prefix_ending_in_a_separator_names_a_folder(tmp_path, prefix):
+    prefix = prefix.format(tmp_path)
+    folder = "out/sub/" if prefix[-1] in "/\\" else "out/sub"
+    g.register_syn(phantom(), phantom(SHIFT_MM), prefix, iso_mm=3.0, write_warped=True)
+    assert _written(tmp_path) == {folder + name for name in OUTPUTS}
+    for f in tmp_path.rglob("*"):
+        if f.is_file():
+            f.unlink()
+    stage = {"iterations": [5], "shrink_factors": [1], "smoothing_sigmas": [0.0]}
+    with g.linear_session(phantom(), phantom(SHIFT_MM)) as s:
+        s.register(stage=stage, out_prefix=prefix)
+    assert _written(tmp_path) == {folder + "0GenericAffine.mat"}
 
 
 def test_integer_images_are_accepted():

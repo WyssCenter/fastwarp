@@ -12,6 +12,15 @@
   module `fastwarp._api`, and the public Python functions report `fastwarp` as their module.
 - `LinearSession.register` creates the folder of `out_prefix`, as `register_syn` and
   `register_rigid` do.
+- An `out_prefix` that ends in a path separator (`/`, and on Windows also `\`) names a folder, as
+  in ANTs: `register_syn(..., out_prefix="out/sub/")` writes `out/sub/Composite.h5` (was
+  `out/subComposite.h5`), and the folder `out/sub` is created. The same holds for
+  `LinearSession.register` and the deprecated `register_rigid` (#28). A prefix of `.` or `..` is
+  text too, as in ANTs (`.` gives `.Composite.h5`): use `./` for the current folder. Breaking for
+  Rust callers of the engine crate `fastwarp-reg`: `transform::ants_io::with_suffix` (and so
+  `write_outputs`, `write_linear_output` and `write_composite_pair` / `read_composite_pair`)
+  appends the suffix to the prefix as text instead of to its file name, and `fastwarp_reg_syn
+  --out` follows the same rule.
 
 ### Deprecated
 
