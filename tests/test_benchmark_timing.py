@@ -1,0 +1,586 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
+"""benchmarks.accuracy: timings (ANTs log parsing, summaries), the linear and post-processing
+steps with the engines replaced by stubs, and the report's timing tables. No GPU, no ANTs."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from benchmarks.accuracy import datasets, linear, post, recipes, report, run, timing
+
+SNSX_PAIRS = [run.pair_id(f, m) for f, m in run.select_pairs(datasets.get("snsx"), 3)]
+
+ANTS_LOG = """\
+All_Command_lines_OK
+Using double precision for computations.
+Registration using 3 total stages.
+
+Stage 0
+  iterations = 20x10
+  using the Mattes MI metric (number of bins = 32, weight = 1, use gradient filter = 0)
+*** Running Euler3DTransform registration ***
+
+DIAGNOSTIC,Iteration,metricValue,convergenceValue,ITERATION_TIME_INDEX,SINCE_LAST
+ 2DIAGNOSTIC,    10, -8.590278115811e-01, 4.906169283285e-05, 1.0168e-01, 7.7846e-03,
+  Elapsed time (stage 0): 1.0627e-01
+
+
+Stage 1
+*** Running AffineTransform registration ***
+
+ 2DIAGNOSTIC,    10, -9.312382732571e-01, 5.570771786045e-05, 1.4132e-01, 9.8460e-03,
+  Elapsed time (stage 1): 1.4739e-01
+
+
+Stage 2
+  using the CC metric (radius = 2, weight = 1.0000e+00, use gradient filter = 0)
+     Total field sigma (voxel space) = 0
+*** Running SyN registration (varianceForUpdateField = 3.0000e+00, varianceForTotalField = \
+0.0000e+00) ***
+
+XXDIAGNOSTIC,Iteration,metricValue,convergenceValue,ITERATION_TIME_INDEX,SINCE_LAST
+ 1DIAGNOSTIC,     3, -9.210115372501e-01, 1.797693134862e+308, 1.0066e+00, 2.6965e-01,
+  Elapsed time (stage 2): 1.017
+
+
+Total elapsed time: 1.276
+"""
+
+
+def test_the_ants_log_gives_the_stage_times_and_the_total():
+    parsed = timing.parse_ants_log(ANTS_LOG.replace("\n", "\r\n"))
+    assert [(s["stage"], s["transform"]) for s in parsed["stages"]] == [
+        (0, "Euler3DTransform"),
+        (1, "AffineTransform"),
+        (2, "SyN"),
+    ]
+    assert [s["elapsed_s"] for s in parsed["stages"]] == [0.10627, 0.14739, 1.017]
+    assert parsed["total_s"] == 1.276
+    t = timing.ants_registration_timings(ANTS_LOG, n_stages=3)
+    assert t["linear_s"] == pytest.approx(0.10627 + 0.14739)
+    assert t["syn_s"] == pytest.approx(1.017)
+    assert t["total_s"] == 1.276 and "note" not in t
+
+
+def test_an_incomplete_ants_log_gives_no_split_and_says_why():
+    plain = timing.ants_registration_timings("All_Command_lines_OK\n", n_stages=3)
+    assert plain["linear_s"] is None and plain["syn_s"] is None and plain["total_s"] is None
+    assert "not a --verbose 1 log" in plain["note"]
+    cut = ANTS_LOG[: ANTS_LOG.index("Stage 2")]
+    t = timing.ants_registration_timings(cut, n_stages=3)
+    assert t["linear_s"] is None and "2 stage times for 3 stages" in t["note"]
+    no_total = ANTS_LOG.replace("Total elapsed time: 1.276", "")
+    t = timing.ants_registration_timings(no_total, n_stages=3)
+    assert t["syn_s"] == pytest.approx(1.017) and t["total_s"] is None
+    assert "Total elapsed time" in t["note"]
+    bad = ANTS_LOG.replace("(stage 1): 1.4739e-01", "(stage 1): nan")
+    assert timing.ants_registration_timings(bad, n_stages=3)["linear_s"] is None
+
+
+def test_an_unknown_stage_transform_gives_no_split():
+    log = ANTS_LOG.replace("AffineTransform", "SomethingNew")
+    t = timing.ants_registration_timings(log, n_stages=3)
+    assert t["linear_s"] is None and t["syn_s"] is None and t["total_s"] == 1.276
+    assert "transform" in t["note"]
+    assert timing.is_linear("BSplineSyN") is False and timing.is_linear("Euler3DTransform")
+
+
+def test_one_stage_logs_count_as_linear():
+    log = "*** Running Euler3DTransform registration ***\n  Elapsed time (stage 0): 2.5\n"
+    t = timing.ants_registration_timings(log + "Total elapsed time: 2.6\n", n_stages=1)
+    assert t["linear_s"] == 2.5 and t["syn_s"] is None and t["total_s"] == 2.6
+
+
+def test_registration_timings_fall_back_to_the_recorded_info_and_log(tmp_path):
+    fw = {"engine": "fastwarp", "wall_s": 9.0, "info": {"linear_s": 1, "syn_s": 5.5}}
+    t = timing.registration_timings(fw)
+    assert (t["linear_s"], t["syn_s"], t["total_s"], t["wall_s"]) == (1.0, 5.5, None, 9.0)
+    (tmp_path / "ants.log").write_text(ANTS_LOG)
+    t = timing.registration_timings({"engine": "ants", "wall_s": 2.0}, tmp_path)
+    assert t["syn_s"] == pytest.approx(1.017) and t["wall_s"] == 2.0
+    stored = {"engine": "ants", "timings": {"linear_s": 3.0, "syn_s": 4.0, "total_s": 7.5}}
+    assert timing.registration_timings(stored)["total_s"] == 7.5
+    missing = timing.registration_timings({"engine": "ants"}, tmp_path / "nothing")
+    assert missing["total_s"] is None
+
+
+def test_describe_and_spread_ignore_missing_values():
+    d = timing.describe([4.0, None, 1.0, math.nan, 2.0, 3.0, "x"])
+    assert d["n"] == 4 and d["median"] == 2.5 and d["min"] == 1.0 and d["max"] == 4.0
+    assert (d["q1"], d["q3"]) == (1.75, 3.25)
+    assert timing.spread(d) == "2.5 (1.8–3.2)"
+    assert timing.spread(timing.describe([7.0])) == "7.0"
+    assert timing.spread(timing.describe([])) == "n/a"
+    assert math.isnan(timing.ratio(1.0, 0.0)) and timing.ratio(6.0, 2.0) == 3.0
+
+
+def test_itk_threads_is_restored_and_child_env_carries_it(monkeypatch):
+    monkeypatch.setenv(run.ITK_THREADS, "3")
+    monkeypatch.setenv("ANTS_RANDOM_SEED", "1")
+    with run.itk_threads(5):
+        assert os.environ[run.ITK_THREADS] == "5"
+    assert os.environ[run.ITK_THREADS] == "3"
+    monkeypatch.delenv(run.ITK_THREADS)
+    with run.itk_threads(5):
+        pass
+    assert run.ITK_THREADS not in os.environ
+    env = run.child_env(4)
+    assert env[run.ITK_THREADS] == "4" and "ANTS_RANDOM_SEED" not in env
+    assert run.ITK_THREADS not in os.environ
+
+
+def test_linear_argv_runs_one_stage_from_a_start():
+    rec = recipes.recipe("cohort")
+    argv = recipes.ants_linear_argv(rec["rigid"], "rigid", "/f", "/m", "/o/r_")
+    assert argv[argv.index("--initial-moving-transform") + 1] == "[/f,/m,1]"
+    assert argv.count("--transform") == 1 and "Rigid[0.1]" in argv
+    assert argv[-2:] == ["--verbose", "1"]
+    argv = recipes.ants_linear_argv(rec["affine"], "affine", "/f", "/m", "/o/a_", "/o/r.mat")
+    assert argv[argv.index("--initial-moving-transform") + 1] == "[/o/r.mat]"
+    assert "Affine[0.1]" in argv
+    with pytest.raises(ValueError, match="rigid"):
+        recipes.ants_linear_argv(rec["rigid"], "syn", "/f", "/m", "/o/")
+
+
+def test_rotated_starts_turn_about_the_centre():
+    params = [*np.eye(3).ravel(), 1.0, 2.0, 3.0]
+    center = [10.0, -5.0, 2.0]
+    p, c = linear.rotated_start(params, center, [0, 0, 90])
+    assert c == center
+    np.testing.assert_allclose(linear.map_affine(p, c, [center]), [[11.0, -3.0, 5.0]])
+    moved = linear.map_affine(p, c, [[11.0, -5.0, 2.0]])
+    np.testing.assert_allclose(moved, [[11.0, -2.0, 5.0]], atol=1e-12)
+    r = linear.rotation_matrix([15, -20, 30])
+    np.testing.assert_allclose(r @ r.T, np.eye(3), atol=1e-12)
+    coarse = linear.coarse_stage(recipes.recipe("cohort")["rigid"], 2)
+    assert coarse["shrink_factors"] == [8, 4] and coarse["iterations"] == [1000, 500]
+
+
+def test_itk_affine_files_and_distances(tmp_path):
+    from scipy.io import savemat
+
+    params = np.array([1.0, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0])
+    savemat(
+        tmp_path / "a.mat",
+        {"AffineTransform_double_3_3": params.reshape(12, 1), "fixed": np.zeros((3, 1))},
+        format="4",
+    )
+    p, c = linear.read_itk_affine(tmp_path / "a.mat")
+    assert p == params.tolist() and c == [0.0, 0.0, 0.0]
+    ident = {"parameters": [*np.eye(3).ravel(), 0, 0, 0], "center": [0, 0, 0]}
+    d = linear.affine_distance({"parameters": p, "center": c}, ident, np.zeros((4, 3)))
+    assert d == {"mean_mm": 2.0, "max_mm": 2.0}
+    mask = np.zeros((4, 4, 4), bool)
+    mask[1, 2, 3] = True
+    pts = linear.mask_points(mask, (1.0, 0.0, 0.0), (2.0, 2.0, 2.0), np.eye(3), step=1)
+    np.testing.assert_allclose(pts, [[3.0, 4.0, 6.0]])
+
+
+def _fake_ants(tmp_path_factory=None):
+    calls = []
+
+    def fake(cmd, log, env, timeout_s):
+        calls.append((cmd, env))
+        out = cmd[cmd.index("--output") + 1].strip("[]")
+        transform = "Euler3DTransform" if "Rigid[0.1]" in cmd else "AffineTransform"
+        Path(log).write_text(
+            f"*** Running {transform} registration ***\n  Elapsed time (stage 0): 1.5\n"
+            "Total elapsed time: 1.6\n"
+        )
+        from scipy.io import savemat
+
+        savemat(
+            f"{out}0GenericAffine.mat",
+            {
+                "AffineTransform_double_3_3": np.array([1.0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+                "fixed": np.zeros(3),
+            },
+            format="4",
+        )
+        return 0, 2.0
+
+    return fake, calls
+
+
+def test_ants_linear_runs_rigid_then_affine_from_it(tmp_path, monkeypatch):
+    fake, calls = _fake_ants()
+    monkeypatch.setattr(linear, "run_child", fake)
+    cfg = linear.config(recipes.recipe("cohort"))
+    rec = linear.run_ants_linear(
+        tmp_path / "f.nii.gz",
+        tmp_path / "m.nii.gz",
+        tmp_path,
+        cfg,
+        threads=3,
+        ants_dir=None,
+        timeout_s=10,
+    )
+    assert rec["status"] == "ok" and set(rec["fits"]) == {"rigid", "affine"}
+    assert rec["fits"]["rigid"]["seconds"] == 1.5 and rec["fits"]["affine"]["wall_s"] == 2.0
+    assert len(calls) == 2 and all(env[run.ITK_THREADS] == "3" for _, env in calls)
+    second = calls[1][0]
+    start = second[second.index("--initial-moving-transform") + 1]
+    assert start == f"[{(tmp_path / 'rigid_0GenericAffine.mat').as_posix()}]"
+
+
+def test_a_failed_ants_rigid_fit_stops_the_linear_run(tmp_path, monkeypatch):
+    def fail(cmd, log, env, timeout_s):
+        Path(log).write_text("boom\n")
+        return None, 10.0
+
+    monkeypatch.setattr(linear, "run_child", fail)
+    cfg = linear.config(recipes.recipe("cohort"))
+    rec = linear.run_ants_linear(
+        tmp_path / "f", tmp_path / "m", tmp_path, cfg, threads=1, ants_dir=None, timeout_s=1
+    )
+    assert rec["status"] == "failed" and "timed out" in rec["error"]
+    assert set(rec["fits"]) == {"rigid"}
+
+
+def test_post_ants_arguments_and_child_time():
+    kw = {"reference": "/r.nii.gz", "moving": "/m.nii.gz", "forward": "/c.h5", "inverse": "/i.h5"}
+    fwd = post.ants_args("forward_field", **kw, out="/o/f.nii.gz")
+    assert fwd[fwd.index("--output") + 1] == "[/o/f.nii.gz,1]"
+    assert fwd[fwd.index("--reference-image") + 1] == "/r.nii.gz" and "--float" in fwd
+    inv = post.ants_args("inverse_field", **kw, out="/o/i.nii.gz")
+    assert inv[inv.index("--reference-image") + 1] == "/m.nii.gz"
+    assert inv[inv.index("--transform") + 1] == "/i.h5"
+    warp = post.ants_args("lanczos_warp", **kw, out="/o/w.nii.gz")
+    assert warp[warp.index("--interpolation") + 1] == "LanczosWindowedSinc"
+    assert warp[warp.index("--output") + 1] == "/o/w.nii.gz"
+    with pytest.raises(ValueError, match="unknown step"):
+        post.ants_args("other", **kw, out="/o")
+    assert post.child_seconds("noise\nFASTWARP_BENCH_SECONDS 3.25\n") == 3.25
+    assert post.child_seconds("nothing") is None
+
+
+def _work_pair(work: Path, dataset: str, pair: str, rec: dict, iso_mm: float = 1.0) -> Path:
+    folder = work / dataset / "cohort" / pair
+    for engine, timings, wall in (
+        ("fastwarp", {"linear_s": 2.0, "syn_s": 6.0, "total_s": 10.0}, 11.0),
+        ("ants", {"linear_s": 60.0, "syn_s": 300.0, "total_s": 361.0}, 365.0),
+    ):
+        out = folder / engine
+        out.mkdir(parents=True)
+        record = {
+            "engine": engine,
+            "status": "ok",
+            "recipe": rec,
+            "iso_mm": iso_mm,
+            "wall_s": wall,
+            "timings": timings,
+            "environment": {"cpu": "test cpu", "gpu": {"name": "test gpu"}, "itk_threads": 8},
+        }
+        (out / "run.json").write_text(json.dumps(record))
+        (out / "reg_Composite.h5").write_bytes(b"x")
+        (out / "reg_InverseComposite.h5").write_bytes(b"x")
+    fixed, moving = pair.split("__")
+    (folder / "pair.json").write_text(
+        json.dumps(
+            {
+                "fixed": fixed,
+                "moving": moving,
+                "fixed_prep": {"files": {"reference": str(folder / "ref.nii.gz")}},
+            }
+        )
+    )
+    return folder
+
+
+def _stub_steps(seconds: float):
+    def fastwarp_steps(reference, moving, forward, inverse, tmp):
+        assert os.environ["RAYON_NUM_THREADS"] == "2" and tmp.is_dir()
+        (tmp / "fastwarp_forward_field.nii.gz").write_bytes(b"x")
+        steps = {s: {"seconds": seconds, "voxels": 1_000_000} for s in post.STEPS}
+        return {"steps": steps, "wall_s": 3 * seconds}
+
+    def ants_steps(reference, moving, forward, inverse, tmp, *, threads, ants_dir, timeout_s):
+        assert threads == 2 and forward.name == "reg_Composite.h5"
+        assert forward.parent.name == "fastwarp"
+        steps = {s: {"seconds": 10 * seconds} for s in post.STEPS}
+        return {"steps": steps, "wall_s": 30 * seconds}
+
+    def compare(tmp):
+        return {
+            "forward_field": {"field_diff_max_mm": 0.01, "field_diff_rms_mm": 0.001},
+            "inverse_field": {"field_diff_max_mm": 0.02, "field_diff_rms_mm": 0.002},
+            "lanczos_warp": {"rms_relative": 1e-6},
+        }
+
+    return {"fastwarp_steps": fastwarp_steps, "ants_steps": ants_steps, "compare": compare}
+
+
+def test_post_runs_each_pair_once_and_cleans_up(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    work = tmp_path / "work"
+    folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    monkeypatch.setattr(post, "environment", lambda **kw: {"cpu": "test cpu"})
+    monkeypatch.delenv("RAYON_NUM_THREADS", raising=False)
+    kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 2, "threads": 2}
+    rows = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
+    assert [(r["status"], r["ran"]) for r in rows] == [("ok", True), (None, False)]
+    record = json.loads((folder / "post.json").read_text())
+    assert record["source_engine"] == "fastwarp" and record["rayon_threads_requested"] == 2
+    assert not (folder / "post_tmp").exists() and "RAYON_NUM_THREADS" not in os.environ
+    assert post.post_done(folder, post.config(rec, 1.0))
+    again = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
+    assert not any(r["ran"] for r in again)
+    secs = run.measured_seconds(work)
+    assert secs["post_fastwarp"] == 1.5 and secs["post_ants"] == 15.0
+    assert secs["fastwarp"] == 11.0 and secs["ants"] == 365.0
+    p = run.plan(work=work, keys=["mindboggle"], recipe_name="cohort", pairs=1, quick=False)
+    assert p["post"]["mindboggle"]["to_run"] == 0
+
+
+def test_a_failing_fastwarp_step_is_recorded(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    folder = _work_pair(tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+
+    def broken(*args):
+        raise RuntimeError("no luck")
+
+    stubs = {**_stub_steps(1.0), "fastwarp_steps": broken}
+    from benchmarks.accuracy import datasets
+
+    record = post.post_pair(
+        datasets.get("mindboggle"),
+        folder,
+        post.config(rec, 1.0),
+        data=tmp_path,
+        threads=1,
+        ants_dir=None,
+        timeout_s=None,
+        **stubs,
+    )
+    assert record["status"] == "failed" and "no luck" in record["error"]
+    assert not (folder / "post_tmp").exists()
+
+
+def _linear_records(work: Path, rec: dict) -> None:
+    cfg = linear.config(rec)
+    for i, pair in enumerate(SNSX_PAIRS[:2]):
+        folder = work / "snsx" / "linear" / pair
+        env = {"cpu": "test cpu", "gpu": {"name": "test gpu"}}
+        fits_fw = {
+            "rigid": {"seconds": 1.0 + i},
+            "affine": {"seconds": 1.5},
+            "multistart": {"seconds": 4.0},
+        }
+        fits_ants = {"rigid": {"seconds": 20.0}, "affine": {"seconds": 30.0 + i}}
+        for engine, fits in (("fastwarp", fits_fw), ("ants", fits_ants)):
+            record = {
+                "kind": "linear",
+                "engine": engine,
+                "status": "ok",
+                "config": cfg,
+                "iso_mm": 1.0,
+                "fits": fits,
+                "wall_s": 9.0,
+                "environment": env,
+            }
+            if engine == "fastwarp":
+                record["prepare_s"] = 0.5
+            (folder / engine).mkdir(parents=True)
+            (folder / engine / "run.json").write_text(json.dumps(record))
+        comparison = {
+            "fits": {
+                "rigid": {
+                    "fastwarp": {"landmark_mean_mm": 4.0},
+                    "ants": {"landmark_mean_mm": 4.2},
+                    "agreement": {"mean_mm": 0.3, "max_mm": 0.9},
+                }
+            }
+        }
+        (folder / "comparison.json").write_text(json.dumps(comparison))
+
+
+def test_report_tabulates_the_timings_without_an_evaluation(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    work = tmp_path / "work"
+    _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    other = _work_pair(work, "mindboggle", "OASIS-TRT-20-2__OASIS-TRT-20-3", rec)
+    run_json = other / "ants" / "run.json"
+    data = json.loads(run_json.read_text())
+    data["timings"]["total_s"] = 363.0
+    data["environment"]["cpu"] = "another cpu"
+    run_json.write_text(json.dumps(data))
+    monkeypatch.setattr(post, "environment", lambda **kw: {"cpu": "test cpu"})
+    post.run_post(
+        data=tmp_path,
+        work=work,
+        keys=["mindboggle"],
+        pairs=1,
+        threads=2,
+        log=lambda s: None,
+        **_stub_steps(0.5),
+    )
+    _linear_records(work, rec)
+    (work / "environment.json").write_text(
+        json.dumps({"cpu": "test cpu", "itk_threads": 8, "ants_version": "2.6.5", "gpu": {}})
+    )
+    md = report.report(work=work, recipe_name="cohort", plot=False).read_text(encoding="utf-8")
+    assert "## Registration time" in md and "## Linear fits" in md and "## Post-processing" in md
+    assert "| mindboggle | fastwarp | 2 | 2.0 (2.0–2.0) | 6.0 (6.0–6.0) | 10.0 (10.0–10.0) |" in md
+    assert "| mindboggle | ants | 2 | 60.0 (60.0–60.0) | 300.0 (300.0–300.0) | 362.0" in md
+    ratio = "| mindboggle | ANTs / FastWarp, per pair |  | 30.0x (2 pairs) | 50.0x (2 pairs) |"
+    assert ratio + " 36.2x (2 pairs) | 33.2x (2 pairs) |" in md
+    assert "| snsx | rigid | 2 | 1.50 (1.25–1.75) | 20.00 (20.00–20.00) | 13.3x | 4.00" in md
+    assert "| snsx | session preparation | 2 | 0.50 (0.50–0.50) | n/a | n/a |" in md
+    assert "| snsx | rigid multi-start | 2 | 4.00 (4.00–4.00) | n/a |" in md
+    assert "forward field (compose) | 1 | 1.0 M | 5.00 | 0.50 | 10.0x | max 0.010 mm |" in md
+    assert "relative RMS 1.00e-06" in md
+    assert "## Machines" in md and "another cpu" in md
+    assert "ANTs 2.6.5" in md
+    out = work / "results" / "cohort"
+    assert (out / "timings.csv").is_file() and (out / "linear.csv").is_file()
+    assert (out / "post.csv").read_text().startswith("dataset,pair,step")
+
+
+def test_report_refuses_an_empty_work_folder(tmp_path):
+    with pytest.raises(RuntimeError, match="nothing to report"):
+        report.report(work=tmp_path, recipe_name="cohort", plot=False)
+
+
+def test_measured_seconds_keep_the_steps_apart(tmp_path):
+    rec = recipes.recipe("cohort")
+    _linear_records(tmp_path, rec)
+    secs = run.measured_seconds(tmp_path)
+    assert secs["linear_fastwarp"] == 9.0 and secs["linear_ants"] == 9.0
+    assert secs["fastwarp"] == run.DEFAULT_SECONDS["fastwarp"]
+    left = linear.todo_count(tmp_path, ["snsx"], "cohort", 3, False, 1.0)
+    assert left["snsx"] == {"pairs": 3, "to_run": {"fastwarp": 1, "ants": 1}}
+    assert len(linear.rows(tmp_path, "cohort")) == 12
+    other = recipes.recipe("cohort")
+    other["rigid"]["gradient_step"] = 0.2
+    recipes.RECIPES["other-linear"] = other
+    try:
+        assert linear.rows(tmp_path, "other-linear") == []
+    finally:
+        del recipes.RECIPES["other-linear"]
+
+
+def test_post_redoes_a_pair_whose_registration_changed(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    work = tmp_path / "work"
+    folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    monkeypatch.setattr(post, "environment", lambda **kw: {})
+    kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 1, "threads": 2}
+    post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
+    cfg = post.config(rec, 1.0)
+    assert post.post_done(folder, cfg)
+    run_json = folder / "fastwarp" / "run.json"
+    data = json.loads(run_json.read_text())
+    data["finished"] = "2026-11-14T00:00:00+00:00"
+    run_json.write_text(json.dumps(data))
+    assert not post.post_done(folder, cfg)
+    rows = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
+    assert [(r["status"], r["ran"]) for r in rows] == [("ok", True)]
+    assert json.loads((folder / "post.json").read_text())["source_finished"] == data["finished"]
+
+
+def test_a_failed_comparison_fails_the_post_record(tmp_path):
+    rec = recipes.recipe("cohort")
+    folder = _work_pair(tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+
+    def broken(tmp):
+        raise ValueError("shapes differ")
+
+    stubs = {**_stub_steps(1.0), "compare": broken}
+    record = post.post_pair(
+        datasets.get("mindboggle"),
+        folder,
+        post.config(rec, 1.0),
+        data=tmp_path,
+        threads=2,
+        ants_dir=None,
+        timeout_s=None,
+        **stubs,
+    )
+    assert record["status"] == "failed" and "shapes differ" in record["error"]
+
+
+def test_ants_steps_fall_back_to_the_wall_time(tmp_path, monkeypatch):
+    def fake(cmd, log, env, timeout_s):
+        assert env[run.ITK_THREADS] == "3"
+        out = cmd[cmd.index("--output") + 1].strip("[]").removesuffix(",1")
+        Path(out).write_bytes(b"x")
+        marker = "" if "inverse" in out else "FASTWARP_BENCH_SECONDS 0.25\n"
+        Path(log).write_text(marker)
+        return 0, 2.0
+
+    monkeypatch.setattr(post, "run_child", fake)
+    f = tmp_path / "x"
+    out = post.run_ants_steps(f, f, f, f, tmp_path, threads=3, ants_dir=None, timeout_s=5)
+    steps = out["steps"]
+    assert "error" not in out and steps["forward_field"]["seconds"] == 0.25
+    assert steps["inverse_field"]["seconds"] == 2.0 and "timing_note" in steps["inverse_field"]
+
+
+def _stub_linear(monkeypatch, calls):
+    monkeypatch.setattr(linear, "environment", lambda **kw: {"cpu": "test cpu"})
+
+    def prep(ds, sid, data, work, iso_mm):
+        assert os.environ[run.ITK_THREADS] == "2"
+        return {"files": {"registration": str(work / f"{sid}.nii.gz")}}
+
+    monkeypatch.setattr(linear, "prepare_fixed", prep)
+    monkeypatch.setattr(linear, "prepare_moving", lambda *a: Path("moving.nii.gz"))
+
+    def engine(name):
+        def fit(fixed, moving, out, cfg, **kw):
+            calls.append(name)
+            return {"kind": "linear", "engine": name, "status": "ok", "fits": {}, "wall_s": 1.0}
+
+        return fit
+
+    monkeypatch.setattr(linear, "run_fastwarp_linear", engine("fastwarp"))
+    monkeypatch.setattr(linear, "run_ants_linear", engine("ants"))
+    monkeypatch.setattr(linear, "compare", lambda ds, folder, prep, data: {"fits": {}})
+
+
+def test_linear_runs_each_pair_once(tmp_path, monkeypatch):
+    calls: list[str] = []
+    _stub_linear(monkeypatch, calls)
+    data, work = tmp_path / "data", tmp_path / "work"
+    (data / "snsx").mkdir(parents=True)
+    (data / "snsx" / ".fetched.json").write_text("{}")
+    monkeypatch.delenv(run.ITK_THREADS, raising=False)
+    kw = {"data": data, "work": work, "keys": ["snsx"], "pairs": 2, "threads": 2}
+    rows = linear.run_linear(**kw, log=lambda s: None)
+    assert calls == ["fastwarp", "ants", "fastwarp", "ants"]
+    assert all(r["status"] == "ok" and r["ran"] for r in rows)
+    assert run.ITK_THREADS not in os.environ
+    for pair in SNSX_PAIRS[:2]:
+        assert (work / "snsx" / "linear" / pair / "comparison.json").is_file()
+    again = linear.run_linear(**kw, log=lambda s: None)
+    assert len(calls) == 4 and not any(r["ran"] for r in again)
+
+
+def test_linear_records_a_failed_preparation(tmp_path, monkeypatch):
+    calls: list[str] = []
+    _stub_linear(monkeypatch, calls)
+
+    def broken(*args):
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(linear, "prepare_fixed", broken)
+    data, work = tmp_path / "data", tmp_path / "work"
+    (data / "snsx").mkdir(parents=True)
+    (data / "snsx" / ".fetched.json").write_text("{}")
+    kw = {"data": data, "work": work, "keys": ["snsx"], "pairs": 1, "threads": 2}
+    rows = linear.run_linear(**kw, log=lambda s: None)
+    assert [r["status"] for r in rows] == ["failed", "failed"] and calls == []
+    record = json.loads(
+        (work / "snsx" / "linear" / SNSX_PAIRS[0] / "ants" / "run.json").read_text()
+    )
+    assert record["status"] == "failed" and "unreadable" in record["error"]
+    again = linear.run_linear(**kw, log=lambda s: None)
+    assert not any(r["ran"] for r in again)

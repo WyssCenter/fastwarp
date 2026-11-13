@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 # SPDX-License-Identifier: Apache-2.0
 
-"""Command line: ``python -m benchmarks.accuracy {list,pin,fetch,plan,run,evaluate,report}``.
+"""Command line:
+``python -m benchmarks.accuracy {list,pin,fetch,plan,run,linear,post,evaluate,report}``.
 
 The steps and the time they take are in ``docs/benchmarks.md``.
 """
@@ -22,6 +23,12 @@ def _keys(args: argparse.Namespace) -> list[str]:
             datasets.get(k)
         return list(args.dataset)
     return datasets.default_keys()
+
+
+def _linear_keys(args: argparse.Namespace) -> list[str]:
+    from .linear import DEFAULT_KEYS
+
+    return _keys(args) if args.dataset else list(DEFAULT_KEYS)
 
 
 def _add_selection(p: argparse.ArgumentParser) -> None:
@@ -104,13 +111,16 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         pairs=args.pairs,
         quick=args.quick,
         iso_mm=args.iso_mm,
+        linear_keys=_linear_keys(args),
     )
-    for key, d in p["datasets"].items():
-        print(
-            f"{key}: {d['pairs']} pairs, to run {d['to_run']}, about {d['estimate_s'] / 3600:.1f} h"
-        )
+    for step, title in (("datasets", "run + evaluate"), ("post", "post"), ("linear", "linear")):
+        for key, d in p[step].items():
+            print(
+                f"{title} {key}: {d['pairs']} pairs, to run {d['to_run']}, "
+                f"about {d['estimate_s'] / 3600:.1f} h"
+            )
     secs = ", ".join(f"{k} {v:.0f} s" for k, v in p["seconds_per"].items())
-    print(f"total about {p['total_s'] / 3600:.1f} h (per registration / evaluation: {secs})")
+    print(f"total about {p['total_s'] / 3600:.1f} h (seconds per pair and engine: {secs})")
     return 0
 
 
@@ -140,23 +150,73 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
-def _cmd_evaluate(args: argparse.Namespace) -> int:
+def _cmd_linear(args: argparse.Namespace) -> int:
+    from .fetch import check_outside_repo
+    from .linear import run_linear
+
+    rows = run_linear(
+        data=check_outside_repo(args.data),
+        work=check_outside_repo(args.work),
+        keys=_linear_keys(args),
+        recipe_name=args.recipe,
+        pairs=args.pairs,
+        quick=args.quick,
+        engines=tuple(args.engine) if args.engine else ("fastwarp", "ants"),
+        iso_mm=args.iso_mm,
+        threads=args.threads,
+        ants_dir=args.ants_dir,
+        adapter=args.adapter,
+        retry_failed=args.retry_failed,
+        ants_timeout_s=args.ants_timeout_h * 3600.0,
+    )
+    bad = [r for r in rows if r["status"] != "ok"]
+    for r in bad:
+        print(f"not ok: {r['dataset']}/{r['pair']} {r['engine']}: {r['status']}")
+    return 1 if bad else 0
+
+
+def _cmd_post(args: argparse.Namespace) -> int:
     import os
 
-    from .evaluate import evaluate
+    os.environ["RAYON_NUM_THREADS"] = str(args.threads)
     from .fetch import check_outside_repo
+    from .post import run_post
 
-    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(args.threads)
-    out = evaluate(
+    rows = run_post(
         data=check_outside_repo(args.data),
         work=check_outside_repo(args.work),
         keys=_keys(args),
         recipe_name=args.recipe,
         pairs=args.pairs,
         quick=args.quick,
-        surface=not args.no_surface,
-        force=args.force,
+        iso_mm=args.iso_mm,
+        threads=args.threads,
+        ants_dir=args.ants_dir,
+        retry_failed=args.retry_failed,
+        ants_timeout_s=args.ants_timeout_h * 3600.0,
     )
+    bad = [r for r in rows if r["status"] != "ok"]
+    for r in bad:
+        print(f"not ok: {r['dataset']}/{r['pair']}: {r['status'] or 'no registration'}")
+    return 1 if bad else 0
+
+
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    from .evaluate import evaluate
+    from .fetch import check_outside_repo
+    from .run import RunLock, itk_threads
+
+    with RunLock(check_outside_repo(args.work)), itk_threads(args.threads):
+        out = evaluate(
+            data=check_outside_repo(args.data),
+            work=check_outside_repo(args.work),
+            keys=_keys(args),
+            recipe_name=args.recipe,
+            pairs=args.pairs,
+            quick=args.quick,
+            surface=not args.no_surface,
+            force=args.force,
+        )
     print(f"tables in {out}")
     return 0
 
@@ -216,6 +276,35 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ants-timeout-h", type=float, default=4.0)
     p.set_defaults(func=_cmd_run)
 
+    p = sub.add_parser("linear", help="time linear_session fits against antsRegistration")
+    _add_selection(p)
+    _add_work(p)
+    p.add_argument(
+        "--engine",
+        action="append",
+        choices=("fastwarp", "ants"),
+        help="run only this engine (repeatable; default both)",
+    )
+    p.add_argument("--iso-mm", type=float, default=1.0, help="registration grid (default 1.0)")
+    p.add_argument("--threads", type=int, default=8, help="ITK threads for ANTs (default 8)")
+    p.add_argument("--ants-dir", type=Path, help="folder with the ANTs programs to use")
+    p.add_argument("--adapter", help="GPU adapter name substring")
+    p.add_argument("--retry-failed", action="store_true")
+    p.add_argument("--ants-timeout-h", type=float, default=1.0)
+    p.set_defaults(func=_cmd_linear)
+
+    p = sub.add_parser(
+        "post", help="time compose_field / apply_transforms against antsApplyTransforms"
+    )
+    _add_selection(p)
+    _add_work(p)
+    p.add_argument("--iso-mm", type=float, default=1.0, help="registration grid (default 1.0)")
+    p.add_argument("--threads", type=int, default=8, help="CPU threads of both tools (default 8)")
+    p.add_argument("--ants-dir", type=Path, help="folder with the ANTs programs to use")
+    p.add_argument("--retry-failed", action="store_true")
+    p.add_argument("--ants-timeout-h", type=float, default=1.0)
+    p.set_defaults(func=_cmd_post)
+
     p = sub.add_parser("evaluate", help="metrics of the finished pairs, CSV tables")
     _add_selection(p)
     _add_work(p)
@@ -224,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true", help="re-evaluate cached pairs")
     p.set_defaults(func=_cmd_evaluate)
 
-    p = sub.add_parser("report", help="summary tables and plot")
+    p = sub.add_parser("report", help="summary tables (accuracy and timings) and plot")
     p.add_argument("--recipe", default="cohort", choices=sorted(recipes.RECIPES))
     _add_work(p, data=False)
     p.add_argument("--no-plot", action="store_true")

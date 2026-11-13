@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from test_register import SPACING, needs_gpu, phantom
 
-from benchmarks.accuracy import datasets, evaluate, recipes, report, run
+from benchmarks.accuracy import datasets, evaluate, linear, post, recipes, report, run
 
 ants = pytest.importorskip("ants")
 
@@ -95,6 +95,23 @@ def test_run_evaluate_report_on_a_phantom(tmp_path, monkeypatch):
     assert ants_run["argv"][ants_run["argv"].index("--convergence") + 1] == "[40x20,1e-06,10]"
     fw_run = json.loads((pair / "fastwarp" / "run.json").read_text())
     assert fw_run["recipe_matches"] and fw_run["environment"]["fastwarp"] == g.__version__
+    assert fw_run["timings"]["total_s"] > 0 and fw_run["timings"]["syn_s"] > 0
+    assert ants_run["timings"]["linear_s"] > 0 and ants_run["timings"]["syn_s"] > 0
+    assert "note" not in ants_run["timings"]
+
+    lin = linear.run_linear(**kw, quick=False, iso_mm=SPACING, threads=1, log=lambda s: None)
+    assert [(r["engine"], r["status"]) for r in lin] == [("fastwarp", "ok"), ("ants", "ok")]
+    comparison = json.loads(
+        (work / "smoke" / "linear" / "s-1__s-2" / "comparison.json").read_text()
+    )
+    for fit in ("rigid", "affine"):
+        assert comparison["fits"][fit]["fastwarp"]["landmark_mean_mm"] < 3.0
+        assert comparison["fits"][fit]["agreement"]["mean_mm"] < 1.0
+    posted = post.run_post(**kw, quick=False, iso_mm=SPACING, threads=1, log=lambda s: None)
+    assert [r["status"] for r in posted] == ["ok"]
+    post_record = json.loads((pair / "post.json").read_text())
+    assert post_record["agreement"]["forward_field"]["field_diff_max_mm"] < 0.01
+    assert not (pair / "post_tmp").exists()
 
     out = evaluate.evaluate(**kw, quick=False, log=lambda s: None)
     with open(out / "pairs.csv", newline="") as f:
@@ -113,6 +130,8 @@ def test_run_evaluate_report_on_a_phantom(tmp_path, monkeypatch):
     md = report.report(work=work, recipe_name="tiny", plot=False)
     text = md.read_text()
     assert "FastWarp against ANTs" in text and "dice_subcortical" in text
+    assert "## Registration time" in text and "## Linear fits" in text
+    assert "## Post-processing" in text
     assert (out / "paired.csv").is_file() and (out / "structures.csv").is_file()
 
 

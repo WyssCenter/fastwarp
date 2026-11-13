@@ -11,7 +11,9 @@ Layout under the work folder::
 
 A pair whose engine folder holds a ``run.json`` with status ``ok`` and both composites is
 skipped, so an interrupted run resumes. ANTs runs in a child process, one at a time, with
-``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`` set; FastWarp and ANTs never run at the same time.
+``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`` set in its environment only; FastWarp and ANTs never
+run at the same time. Each ``run.json`` holds the registration's ``timings`` (linear, SyN,
+total; see :mod:`.timing`).
 """
 
 from __future__ import annotations
@@ -25,11 +27,12 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from . import datasets, recipes
+from . import datasets, recipes, timing
 
 ENGINES = ("fastwarp", "ants")
 #: File-name prefix of the transforms in an engine folder (``reg_Composite.h5``, ...).
@@ -37,11 +40,45 @@ PREFIX = "reg_"
 ANTSPY_REGISTRATION = (
     "import sys, ants; sys.exit(int(ants.lib.antsRegistration(sys.argv[1:]) or 0))"
 )
+ITK_THREADS = "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"
 
-#: Seconds per registration used by ``plan`` until the work folder has measured ones:
-#: ANTs at a 1 mm grid on 8 threads (an extrapolation from the README's 1000-1500 s at 0.5 mm
-#: on 16 threads, not a measurement), FastWarp on a desktop GPU, and evaluation per pair.
-DEFAULT_SECONDS = {"ants": 400.0, "fastwarp": 40.0, "evaluate": 60.0}
+#: Seconds used by ``plan`` until the work folder has measured ones (guesses, not
+#: measurements): a one-channel registration with ANTs on the benchmark's cropped 1 mm grids on
+#: 8 threads and with FastWarp on a desktop GPU; the evaluation of a pair; the linear fits of a
+#: pair (``linear_*``) and the post-processing of a pair (``post_*``), per engine.
+DEFAULT_SECONDS = {
+    "ants": 400.0,
+    "fastwarp": 40.0,
+    "evaluate": 60.0,
+    "linear_ants": 120.0,
+    "linear_fastwarp": 20.0,
+    "post_ants": 90.0,
+    "post_fastwarp": 15.0,
+}
+
+
+@contextmanager
+def itk_threads(threads: int) -> Iterator[None]:
+    """Sets ``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`` for in-process ANTsPy calls and restores
+    the previous value afterwards."""
+    old = os.environ.get(ITK_THREADS)
+    os.environ[ITK_THREADS] = str(threads)
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop(ITK_THREADS, None)
+        else:
+            os.environ[ITK_THREADS] = old
+
+
+def child_env(threads: int) -> dict[str, str]:
+    """The environment of an ANTs child process: this one's, with ``threads`` ITK threads and
+    without ``ANTS_RANDOM_SEED``."""
+    env = dict(os.environ)
+    env[ITK_THREADS] = str(threads)
+    env.pop("ANTS_RANDOM_SEED", None)
+    return env
 
 
 def natural_key(s: str) -> list:
@@ -168,16 +205,52 @@ def _git(*args: str) -> str | None:
     return out.stdout.strip() if out.returncode == 0 else None
 
 
-def ants_program(ants_dir: Path | None) -> list[str]:
-    """The command that runs ``antsRegistration``: the program in ``ants_dir``, or ANTsPy's
-    bundled one through this Python."""
+def ants_tool(ants_dir: Path | None, name: str, antspy_code: str) -> list[str]:
+    """The command that runs the ANTs program ``name``: the program in ``ants_dir``, or
+    ANTsPy's bundled one through this Python (``antspy_code``)."""
     if ants_dir is None:
-        return [sys.executable, "-I", "-c", ANTSPY_REGISTRATION]
-    exe = "antsRegistration.exe" if sys.platform == "win32" else "antsRegistration"
+        return [sys.executable, "-I", "-c", antspy_code]
+    exe = f"{name}.exe" if sys.platform == "win32" else name
     path = Path(ants_dir) / exe
     if not path.is_file():
         raise FileNotFoundError(f"{path} does not exist")
     return [str(path)]
+
+
+def ants_program(ants_dir: Path | None) -> list[str]:
+    """The command that runs ``antsRegistration``: the program in ``ants_dir``, or ANTsPy's
+    bundled one through this Python."""
+    return ants_tool(ants_dir, "antsRegistration", ANTSPY_REGISTRATION)
+
+
+def run_child(
+    cmd: list[str], log: Path, env: dict[str, str], timeout_s: float | None
+) -> tuple[int | None, float]:
+    """Run ``cmd`` with its output in ``log``; returns the exit code (``None`` when it timed
+    out) and the wall time in seconds."""
+    t0 = time.perf_counter()
+    try:
+        with open(log, "w", encoding="utf-8") as f:
+            proc = subprocess.run(
+                cmd, stdout=f, stderr=subprocess.STDOUT, env=env, timeout=timeout_s, check=False
+            )
+    except subprocess.TimeoutExpired:
+        return None, time.perf_counter() - t0
+    return proc.returncode, time.perf_counter() - t0
+
+
+def _ants_version(ants_dir: Path | None) -> str | None:
+    try:
+        out = subprocess.run(
+            [*ants_program(ants_dir), "--version"], capture_output=True, text=True, timeout=120
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"error: {e}"
+    text = out.stdout + out.stderr
+    for line in text.splitlines():
+        if line.startswith("ANTs Version:"):
+            return line.split(":", 1)[1].strip()
+    return text.strip() or None
 
 
 def environment(*, ants_dir: Path | None, threads: int, adapter: str | None) -> dict[str, Any]:
@@ -194,6 +267,8 @@ def environment(*, ants_dir: Path | None, threads: int, adapter: str | None) -> 
         "cpu": _cpu_name(),
         "cpu_count": os.cpu_count(),
         "itk_threads": threads,
+        "rayon_threads": os.environ.get("RAYON_NUM_THREADS"),
+        "fastwarp_env": {k: v for k, v in sorted(os.environ.items()) if k.startswith("FASTWARP_")},
         "numpy": numpy.__version__,
     }
     try:
@@ -221,15 +296,10 @@ def environment(*, ants_dir: Path | None, threads: int, adapter: str | None) -> 
     except ImportError:
         env["antspyx"] = None
     if ants_dir is not None:
-        try:
-            out = subprocess.run(
-                [*ants_program(ants_dir), "--version"], capture_output=True, text=True, timeout=60
-            )
-            env["ants_program"] = (out.stdout + out.stderr).strip()
-        except (OSError, subprocess.SubprocessError) as e:
-            env["ants_program"] = f"error: {e}"
+        env["ants_program"] = str(Path(ants_dir).resolve())
     else:
         env["ants_program"] = "ANTsPy's bundled antsRegistration"
+    env["ants_version"] = _ants_version(ants_dir)
     return env
 
 
@@ -417,8 +487,10 @@ def run_fastwarp(
         "fixed_image": str(fixed),
         "moving_image": str(moving),
     }
+    t_read = time.perf_counter()
     fixed_img = ants.image_read(str(fixed))
     moving_img = ants.image_read(str(moving))
+    record["read_s"] = time.perf_counter() - t_read
     if not fastwarp.fits_gpu(fixed_img, iso_mm=iso_mm, channels=1, adapter=adapter):
         record.update(status="skipped", reason="no GPU, or the grid does not fit the GPU")
         return record
@@ -441,6 +513,7 @@ def run_fastwarp(
     record["wall_s"] = time.perf_counter() - t0
     record["finished"] = _now()
     record["info"] = info
+    record["timings"] = timing.fastwarp_registration_timings(info)
     record["recipe_matches"] = info.get("recipe") == rec
     record["status"] = "ok" if record["recipe_matches"] else "failed"
     if not record["recipe_matches"]:
@@ -459,12 +532,11 @@ def run_ants(
     timeout_s: float | None,
     iso_mm: float,
 ) -> dict[str, Any]:
-    """One ``antsRegistration`` in a child process; returns the ``run.json`` content."""
+    """One ``antsRegistration`` in a child process; returns the ``run.json`` content, with the
+    stage times read from its log (:func:`timing.ants_registration_timings`)."""
     argv = recipes.ants_argv(rec, fixed.as_posix(), moving.as_posix(), (out / PREFIX).as_posix())
     cmd = [*ants_program(ants_dir), *argv]
-    env = dict(os.environ)
-    env["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(threads)
-    env.pop("ANTS_RANDOM_SEED", None)
+    env = child_env(threads)
     record: dict[str, Any] = {
         "engine": "ants",
         "started": _now(),
@@ -475,22 +547,20 @@ def run_ants(
         "itk_threads": threads,
     }
     log = out / "ants.log"
-    t0 = time.perf_counter()
-    try:
-        with open(log, "w", encoding="utf-8") as f:
-            proc = subprocess.run(
-                cmd, stdout=f, stderr=subprocess.STDOUT, env=env, timeout=timeout_s, check=False
-            )
-    except subprocess.TimeoutExpired:
+    code, wall = run_child(cmd, log, env, timeout_s)
+    if code is None:
         record.update(status="failed", error=f"timed out after {timeout_s} s")
         return record
-    record["wall_s"] = time.perf_counter() - t0
+    record["wall_s"] = wall
     record["finished"] = _now()
-    record["exit_code"] = proc.returncode
-    ok = proc.returncode == 0 and composite(out).is_file() and inverse_composite(out).is_file()
+    record["exit_code"] = code
+    record["timings"] = timing.ants_registration_timings(
+        log.read_text(encoding="utf-8", errors="replace"), n_stages=3
+    )
+    ok = code == 0 and composite(out).is_file() and inverse_composite(out).is_file()
     record["status"] = "ok" if ok else "failed"
     if not ok:
-        record["error"] = f"antsRegistration exited with {proc.returncode}; see {log.name}"
+        record["error"] = f"antsRegistration exited with {code}; see {log.name}"
     return record
 
 
@@ -521,7 +591,6 @@ def run(
         if e not in ENGINES:
             raise ValueError(f"unknown engine {e!r}")
     rec = recipes.recipe(recipe_name)
-    os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(threads)
     rows = []
     with RunLock(work):
         env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter)
@@ -553,8 +622,9 @@ def run(
                 if not todo and not stale:
                     continue
                 try:
-                    prep = prepare_fixed(ds, fixed_id, data, work, iso_mm)
-                    moving = prepare_moving(ds, moving_id, data, work, iso_mm)
+                    with itk_threads(threads):
+                        prep = prepare_fixed(ds, fixed_id, data, work, iso_mm)
+                        moving = prepare_moving(ds, moving_id, data, work, iso_mm)
                 except Exception as e:
                     error = f"preparing the images failed: {type(e).__name__}: {e}"
                     log(f"[{i}/{len(selected)}] {folder.name}: {error}")
@@ -593,9 +663,10 @@ def run(
                     log(f"[{i}/{len(selected)}] {folder.name} {engine} ...")
                     try:
                         if engine == "fastwarp":
-                            record = run_fastwarp(
-                                fixed, moving, out, rec, iso_mm=iso_mm, adapter=adapter
-                            )
+                            with itk_threads(threads):
+                                record = run_fastwarp(
+                                    fixed, moving, out, rec, iso_mm=iso_mm, adapter=adapter
+                                )
                         else:
                             record = run_ants(
                                 fixed,
@@ -624,19 +695,31 @@ def run(
 
 
 def measured_seconds(work: Path) -> dict[str, float]:
-    """Median seconds per registration (and per evaluated pair) found in a work folder,
-    falling back to :data:`DEFAULT_SECONDS`."""
+    """Median seconds per registration, evaluated pair, linear run and post-processed pair
+    (per engine) found in a work folder, falling back to :data:`DEFAULT_SECONDS`."""
     import statistics
 
-    found: dict[str, list[float]] = {"ants": [], "fastwarp": [], "evaluate": []}
+    found: dict[str, list[float]] = {k: [] for k in DEFAULT_SECONDS}
     if work.is_dir():
         for meta in work.glob("*/*/*/*/run.json"):
             try:
                 rec = json.loads(meta.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 continue
-            if rec.get("status") == "ok" and rec.get("engine") in found and "wall_s" in rec:
-                found[rec["engine"]].append(float(rec["wall_s"]))
+            kind = rec.get("kind", "registration")
+            key = rec.get("engine") if kind == "registration" else f"{kind}_{rec.get('engine')}"
+            if rec.get("status") == "ok" and key in found and "wall_s" in rec:
+                found[key].append(float(rec["wall_s"]))
+        for meta in work.glob("*/*/*/post.json"):
+            try:
+                rec = json.loads(meta.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if rec.get("status") == "ok":
+                for engine in ENGINES:
+                    wall = (rec.get(engine) or {}).get("wall_s")
+                    if wall is not None:
+                        found[f"post_{engine}"].append(float(wall))
         for meta in work.glob("*/*/*/evaluation.json"):
             try:
                 rec = json.loads(meta.read_text(encoding="utf-8"))
@@ -656,23 +739,48 @@ def plan(
     quick: bool,
     engines: tuple[str, ...] = ENGINES,
     iso_mm: float = 1.0,
+    linear_keys: list[str] | None = None,
+    post: bool = True,
 ) -> dict[str, Any]:
-    """Pairs still to run per dataset and an estimate of the time (registrations plus
-    evaluation), from the medians measured in ``work`` or :data:`DEFAULT_SECONDS`."""
+    """Pairs still to run per dataset and an estimate of the time, from the medians measured
+    in ``work`` or :data:`DEFAULT_SECONDS`: registrations plus evaluation (``datasets``), the
+    post-processing of the same pairs (``post``, unless ``post`` is false) and the linear fits
+    on ``linear_keys`` (``linear``)."""
+    from . import linear as linear_step
+    from . import post as post_step
+
     secs = measured_seconds(work)
-    out: dict[str, Any] = {"seconds_per": secs, "datasets": {}, "total_s": 0.0}
+    out: dict[str, Any] = {
+        "seconds_per": secs,
+        "datasets": {},
+        "post": {},
+        "linear": {},
+        "total_s": 0.0,
+    }
+    rec = recipes.recipe(recipe_name)
     for key in keys:
         ds = datasets.get(key)
         n = pairs if pairs is not None else (ds.quick_pairs if quick else ds.default_pairs)
         selected = select_pairs(ds, n)
         todo = {e: 0 for e in engines}
-        rec = recipes.recipe(recipe_name)
+        post_left = 0
         for fixed_id, moving_id in selected:
             folder = work / ds.key / recipe_name / pair_id(fixed_id, moving_id)
             for e in engines:
                 if not engine_done(folder / e, rec, iso_mm):
                     todo[e] += 1
+            if not post_step.post_done(folder, post_step.config(rec, iso_mm)):
+                post_left += 1
         est = sum(todo[e] * secs[e] for e in engines) + len(selected) * secs["evaluate"]
         out["datasets"][key] = {"pairs": len(selected), "to_run": todo, "estimate_s": est}
+        out["total_s"] += est
+        if post:
+            est = post_left * (secs["post_ants"] + secs["post_fastwarp"])
+            out["post"][key] = {"pairs": len(selected), "to_run": post_left, "estimate_s": est}
+            out["total_s"] += est
+    left = linear_step.todo_count(work, linear_keys or [], recipe_name, pairs, quick, iso_mm)
+    for key, d in left.items():
+        est = sum(d["to_run"][e] * secs[f"linear_{e}"] for e in ENGINES)
+        out["linear"][key] = {**d, "estimate_s": est}
         out["total_s"] += est
     return out

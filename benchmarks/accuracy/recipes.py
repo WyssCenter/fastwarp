@@ -88,21 +88,9 @@ def _schedule(stage: dict[str, Any]) -> list[str]:
     ]
 
 
-def ants_argv(
-    rec: dict[str, dict[str, Any]], fixed: str, moving: str, out_prefix: str
-) -> list[str]:
-    """The ``antsRegistration`` arguments (no program name) that run ``rec`` on one channel and
-    write ``<out_prefix>Composite.h5`` / ``<out_prefix>InverseComposite.h5``.
-
-    Mirrors FastWarp: centre-of-mass start, Rigid and Affine on ``MI[bins, Regular, sampling]``,
-    SyN on ``CC[radius]``, winsorizing ``[0.005, 0.995]``, no histogram matching, the rigid
-    stage's seed as ``--random-seed``. Precision is ANTs' default (double).
-    """
-    fixed, moving, out_prefix = _check_path(fixed), _check_path(moving), _check_path(out_prefix)
-    weights = rec["syn"]["channel_weights"]
-    if len(weights) != 1:
-        raise ValueError("the benchmark registers one channel (T1w)")
-    argv = [
+def _head(fixed: str, moving: str, out_prefix: str, initial: str | None) -> list[str]:
+    start = f"[{fixed},{moving},1]" if initial is None else f"[{_check_path(initial)}]"
+    return [
         "--dimensionality",
         "3",
         "--output",
@@ -112,17 +100,38 @@ def ants_argv(
         "--use-histogram-matching",
         "0",
         "--initial-moving-transform",
-        f"[{fixed},{moving},1]",
+        start,
     ]
+
+
+def _linear_stage(transform: str, s: dict[str, Any], fixed: str, moving: str) -> list[str]:
+    return [
+        "--transform",
+        f"{transform}[{_num(s['gradient_step'])}]",
+        "--metric",
+        f"MI[{fixed},{moving},1,{int(s['bins'])},Regular,{_num(s['sampling_percentage'])}]",
+        *_schedule(s),
+    ]
+
+
+def ants_argv(
+    rec: dict[str, dict[str, Any]], fixed: str, moving: str, out_prefix: str
+) -> list[str]:
+    """The ``antsRegistration`` arguments (no program name) that run ``rec`` on one channel and
+    write ``<out_prefix>Composite.h5`` / ``<out_prefix>InverseComposite.h5``.
+
+    Mirrors FastWarp: centre-of-mass start, Rigid and Affine on ``MI[bins, Regular, sampling]``,
+    SyN on ``CC[radius]``, winsorizing ``[0.005, 0.995]``, no histogram matching, the rigid
+    stage's seed as ``--random-seed``. Precision is ANTs' default (double). ``--verbose 1``
+    makes ANTs print each stage's time, which the benchmark reads from the log.
+    """
+    fixed, moving, out_prefix = _check_path(fixed), _check_path(moving), _check_path(out_prefix)
+    weights = rec["syn"]["channel_weights"]
+    if len(weights) != 1:
+        raise ValueError("the benchmark registers one channel (T1w)")
+    argv = _head(fixed, moving, out_prefix, None)
     for name, transform in (("rigid", "Rigid"), ("affine", "Affine")):
-        s = rec[name]
-        argv += [
-            "--transform",
-            f"{transform}[{_num(s['gradient_step'])}]",
-            "--metric",
-            f"MI[{fixed},{moving},1,{int(s['bins'])},Regular,{_num(s['sampling_percentage'])}]",
-            *_schedule(s),
-        ]
+        argv += _linear_stage(transform, rec[name], fixed, moving)
     s = rec["syn"]
     argv += [
         "--transform",
@@ -135,5 +144,33 @@ def ants_argv(
         "1",
         "--random-seed",
         str(int(rec["rigid"]["seed"])),
+        "--verbose",
+        "1",
     ]
     return argv
+
+
+def ants_linear_argv(
+    stage: dict[str, Any],
+    transform: str,
+    fixed: str,
+    moving: str,
+    out_prefix: str,
+    initial: str | None = None,
+) -> list[str]:
+    """The ``antsRegistration`` arguments of one linear stage (``transform`` ``"rigid"`` or
+    ``"affine"``) as :func:`ants_argv` runs it, writing ``<out_prefix>0GenericAffine.mat`` (the
+    start and the fit collapsed into one affine). ``initial``: a ``.mat`` file to start from;
+    ``None`` starts from the centres of intensity mass."""
+    names = {"rigid": "Rigid", "affine": "Affine"}
+    if transform not in names:
+        raise ValueError(f"transform must be 'rigid' or 'affine', not {transform!r}")
+    fixed, moving, out_prefix = _check_path(fixed), _check_path(moving), _check_path(out_prefix)
+    return [
+        *_head(fixed, moving, out_prefix, initial),
+        *_linear_stage(names[transform], stage, fixed, moving),
+        "--random-seed",
+        str(int(stage["seed"])),
+        "--verbose",
+        "1",
+    ]

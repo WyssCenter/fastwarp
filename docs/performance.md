@@ -1,11 +1,84 @@
 # Performance
 
-## Registration
+This page says how FastWarp's speed is measured against ANTs, how to repeat the measurement,
+and where the results come from. The measurements are part of the
+[accuracy benchmark](benchmarks.md): the same run that scores accuracy on public data also
+times every registration, a set of linear fits and the post-processing, and records the machine
+and software it ran on.
 
-Data: T1w + T2w of Lead-Tutor sub-57245 (raw T1w, T2w aligned to it by one rigid fit) onto the
-MNI 2009b template (0.5 mm), 1 mm registration grid, default recipe, a development build before 0.1.0 (internal version 0.4.0). Each
-figure is the median of three runs of the engine's own `linear_s`, `syn_s` and `total_s`
-(2026-11-09).
+No benchmark results are reported here yet. The tables below will be the `report` output of a
+full run, with its machine block. Until then, the only numbers on this page are earlier
+measurements on non-public data ([below](#earlier-measurements-on-non-public-data)), which a
+reader cannot repeat.
+
+## What is measured
+
+All times are wall-clock seconds. ANTs runs in a child process, one at a time, never at the same
+time as FastWarp, with `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` set to `--threads` (default 8).
+[Timings](benchmarks.md#timings) on the benchmark page defines every field exactly.
+
+| Measurement | Command | FastWarp | ANTs | Data |
+| --- | --- | --- | --- | --- |
+| Registration: Linear, SyN, total | `run` | `register_syn`'s `linear_s`, `syn_s`, `total_s`, and the call's wall time | `antsRegistration` with the same recipe: the stage times and `Total elapsed time` of its `--verbose 1` log, and the process wall time | every pair of the benchmark (default 50) |
+| Linear sessions | `linear` | one `linear_session` per pair: preparation, rigid fit, affine fit from it, a rigid multi-start | `antsRegistration` with the same rigid stage, then the same affine stage from its result: each stage's time | `snsx` (subjects onto the MNI 2009c template; default 20 pairs) |
+| Post-processing | `post` | `compose_field` (forward and inverse displacement field), `apply_transforms` (Lanczos re-warp), each with reading and writing | `antsApplyTransforms --float 1` doing the same, same threads | the pairs `run` registered |
+
+Each step also records an accuracy figure: the registrations are scored against manual labels
+and landmarks (`evaluate`); the linear fits by their landmark error and their distance from
+ANTs' fit; the post-processing by the difference between the two tools' fields (mm) and
+re-warped images. The engines' totals and wall times do not cover exactly the same work;
+[Timings](benchmarks.md#timings) says what each includes.
+
+The recipe is `--recipe cohort`, FastWarp's default (`fastwarp.cohort_recipe(1)`): one T1w
+channel, Rigid and Affine on Mattes MI, SyN on CC, on a 1 mm grid. None of the public datasets
+has a T2w aligned to the T1w, so the benchmark does not time the two-channel registration.
+
+## How to reproduce
+
+Install as in [Running it](benchmarks.md#running-it) (Python 3.13, the `benchmark` dependency
+group, FastWarp from the checkout or from PyPI), then, with folders outside the repository:
+
+```bash
+B="uv run --no-sync python -m benchmarks.accuracy"
+$B fetch --data ~/fastwarp-bench/data
+$B run --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work --threads 8
+$B linear --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work --threads 8
+$B post --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work --threads 8
+$B evaluate --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work
+$B report --work ~/fastwarp-bench/work
+```
+
+`--ants-dir DIR` runs the ANTs programs in `DIR` (for example a release of ANTs 2.6.5) instead of
+the ones bundled with ANTsPy; `--adapter NAME` picks a GPU. Use a machine that does nothing
+else during the run, and set `--threads` to the physical cores ANTs may use. `plan` estimates
+the time left; every step resumes where it stopped.
+
+## Where the results are
+
+- `<work>/results/cohort/summary.md`: the tables to paste here, with the machine and software
+  (CPU, GPU and driver, operating system, fastwarp and ANTs versions, thread settings, the
+  benchmark's git commit);
+- `timings.csv`, `linear.csv`, `post.csv` beside it: one row per registration, fit or step;
+- the records they come from: `<work>/<dataset>/cohort/<pair>/{fastwarp,ants}/run.json`,
+  `<work>/<dataset>/linear/<pair>/` and `<work>/<dataset>/cohort/<pair>/post.json`, each with
+  the `environment` it ran in.
+
+## Results
+
+To be added from the first full run: the `Registration time`, `Linear fits` and
+`Post-processing` tables of `summary.md`, with its machine block.
+
+## Earlier measurements on non-public data
+
+These numbers predate the benchmark. They were measured on data of a non-public cohort with
+scripts that are not in this repository, so they cannot be repeated from this page, and they
+will be replaced by the benchmark results. What is known about them is stated below; anything else is
+not documented.
+
+Registration: T1w + T2w of one subject (raw T1w, T2w aligned to it by one rigid fit) onto the
+MNI 2009b template (0.5 mm), 1 mm registration grid, the default recipe, a
+development build before 0.1.0 (internal version 0.4.0). Each figure is the median of three runs
+of the engine's own `linear_s`, `syn_s` and `total_s` (2026-11-09).
 
 | Hardware | Linear | SyN | Registration total |
 | --- | --- | --- | --- |
@@ -17,28 +90,23 @@ figure is the median of three runs of the engine's own `linear_s`, `syn_s` and `
 | ANTs on 16 CPU threads, same recipe | | | 1000 to 1500 s |
 
 The total includes preparing and uploading the images. The A4000 machine was under heavy CPU
-load (load average about 110 on 48 cores) during its runs.
+load (load average about 110 on 48 cores) during its runs. For the ANTs row, the ANTs version,
+the command line and the machine are not documented.
 
 [^1]: 2 GB is too little for T1w + T2w at 1 mm (1.6 GB): the capacity check refuses it up
     front (`GpuCapacityError`), so a caller falls back to ANTs. T1w alone needs 1.4 GB and ran
     only with `FASTWARP_GPU_MEMORY_BUDGET_MB=1900`, since the default budget keeps 1 GB free for
     the desktop.
 
-## Linear sessions
+Linear sessions: one rigid fit of the T2w onto the T1w (the default rigid stage) took 1.2 s on
+the M5 Pro, 1.6 s on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and
+2.7 s on the Quadro K620. A coregistration of a post-operative CT onto the T1w with five coarse
+and two full rigid fits took 17 s on the laptop GPU where ANTs took 32 s, and a masked affine
+fit 2.4 to 4.8 s on the RTX A4000 where ANTs took 5 to 11 s. The ANTs version and commands, and
+the subjects behind these ranges, are not documented.
 
-One rigid fit of the T2w onto the T1w (the default rigid stage) takes 1.2 s on the M5 Pro, 1.6 s
-on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and 2.7 s on the Quadro
-K620.
-
-In a typical DBS localisation workflow on the Lead-Tutor cohort: a post-op CT onto the T1w anchor, five coarse
-and two full rigid fits, takes 17 s on the laptop GPU where ANTs takes 32 s. The masked affine
-brain-shift fit takes 2.4 to 4.8 s on the RTX A4000 where ANTs takes 5 to 11 s.
-
-## Post-processing
-
-Turning the composites into displacement fields on the 0.5 mm template and anchor grids, and
-the Lanczos re-warp of the anchor (what Lead-DBS does next), on a laptop with 8
-threads:
+Post-processing, on a laptop with 8 threads: turning the composites into displacement fields on
+the 0.5 mm template and subject grids, and a Lanczos re-warp of the subject image.
 
 | Step | ANTs (ITK) | `compose_field` / `apply_transforms` |
 | --- | --- | --- |
@@ -46,8 +114,5 @@ threads:
 | Inverse field (37 M voxels) | 20.9 s | 0.95 s |
 | Lanczos re-warp | 31.0 s | 2.7 s |
 
-TODO(author): state how the ANTs timings were produced (command lines, the ANTs version for the
-registration timings) and which laptop the post-processing table used. The repository README
-does not say. The GPU benchmarks in `crates/fastwarp-gpu/tests/syn_bench.rs` run with
-`FASTWARP_GPU_BENCH`; TODO(author): say whether the table above came from them or from another
-script, and where that script is.
+Which laptop, which ANTs version and command lines, and which script produced this table are
+not documented.
