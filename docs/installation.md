@@ -4,70 +4,87 @@
 
 | Item | Requirement |
 | --- | --- |
-| Python | 3.11 or later. One `abi3` wheel per platform serves every Python from 3.11. |
-| Python dependency | `numpy` 2.0 or later (the only runtime dependency in `pyproject.toml`). |
-| GPU API | Metal on macOS, Vulkan on Linux and Windows, DX12 on Windows. |
-| Optional | ANTsPy, to read images as `ANTsImage` and to compare with ANTs. |
+| Python | 3.11 or later. One `abi3` wheel per platform serves every Python version from 3.11 on. |
+| NumPy | 2.0 or later. It is the only runtime dependency. |
+| GPU | A hardware GPU with a Vulkan, Metal or DirectX 12 driver. See [GPU and memory](guide/gpu.md). |
+| ANTsPy (optional) | To read and write NIfTI images and to pass them as `ANTsImage`. FastWarp itself reads no images from disk. |
 
-Without a usable hardware GPU the registration functions raise `GpuUnavailableError`. See
-[GPU checks and fallbacks](user-guide.md#gpu-checks-and-fallbacks).
+The resampling functions {func}`~fastwarp.compose_field` and {func}`~fastwarp.apply_transforms`
+run on the CPU and need no GPU. Every other function that registers images needs one.
 
-TODO(author): state the minimum GPU driver versions, the minimum GPU memory for a typical
-T1w + T2w registration, and the macOS, Windows and glibc versions you tested. The repository
-only records the measurements in [Performance](performance.md) and that a 2 GB GPU is too small
-for T1w + T2w at 1 mm.
+## Platforms
 
-## What is built and what is tested
+FastWarp is published on [PyPI](https://pypi.org/project/fastwarp/) as wheels for these
+platforms. The minimum operating system is the one the wheel tag states; the GPU API is the one
+FastWarp tries by default.
 
-`wheels.yml` builds one wheel per platform with Python 3.14 (maturin 1.16.0, `--release`):
+| Platform | Wheel tag | Minimum OS | GPU API |
+| --- | --- | --- | --- |
+| Linux x86_64 | `manylinux_2_28_x86_64` | glibc 2.28 | Vulkan |
+| Linux aarch64 | `manylinux_2_28_aarch64` | glibc 2.28 | Vulkan |
+| macOS on Apple silicon | `macosx_11_0_arm64` | macOS 11 | Metal |
+| macOS on Intel | `macosx_11_0_x86_64` | macOS 11 | Metal |
+| Windows x86_64 | `win_amd64` | | Vulkan, then DirectX 12 |
 
-| Wheel | Built on |
-| --- | --- |
-| Linux x86_64, manylinux 2.28 | `ubuntu-latest` |
-| Linux aarch64, manylinux 2.28 | `ubuntu-24.04-arm` |
-| macOS arm64 | `macos-latest` |
-| macOS x86_64 | `macos-latest` (cross-built; no smoke test) |
-| Windows x86_64 | `windows-latest` |
-
-Each wheel except macOS x86_64 is installed and the Python tests run on its runner. The
-workflow sets no software-GPU variable, so GPU tests run there only if the runner has an
-adapter, and skip otherwise.
-
-`ci.yml` runs the Rust and Python tests on Linux x86_64 with Python 3.13, on Mesa's lavapipe
-software Vulkan driver. Hardware GPUs are not tested in CI. The hardware in
-[Performance](performance.md) was measured by hand. The release workflow builds the wheels on Python 3.14 and runs their smoke
-test on Python 3.11, the oldest supported version, with the locked NumPy and again with
-NumPy 2.0.2 (`ci/numpy-floor.txt`). Python 3.12 is not tested separately.
+On other platforms, `pip` builds FastWarp from the source distribution, which needs a Rust
+toolchain (see [From source](#from-source)). Which of these wheels are tested, and how, is
+described under [Testing](testing.md#what-the-release-workflow-tests).
 
 ## From PyPI
 
+::::{tab-set}
+
+:::{tab-item} pip
 ```bash
 pip install fastwarp
 ```
+:::
 
-## From a release wheel
+:::{tab-item} uv
+```bash
+uv add fastwarp
+```
+:::
 
-The same wheels are attached to each GitHub release:
+::::
+
+To work with ANTsPy images, install ANTsPy as well (its package name is `antspyx`):
 
 ```bash
-gh release download -R WyssCenter/fastwarp -p "*.whl" -D wheels
-pip install --find-links wheels fastwarp
+pip install fastwarp antspyx
 ```
 
-The first command downloads the wheels of the latest release and needs the
-[GitHub CLI](https://cli.github.com/).
+ANTsPy publishes no wheels for Python 3.14 yet. If you want ANTsPy, use Python 3.11, 3.12 or 3.13.
+
+## From a GitHub release
+
+Each [GitHub release](https://github.com/WyssCenter/fastwarp/releases) carries the same wheels,
+the source distribution and a `SHA256SUMS` file. With the
+[GitHub CLI](https://cli.github.com/):
+
+```bash
+gh release download -R WyssCenter/fastwarp -D wheels
+cd wheels
+sha256sum --check --ignore-missing SHA256SUMS
+pip install --no-index --find-links . fastwarp
+```
+
+The first command downloads every file of the latest release. `pip install --no-index` takes
+FastWarp from that folder; NumPy must already be installed, or drop `--no-index` to let `pip`
+fetch it from PyPI.
 
 ## From source
 
-Building needs a Rust toolchain. `rust-toolchain.toml` pins version 1.99.0, which `rustup`
-installs on first use.
+Building needs the Rust toolchain that `rust-toolchain.toml` pins (version 1.99.0);
+[rustup](https://rustup.rs) installs it on first use. The build backend is
+[maturin](https://www.maturin.rs).
 
 ```bash
 pip install "git+https://github.com/WyssCenter/fastwarp.git"
 ```
 
-The build backend is [maturin](https://www.maturin.rs) (`maturin>=1.9.4,<2`). For a development
-checkout see [Testing](testing.md).
+For a development checkout with the tests, see [Contributing](contributing.md) and
+[Testing](testing.md).
 
 ## Check the installation
 
@@ -79,15 +96,16 @@ print(fastwarp.gpu_available())
 print(fastwarp.gpu_info())
 ```
 
-`gpu_info()` returns the adapter `name`, `backend`, `device_type`, `driver` and
-`memory_budget_bytes`, or raises `GpuUnavailableError`.
+On a laptop with an Intel Arc 140V integrated GPU this prints:
 
-## Environment variables
+```text
+0.1.0
+True
+{'name': 'Intel(R) Arc(TM) 140V GPU (16GB)', 'backend': 'Vulkan', 'device_type': 'IntegratedGpu', 'driver': 'Intel Corporation', 'memory_budget_bytes': 8049165516}
+```
 
-| Variable | Effect |
-| --- | --- |
-| `FASTWARP_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
-| `FASTWARP_GPU_ADAPTER` | pick the adapter whose name contains this text |
-| `FASTWARP_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |
-| `FASTWARP_GPU_MEMORY_BUDGET_MB` | override the memory budget of the capacity check |
-| `FASTWARP_GPU_WAIT_TIMEOUT_S` | seconds to wait for the GPU before failing (default 300) |
+{func}`~fastwarp.gpu_info` names the GPU FastWarp would use, its graphics API, its type and
+driver, and the memory budget of the capacity check. Without a usable GPU,
+{func}`~fastwarp.gpu_available` returns `False` and {func}`~fastwarp.gpu_info` raises
+{class}`~fastwarp.GpuUnavailableError` with the reason. [GPU and memory](guide/gpu.md) explains
+how the GPU is chosen and how to choose another one.
