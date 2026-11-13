@@ -444,6 +444,8 @@ def run_linear(
                         failed.update(error=error, config=cfg, iso_mm=iso_mm, environment=env)
                         _write_json(folder / engine / "run.json", failed)
                         rows.append(_row(ds.key, folder.name, engine, "failed", True))
+                    if not todo:
+                        rows.append(_row(ds.key, folder.name, "comparison", "failed", True))
                     continue
                 fixed = Path(prep["files"]["registration"])
                 _write_json(

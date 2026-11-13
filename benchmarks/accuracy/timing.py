@@ -180,6 +180,21 @@ def spread(d: dict[str, Any], digits: int = 1) -> str:
     return f"{d['median']:.{digits}f} ({d['q1']:.{digits}f}–{d['q3']:.{digits}f})"
 
 
+def thread_label(env: dict[str, Any] | None) -> Any:
+    """The thread setting of an ``environment`` record: its ``threads`` (``"all cores"`` or N);
+    for records made before that field, what their ITK and FastWarp settings were (``None``
+    when neither was recorded)."""
+    env = env or {}
+    if "threads" in env:
+        return env["threads"]
+    itk, rayon = env.get("itk_threads"), env.get("rayon_threads")
+    if itk is None and rayon is None:
+        return None
+    if itk is not None and rayon is not None and str(rayon) == str(itk):
+        return itk
+    return f"ANTs {itk or 'all cores'}, FastWarp {rayon or 'all cores'}"
+
+
 def fingerprint(env: dict[str, Any] | None) -> dict[str, Any]:
     """The machine and software fields of an ``environment`` record that a timing depends on."""
     env = env or {}
@@ -189,7 +204,7 @@ def fingerprint(env: dict[str, Any] | None) -> dict[str, Any]:
         "gpu_driver": gpu.get("driver"),
         "gpu_backend": gpu.get("backend"),
         "cpu": env.get("cpu"),
-        "threads": env.get("threads", env.get("itk_threads")),
+        "threads": thread_label(env),
         "fastwarp": env.get("fastwarp"),
         "ants": env.get("ants_version") or env.get("ants_program"),
     }
@@ -272,11 +287,19 @@ def ratio(a: float, b: float) -> float:
     return float(a) / float(b)
 
 
-def machines(records: Iterable[dict[str, Any]]) -> list[tuple[dict[str, Any], int]]:
-    """Distinct machine fingerprints of ``records`` with how many records each has."""
+def machines(tables: dict[str, list[dict[str, Any]]]) -> list[tuple[dict[str, Any], int]]:
+    """Distinct machine fingerprints of the records behind timing rows (``{table: rows}``, rows
+    carrying :func:`fingerprint`'s fields), with how many records each has."""
+    keys = tuple(fingerprint(None))
+    per_record: dict[tuple, dict[str, Any]] = {}
+    for table, rows in tables.items():
+        for r in rows:
+            per_record.setdefault(
+                (table, r.get("dataset"), r.get("iso_mm"), r.get("pair"), r.get("engine")),
+                {k: r.get(k) for k in keys},
+            )
     seen: dict[str, tuple[dict[str, Any], int]] = {}
-    for rec in records:
-        fp = fingerprint(rec.get("environment"))
+    for fp in per_record.values():
         key = json.dumps(fp, sort_keys=True, default=str)
         prev = seen.get(key)
         seen[key] = (fp, (prev[1] if prev else 0) + 1)

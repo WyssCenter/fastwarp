@@ -414,11 +414,14 @@ def run_post(
                         **step_overrides,
                     )
                 except Exception as e:
+                    src = source_engine(folder, rec, iso_mm)
                     record = {
                         "kind": "post",
                         "config": cfg,
                         "status": "failed",
                         "error": f"{type(e).__name__}: {e}",
+                        "source_engine": src,
+                        "source_finished": None if src is None else source_stamp(folder, src),
                     }
                 record["environment"] = env
                 _write_json(folder / "post.json", record)

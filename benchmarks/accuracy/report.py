@@ -418,7 +418,7 @@ def machine_lines(env: dict[str, Any]) -> list[str]:
 def thread_lines(envs: dict[str, dict[str, Any]]) -> list[str]:
     """The thread setting each command ran with (from its environment file) and the cores."""
     return [
-        f"- `{command}`: threads {_value(env.get('threads', env.get('itk_threads')))} "
+        f"- `{command}`: threads {_value(timing.thread_label(env))} "
         f"(ANTs and FastWarp's CPU work); {_value(env.get('cpu_count'))} logical, "
         f"{_value(env.get('cpu_count_physical'))} physical cores"
         for command, env in envs.items()
@@ -430,7 +430,7 @@ def machine_table(fingerprints: list[tuple[dict[str, Any], int]]) -> list[dict[s
     return [{**fp, "records": n} for fp, n in fingerprints]
 
 
-def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str]:
+def _timing_sections(reg: list, lin: list, pst: list) -> list[str]:
     lines: list[str] = []
     if reg:
         lines += [
@@ -528,7 +528,7 @@ def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str
                 ],
             ),
         ]
-    machines = timing.machines(records)
+    machines = timing.machines({"run": reg, "linear": lin, "post": pst})
     if len(machines) > 1:
         lines += [
             "",
@@ -551,15 +551,6 @@ def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str
             ),
         ]
     return lines
-
-
-def _timing_records(work: Path, recipe_name: str) -> list[dict[str, Any]]:
-    paths = [
-        *work.glob(f"*/{recipe_name}/*/*/run.json"),
-        *work.glob(f"*/{linear.FOLDER}/*/*/run.json"),
-        *work.glob(f"*/{recipe_name}/*/post.json"),
-    ]
-    return [rec for _, rec in timing.read_records(paths) if rec.get("status") == "ok"]
 
 
 def _environments(work: Path) -> dict[str, dict[str, Any]]:
@@ -682,7 +673,7 @@ def report(*, work: Path, recipe_name: str, plot: bool = True, iso_mm: float | N
     _write_csv(folder / "timings.csv", reg)
     _write_csv(folder / "linear.csv", lin)
     _write_csv(folder / "post.csv", pst)
-    lines += _timing_sections(reg, lin, pst, _timing_records(work, recipe_name))
+    lines += _timing_sections(reg, lin, pst)
     if pairs and plot and _plot(pairs, folder / "summary.png"):
         lines += ["", "![per-pair results](summary.png)"]
     md = folder / "summary.md"

@@ -60,8 +60,8 @@ step resumes where it stopped.
 ## Where the results are
 
 - `<work>/results/cohort/summary.md`: the tables to paste here, with the machine and software
-  (CPU, GPU and its driver name, operating system, fastwarp and ANTs versions, thread settings of each command, the
-  benchmark's git commit);
+  (CPU, GPU and its driver name, operating system, fastwarp and ANTs versions, thread setting of
+  each command, the benchmark's git commit);
 - `timings.csv`, `linear.csv`, `post.csv` beside it: one row per registration, fit or step;
 - the records they come from: `<work>/<dataset>/cohort/<pair>/{fastwarp,ants}/run.json`,
   `<work>/<dataset>/linear/<pair>/` and `<work>/<dataset>/cohort/<pair>/post.json`, each with

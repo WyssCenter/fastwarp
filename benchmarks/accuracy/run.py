@@ -218,25 +218,29 @@ def _cpu_name() -> str:
     return platform.processor() or platform.machine()
 
 
+def physical_cores_in_cpuinfo(text: str) -> int | None:
+    """The number of distinct ``(physical id, core id)`` pairs of a Linux ``/proc/cpuinfo``."""
+    pairs = set()
+    phys = core = None
+    for line in [*text.splitlines(), ""]:
+        key, _, value = line.partition(":")
+        key = key.strip()
+        if key == "physical id":
+            phys = value.strip()
+        elif key == "core id":
+            core = value.strip()
+        elif not line.strip():
+            if core is not None:
+                pairs.add((phys, core))
+            phys = core = None
+    return len(pairs) or None
+
+
 def _physical_cores() -> int | None:
     try:
-        pairs = set()
-        phys = core = None
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            key, _, value = line.partition(":")
-            key = key.strip()
-            if key == "physical id":
-                phys = value.strip()
-            elif key == "core id":
-                core = value.strip()
-            elif not line.strip():
-                if core is not None:
-                    pairs.add((phys, core))
-                phys = core = None
-        if core is not None:
-            pairs.add((phys, core))
-        if pairs:
-            return len(pairs)
+        found = physical_cores_in_cpuinfo(Path("/proc/cpuinfo").read_text())
+        if found:
+            return found
     except OSError:
         pass
     if sys.platform == "darwin":
@@ -781,7 +785,7 @@ def measured_seconds(work: Path) -> dict[str, float]:
                 rec = json.loads(meta.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 continue
-            if rec.get("status") == "ok":
+            if rec.get("status") == "ok" and (rec.get("config") or {}).get("outputs") == ["nii"]:
                 for engine in ENGINES:
                     wall = (rec.get(engine) or {}).get("wall_s")
                     if wall is not None:
@@ -835,7 +839,10 @@ def plan(
             for e in engines:
                 if not engine_done(folder / e, rec, iso_mm):
                     todo[e] += 1
-            if not post_step.post_done(folder, post_step.config(rec, iso_mm)):
+            if not any(
+                post_step.post_done(folder, post_step.config(rec, iso_mm, gzip))
+                for gzip in (False, True)
+            ):
                 post_left += 1
         est = sum(todo[e] * secs[e] for e in engines) + len(selected) * secs["evaluate"]
         out["datasets"][key] = {"pairs": len(selected), "to_run": todo, "estimate_s": est}
