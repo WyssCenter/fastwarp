@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at TODO(author): contact address. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to the community leaders responsible for enforcement, the maintainers Richard Köhler ([@richardkoehler](https://github.com/richardkoehler)) and Jan Philipp Payonk ([@JPPayonk](https://github.com/JPPayonk)). Contact a maintainer privately through the contact details on their GitHub profile; do not report through a public issue. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

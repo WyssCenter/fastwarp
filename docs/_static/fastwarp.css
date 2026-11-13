@@ -1,0 +1,50 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+html[data-theme="light"] {
+  --pst-color-primary: #1f5f99;
+  --pst-color-primary-bg: #e3edf7;
+  --pst-color-secondary: #2b8a6e;
+  --pst-color-secondary-bg: #e2f2ec;
+  --pst-color-link: #1f5f99;
+  --pst-color-link-hover: #2b8a6e;
+  --pst-color-inline-code: #2f4a63;
+  --pst-color-inline-code-links: #1f5f99;
+}
+
+html[data-theme="dark"] {
+  --pst-color-primary: #79b4e8;
+  --pst-color-primary-bg: #1b2d40;
+  --pst-color-secondary: #5cc9a7;
+  --pst-color-secondary-bg: #17302a;
+  --pst-color-link: #79b4e8;
+  --pst-color-link-hover: #5cc9a7;
+  --pst-color-inline-code: #d4dde6;
+  --pst-color-inline-code-links: #79b4e8;
+}
+
+.bd-article h1 {
+  font-weight: 700;
+}
+
+.sd-card .sd-card-title {
+  font-weight: 600;
+}
+
+.sd-card .sd-card-title .fa-solid,
+.sd-card .sd-card-title svg {
+  color: var(--pst-color-primary);
+  margin-right: 0.35em;
+}
+
+.bd-article table td code,
+.bd-article table th code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.bd-article dl.py {
+  margin-bottom: 1.75rem;
+}
