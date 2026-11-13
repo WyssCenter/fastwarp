@@ -32,8 +32,9 @@ ANTs' fit; the post-processing by the difference between the two tools' fields (
 re-warped images. The engines' totals and wall times do not cover exactly the same work;
 [Timings](benchmarks.md#timings) says what each includes.
 
-The recipe is `--recipe cohort`, FastWarp's default (`fastwarp.cohort_recipe(1)`): one T1w
-channel, Rigid and Affine on Mattes MI, SyN on CC, on a 1 mm grid. None of the public datasets
+The recipe is `--recipe cohort`, FastWarp's default ({func}`fastwarp.cohort_recipe` with one
+channel): one {term}`T1-weighted <T1w, T2w>` image per side, Rigid and Affine on
+{term}`Mattes mutual information`, {term}`SyN` on {term}`cross-correlation`, on a 1 mm grid. None of the public datasets
 has a T2w aligned to the T1w, so the benchmark does not time the two-channel registration.
 
 ## How to reproduce
@@ -79,9 +80,9 @@ scripts that are not in this repository, so they cannot be repeated from this pa
 will be replaced by the benchmark results. What is known about them is stated below; anything else is
 not documented.
 
-Registration: T1w + T2w of one subject (raw T1w, T2w aligned to it by one rigid fit) onto the
-MNI 2009b template (0.5 mm), 1 mm registration grid, the default recipe, a
-development build before 0.1.0 (internal version 0.4.0). Each figure is the median of three runs
+Registration: a T1-weighted and a T2-weighted scan of one subject (the T1w as acquired, the T2w
+aligned to it by one rigid fit) onto the MNI 2009b template (0.5 mm), on a 1 mm registration
+grid, with the default recipe and a development build made before the first release (0.1.0). Each figure is the median of three runs
 of the engine's own `linear_s`, `syn_s` and `total_s` (2026-11-09).
 
 | Hardware | Linear | SyN | Registration total |
@@ -104,9 +105,10 @@ the command line and the machine are not documented.
 
 Linear sessions: one rigid fit of the T2w onto the T1w (the default rigid stage) took 1.2 s on
 the M5 Pro, 1.6 s on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and
-2.7 s on the Quadro K620. A coregistration of a post-operative CT onto the T1w with five coarse
-and two full rigid fits took 17 s on the laptop GPU where ANTs took 32 s, and a masked affine
-fit 2.4 to 4.8 s on the RTX A4000 where ANTs took 5 to 11 s. The ANTs version and commands, and
+2.7 s on the Quadro K620. Aligning a CT scan taken after surgery onto the subject's T1w scan (a
+{term}`coregistration`), with five short rigid fits from different starting positions and two
+full ones, took 17 s on the laptop GPU where ANTs took 32 s. An affine fit limited by a mask to
+part of the brain took 2.4 to 4.8 s on the RTX A4000 where ANTs took 5 to 11 s. The ANTs version and commands, and
 the subjects behind these ranges, are not documented.
 
 Post-processing, on a laptop with 8 threads: turning the composites into displacement fields on

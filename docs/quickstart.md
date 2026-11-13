@@ -11,9 +11,10 @@ pip install fastwarp antspyx
 
 ## Normalize a brain onto a template
 
-{func}`~fastwarp.register_syn` runs the whole registration: a centre-of-mass start, a Rigid and
-an Affine stage, then SyN. Here `ch2` (the moving image) is registered onto `mni` (the fixed
-image).
+{func}`~fastwarp.register_syn` runs the whole registration: a {term}`centre-of-mass <centre of mass>`
+start, a Rigid and an Affine stage, then {term}`SyN`. Here `ch2` (the {term}`moving image`) is
+registered onto `mni` (the {term}`fixed image`). {func}`~fastwarp.fits_gpu` first checks that
+the registration fits the GPU's memory.
 
 ```python
 import ants
@@ -22,7 +23,7 @@ import fastwarp
 fixed = ants.image_read(ants.get_ants_data("mni"))
 moving = ants.image_read(ants.get_ants_data("ch2"))
 
-if not fastwarp.fits_gpu(fixed, iso_mm=1.0):
+if not fastwarp.fits_gpu(fixed, moving, iso_mm=1.0):
     raise SystemExit("No GPU, or too little GPU memory: use ANTs instead.")
 
 info = fastwarp.register_syn(fixed, moving, "out/ch2_to_mni_")
@@ -38,21 +39,17 @@ print("correlation after: ", -ants.image_similarity(fixed, warped, "Correlation"
 
 On a laptop with an Intel Arc 140V integrated GPU (Windows, Vulkan) this printed:
 
-```text
+```{code-block} text
+:class: fw-output
 Intel(R) Arc(TM) 140V GPU (16GB) (Vulkan, IntegratedGpu): 15.1 s on a [182, 218, 182] grid
 correlation before: 0.9118086099624634
 correlation after:  0.9782331585884094
 ```
 
-The call wrote three files into `out/`, which it created:
-
-| File | What it holds |
-| --- | --- |
-| `out/ch2_to_mni_Composite.h5` | The forward transform: warps `ch2` onto `mni`. |
-| `out/ch2_to_mni_InverseComposite.h5` | The inverse transform: warps `mni` (or an atlas in its space) onto `ch2`. |
-| `out/ch2_to_mni_0GenericAffine.mat` | The affine part alone. |
-
-[Output files](guide/outputs.md) explains each file and how to use it with
+The call created the folder `out/` and wrote three files into it:
+`out/ch2_to_mni_Composite.h5`, which warps `ch2` onto `mni`; `out/ch2_to_mni_InverseComposite.h5`,
+the inverse; and `out/ch2_to_mni_0GenericAffine.mat`, the affine part alone.
+[Output files](guide/outputs.md) explains which file to use for what, and how to use them with
 `antsApplyTransforms`.
 
 ## Resample with FastWarp
@@ -75,7 +72,8 @@ field = fastwarp.compose_field(
 print(type(warped).__name__, warped.shape, field)
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 ANTsImage (182, 218, 182) out\ch2_to_mni_field.nii.gz
 ```
 
@@ -83,7 +81,7 @@ The path is printed with the separator of the operating system (here Windows).
 
 ## Fit a rigid transform
 
-{func}`~fastwarp.linear_session` uploads an image pair once and runs one or more rigid or affine
+{func}`~fastwarp.linear_session` prepares an image pair once and runs one or more rigid or affine
 fits on it. One rigid fit:
 
 ```python
@@ -134,7 +132,8 @@ with fastwarp.linear_session(fixed, moving) as session:
 print("translation (mm):", np.round(result["parameters"][9:], 2))
 ```
 
-```text
+```{code-block} text
+:class: fw-output
 translation (mm): [ 4.   -1.99  3.  ]
 ```
 
@@ -146,4 +145,5 @@ format.
 
 - [User guide](user-guide.md): every option, in short pages.
 - [GPU and memory](guide/gpu.md): which GPU is used, and what fits into its memory.
-- [API reference](api.md): every signature.
+- [API reference](api.md): every function and its parameters.
+- [Troubleshooting](troubleshooting.md): when no GPU is found, or the registration does not fit.

@@ -128,8 +128,9 @@ commands above install the extension in editable form instead. The `ci` nextest 
 (`.config/nextest.toml`) keeps going after a failure, prints the failures at the end, and starts
 two long GPU tests first.
 
-Hardware GPUs are not tested in CI. The hardware in [Performance](performance.md) was measured
-by hand.
+Hardware GPUs are not tested in CI: `ci.yml` runs the GPU tests on the lavapipe software
+driver. The hardware in [Performance](performance.md) was measured by hand, and the examples of
+this documentation were run on an Intel Arc 140V laptop GPU.
 
 ## What the release workflow tests
 
@@ -147,7 +148,9 @@ Each tested wheel is installed on its runner with Python 3.11, the oldest suppor
 the Python tests run twice: with the locked NumPy and with NumPy 2.0.2 (`ci/numpy-floor.txt`),
 the oldest supported NumPy. Python 3.12 is not tested separately. The workflow sets up no
 software GPU, so the GPU tests run only where the runner offers a hardware adapter and skip
-otherwise; the workflow logs show which.
+otherwise. Whether GitHub's `windows-latest`, `macos-latest` and Linux runners offer a hardware
+GPU adapter to Vulkan or Metal is not documented in this repository; `pytest -rs` in the workflow
+log lists the GPU tests that were skipped on each run.
 
 ## Building the documentation
 

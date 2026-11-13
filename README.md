@@ -13,7 +13,7 @@ or run neuroimaging pipelines, for example to normalize brain MRI onto a templat
 
 - A full normalization (centre of mass, Rigid, Affine, SyN) in one call, with one or two
   channels such as T1w + T2w.
-- Rigid and affine fits of one image pair, several in a row without uploading the images again.
+- Rigid and affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like `antsApplyTransforms`, on the CPU.
 - Runs on Vulkan (Linux, Windows), Metal (macOS) and DirectX 12 (Windows) through
   [wgpu](https://wgpu.rs). Before a normalization starts, it checks that a GPU is present and
@@ -44,7 +44,7 @@ import fastwarp
 fixed = ants.image_read(ants.get_ants_data("mni"))
 moving = ants.image_read(ants.get_ants_data("ch2"))
 
-if fastwarp.fits_gpu(fixed, iso_mm=1.0):
+if fastwarp.fits_gpu(fixed, moving, iso_mm=1.0):
     info = fastwarp.register_syn(fixed, moving, "out/ch2_to_mni_")
     warped = ants.apply_transforms(fixed, moving, ["out/ch2_to_mni_Composite.h5"])
     print(info["adapter"], f"{info['total_s']:.1f} s")
@@ -52,29 +52,26 @@ else:
     print("No GPU, or too little GPU memory: use ANTs instead.")
 ```
 
-`register_syn` writes three files:
-
-| File | Use it to |
-| --- | --- |
-| `out/ch2_to_mni_Composite.h5` | warp the moving image onto the fixed image (map points from fixed to moving space) |
-| `out/ch2_to_mni_InverseComposite.h5` | warp the fixed image, or an atlas in its space, onto the moving image (map points from moving to fixed space) |
-| `out/ch2_to_mni_0GenericAffine.mat` | apply the affine part alone |
-
-`antsApplyTransforms`, `antsApplyTransformsToPoints` and ANTsPy read them as they read ANTs'
-own files.
+`register_syn` writes `out/ch2_to_mni_Composite.h5`, `InverseComposite.h5` and
+`0GenericAffine.mat`, which `antsApplyTransforms`, `antsApplyTransformsToPoints` and ANTsPy read
+as they read ANTs' own files.
+[Output files](https://fastwarp.readthedocs.io/latest/guide/outputs.html) says which file maps
+points or images in which direction.
 
 ## Learn more
 
 - [Quickstart](https://fastwarp.readthedocs.io/latest/quickstart.html): first registration, resampling and a rigid fit.
 - [User guide](https://fastwarp.readthedocs.io/latest/user-guide.html): images, output files, recipes, linear fits and GPU memory.
 - [API reference](https://fastwarp.readthedocs.io/latest/api.html) and [environment variables](https://fastwarp.readthedocs.io/latest/environment.html).
-- [Performance](https://fastwarp.readthedocs.io/latest/performance.html) and the [accuracy benchmark](https://fastwarp.readthedocs.io/latest/benchmarks.html) against ANTs.
+- [Performance](https://fastwarp.readthedocs.io/latest/performance.html) and the [accuracy benchmark](https://fastwarp.readthedocs.io/latest/benchmarks.html): how speed and accuracy are measured against ANTs on public data. No benchmark results yet; earlier measurements on non-public data are on the Performance page, labelled as such.
+- [Troubleshooting](https://fastwarp.readthedocs.io/latest/troubleshooting.html): no GPU found, too little GPU memory.
 
 ## Project
 
-FastWarp was developed by Richard Köhler (Wyss Center for Bio and Neuroengineering) and Jan
-Philipp Payonk (University of Rostock) as the registration engine of
-[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer). It is research software;
+FastWarp was developed as the registration engine of
+[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer) and is maintained by Richard
+Köhler (Wyss Center for Bio and Neuroengineering) and Jan Philipp Payonk (University of
+Rostock). It is research software;
 support is given on a best-effort basis through
 [GitHub issues](https://github.com/WyssCenter/fastwarp/issues). Contributions are welcome: see
 [CONTRIBUTING.md](https://github.com/WyssCenter/fastwarp/blob/main/CONTRIBUTING.md).

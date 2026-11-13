@@ -23,7 +23,7 @@ FastWarp tries by default.
 | Linux x86_64 | `manylinux_2_28_x86_64` | glibc 2.28 | Vulkan |
 | Linux aarch64 | `manylinux_2_28_aarch64` | glibc 2.28 | Vulkan |
 | macOS on Apple silicon | `macosx_11_0_arm64` | macOS 11 | Metal |
-| macOS on Intel | `macosx_11_0_x86_64` | macOS 11 | Metal |
+| macOS on Intel | `macosx_11_0_x86_64` | macOS 11 | Metal (wheel cross-built on an Apple silicon runner and not tested) |
 | Windows x86_64 | `win_amd64` | | Vulkan, then DirectX 12 |
 
 On other platforms, `pip` builds FastWarp from the source distribution, which needs a Rust
@@ -98,7 +98,8 @@ print(fastwarp.gpu_info())
 
 On a laptop with an Intel Arc 140V integrated GPU this prints:
 
-```text
+```{code-block} text
+:class: fw-output
 0.1.0
 True
 {'name': 'Intel(R) Arc(TM) 140V GPU (16GB)', 'backend': 'Vulkan', 'device_type': 'IntegratedGpu', 'driver': 'Intel Corporation', 'memory_budget_bytes': 8049165516}
@@ -108,4 +109,5 @@ True
 driver, and the memory budget of the capacity check. Without a usable GPU,
 {func}`~fastwarp.gpu_available` returns `False` and {func}`~fastwarp.gpu_info` raises
 {class}`~fastwarp.GpuUnavailableError` with the reason. [GPU and memory](guide/gpu.md) explains
-how the GPU is chosen and how to choose another one.
+how the GPU is chosen and how to choose another one, and
+[Troubleshooting](troubleshooting.md#no-gpu-is-found) what to do when no GPU is found.

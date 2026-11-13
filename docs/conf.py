@@ -17,6 +17,7 @@ extensions = [
     "myst_parser",
     "autoapi.extension",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.napoleon",
     "sphinx_copybutton",
     "sphinx_design",
 ]
@@ -28,12 +29,25 @@ myst_enable_extensions = ["colon_fence", "deflist"]
 autoapi_dirs = ["../python/fastwarp"]
 autoapi_file_patterns = ["*.pyi", "*.py"]
 autoapi_options = ["members", "undoc-members", "imported-members"]
-autoapi_python_class_content = "both"
+autoapi_python_class_content = "class"
 autoapi_member_order = "bysource"
 autoapi_generate_api_docs = False
 autoapi_add_toctree_entry = False
 python_maximum_signature_line_length = 88
 python_use_unqualified_type_names = True
+autodoc_typehints = "none"
+napoleon_google_docstring = False
+napoleon_numpy_docstring = True
+napoleon_use_rtype = False
+napoleon_preprocess_types = True
+napoleon_type_aliases = {
+    "ANTsImage": "~ants.core.ants_image.ANTsImage",
+    "CancelToken": "~fastwarp.CancelToken",
+    "LinearSession": "~fastwarp.LinearSession",
+    "numpy.ndarray": "~numpy.ndarray",
+    "pathlib.Path": "~pathlib.Path",
+    "os.PathLike": "~os.PathLike",
+}
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
@@ -42,9 +56,11 @@ intersphinx_mapping = {
 }
 
 copybutton_exclude = ".linenos, .gp, .go"
+copybutton_selector = "div:not(.fw-output) > div.highlight > pre"
 
 html_theme = "pydata_sphinx_theme"
 html_title = f"FastWarp {release}"
+html_favicon = "_static/favicon.svg"
 html_static_path = ["_static"]
 html_css_files = ["fastwarp.css"]
 html_show_sourcelink = False
@@ -56,13 +72,23 @@ html_context = {
     "default_mode": "auto",
 }
 html_theme_options = {
-    "logo": {"text": "FastWarp"},
+    "logo": {
+        "image_light": "_static/fastwarp-wordmark-light.svg",
+        "image_dark": "_static/fastwarp-wordmark-dark.svg",
+        "alt_text": "FastWarp - Home",
+    },
     "navbar_align": "left",
     "header_links_before_dropdown": 6,
     "navigation_with_keys": False,
     "show_toc_level": 2,
     "use_edit_page_button": True,
-    "secondary_sidebar_items": ["page-toc", "edit-this-page"],
+    "secondary_sidebar_items": {
+        "**": ["page-toc", "edit-this-page"],
+        "changelog": ["page-toc"],
+        "contributing": ["page-toc"],
+        "security": ["page-toc"],
+        "code-of-conduct": ["page-toc"],
+    },
     "footer_start": ["copyright"],
     "footer_end": ["sphinx-version", "theme-version"],
     "icon_links": [

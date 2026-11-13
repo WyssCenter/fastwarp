@@ -4,13 +4,25 @@ html_theme.sidebar_secondary.remove: true
 
 # FastWarp
 
-**FastWarp registers 3-D images on the GPU.** It runs the rigid, affine and SyN registration of
-[ANTs](https://github.com/ANTsX/ANTs) on a graphics card and writes the same transform files as
-ANTs, so the rest of an ANTs-based pipeline can stay as it is.
+**FastWarp registers 3-D images on the GPU.** It runs the rigid, affine and {term}`SyN`
+registration of [ANTs](https://github.com/ANTsX/ANTs) on a graphics card and writes the same
+transform files as ANTs, so the rest of an ANTs-based pipeline can stay as it is.
 
 FastWarp is a Python package with a compiled Rust engine. It is meant for people who build or run
 neuroimaging pipelines, for example to normalize brain MRI onto a template, and who use ANTs for
 that today.
+
+```{raw} html
+<figure class="fw-hero">
+  <img src="_static/figures/registration-checkerboard.png" width="990" height="396"
+       alt="Three axial brain slices: the MNI template; a checkerboard of the template and a subject's scan before registration, with edges that do not line up; and the same checkerboard after registration, with continuous edges.">
+  <figcaption><span>Template (fixed image)</span><span>Before: template and subject in a checkerboard</span><span>After FastWarp</span></figcaption>
+</figure>
+```
+
+A 7 T scan of one subject of the public [SNSX dataset](https://openneuro.org/datasets/ds004470)
+registered onto the MNI 2009c template with the default settings
+([how the figure is made](guide/normalization.md#the-figure-on-the-home-page)).
 
 ::::{grid} 1 1 2 2
 :gutter: 3
@@ -18,8 +30,8 @@ that today.
 :::{grid-item-card} What it does
 :class-card: sd-shadow-none
 
-- A full normalization in one call: centre of mass, Rigid, Affine, then SyN.
-- Rigid or affine fits of one image pair, several in a row without uploading the images again.
+- A full normalization in one call: {term}`centre of mass`, Rigid, Affine, then SyN.
+- Rigid or affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like ANTs' `antsApplyTransforms`, on the CPU.
 :::
 
@@ -68,45 +80,34 @@ Register one brain image onto a template with public sample data.
 :link: user-guide
 :link-type: doc
 
-Images, normalization, output files, recipes, linear fits, resampling and GPU memory.
+How it works, images, output files, recipes, linear fits, resampling and GPU memory.
 :::
 
 :::{grid-item-card} {fas}`code` API reference
 :link: api
 :link-type: doc
 
-Every public function, class, constant and exception, with its signature.
+Every public function, class, constant and exception, with its parameters.
 :::
 
 :::{grid-item-card} {fas}`gauge-high` Performance and validation
 :link: validation
 :link-type: doc
 
-Measured run times, the accuracy benchmark against ANTs, and how the code is tested.
+How speed and accuracy are measured against ANTs, and what the tests check today.
 :::
 
-:::{grid-item-card} {fas}`users` Project
-:link: project
+:::{grid-item-card} {fas}`life-ring` Troubleshooting
+:link: troubleshooting
 :link-type: doc
 
-Changelog, contributing, citing, licence and related projects.
+No GPU found, too little GPU memory, and why results differ slightly from ANTs.
 :::
 ::::
 
-## Background
-
-FastWarp was developed by Richard Köhler (Wyss Center for Bio and Neuroengineering) and Jan
-Philipp Payonk (University of Rostock) as the registration engine of
-[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), a tool for localizing deep
-brain stimulation (DBS) electrodes in brain images. The engine
-ports the registration code of ANTs and [ITK](https://itk.org) to GPU compute shaders: the Mattes
-mutual information and cross-correlation metrics, the conjugate-gradient linear stages, and SyN
-with Gaussian field regularisation and field inversion. Before a normalization starts, FastWarp
-checks whether a GPU is present and has enough memory, so that a pipeline can fall back to ANTs
-when it does not.
-
-FastWarp is research software, licensed under the [Apache License 2.0](licence.md). If you use
-it in your work, please [cite it](citing.md).
+FastWarp is research software, licensed under the [Apache License 2.0](licence.md) and
+maintained by Richard Köhler and Jan Philipp Payonk. If you use it in your work, please
+[cite it](citing.md).
 
 ```{toctree}
 :hidden:
