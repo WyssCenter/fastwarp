@@ -6,7 +6,9 @@
 //! and reports the machine it ran on. Nothing is downloaded and ANTs is not needed.
 
 use std::io::Write;
+#[cfg(any(windows, target_os = "macos"))]
 use std::path::Path;
+#[cfg(any(windows, target_os = "macos"))]
 use std::process::Command;
 use std::time::Instant;
 
@@ -327,6 +329,7 @@ pub fn report_text(r: &Report) -> String {
     s
 }
 
+#[cfg(any(windows, target_os = "macos"))]
 fn command_output(program: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new(program).args(args).output().ok()?;
     out.status
