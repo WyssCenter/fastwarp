@@ -72,6 +72,7 @@ for _obj in (
     compose_field,
     fits_gpu,
     gpu_available,
+    gpu_info,
     iso_grid_dims,
     linear_session,
     register_syn,

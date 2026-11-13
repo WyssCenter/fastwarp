@@ -21,6 +21,10 @@
   `write_outputs`, `write_linear_output` and `write_composite_pair` / `read_composite_pair`)
   appends the suffix to the prefix as text instead of to its file name, and `fastwarp_reg_syn
   --out` follows the same rule.
+- `GpuCapacityError`, `GpuUnavailableError`, `RegistrationCancelled` and `RegistrationError`
+  report `fastwarp` as their module (was `_core`, which cannot be imported), so they pickle and
+  cross process boundaries, for example from a `concurrent.futures.ProcessPoolExecutor` worker.
+  `gpu_info` reports `fastwarp` as well (#26).
 
 ### Deprecated
 
