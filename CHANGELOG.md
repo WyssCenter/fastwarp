@@ -12,10 +12,12 @@
   ANTs (read from `antsRegistration --verbose 1`); `linear` times `linear_session` fits
   (rigid, affine, a rigid multi-start) against `antsRegistration` with the same stages, with
   their landmark errors; `post` times `compose_field` and `apply_transforms` against
-  `antsApplyTransforms`. `report` tabulates the median and quartiles of each with the machine
-  and software they ran on (CPU, GPU and driver, OS, fastwarp and ANTs versions, threads).
-  The benchmark no longer leaves `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` set in the calling
-  process.
+  `antsApplyTransforms` on uncompressed outputs (`--gzip` adds `.nii.gz`). `report` tabulates
+  the median and quartiles of each, per dataset and registration grid, with the machine and
+  software they ran on (CPU, GPU and its driver name, OS, fastwarp and ANTs versions, the thread
+  setting and core counts of each command). Both engines use all cores unless `--threads`
+  caps both alike, and the benchmark no longer leaves `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` set
+  in the calling process.
 - `docs/performance.md` explains how the speed is measured and how to reproduce it; the
   earlier figures, measured on non-public data, are labelled as such with what is known about
   them.

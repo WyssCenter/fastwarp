@@ -17,6 +17,15 @@ from pathlib import Path
 from . import datasets, recipes
 
 
+def _cap_fastwarp_threads(args: argparse.Namespace) -> None:
+    import os
+
+    if args.threads is None:
+        os.environ.pop("RAYON_NUM_THREADS", None)
+    else:
+        os.environ["RAYON_NUM_THREADS"] = str(args.threads)
+
+
 def _keys(args: argparse.Namespace) -> list[str]:
     if args.dataset:
         for k in args.dataset:
@@ -125,6 +134,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    _cap_fastwarp_threads(args)
     from .fetch import check_outside_repo
     from .run import run
 
@@ -151,6 +161,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_linear(args: argparse.Namespace) -> int:
+    _cap_fastwarp_threads(args)
     from .fetch import check_outside_repo
     from .linear import run_linear
 
@@ -176,9 +187,7 @@ def _cmd_linear(args: argparse.Namespace) -> int:
 
 
 def _cmd_post(args: argparse.Namespace) -> int:
-    import os
-
-    os.environ["RAYON_NUM_THREADS"] = str(args.threads)
+    _cap_fastwarp_threads(args)
     from .fetch import check_outside_repo
     from .post import run_post
 
@@ -194,6 +203,7 @@ def _cmd_post(args: argparse.Namespace) -> int:
         ants_dir=args.ants_dir,
         retry_failed=args.retry_failed,
         ants_timeout_s=args.ants_timeout_h * 3600.0,
+        gzip=args.gzip,
     )
     bad = [r for r in rows if r["status"] != "ok"]
     for r in bad:
@@ -225,7 +235,12 @@ def _cmd_report(args: argparse.Namespace) -> int:
     from .fetch import check_outside_repo
     from .report import report
 
-    md = report(work=check_outside_repo(args.work), recipe_name=args.recipe, plot=not args.no_plot)
+    md = report(
+        work=check_outside_repo(args.work),
+        recipe_name=args.recipe,
+        plot=not args.no_plot,
+        iso_mm=args.iso_mm,
+    )
     print(md.read_text(encoding="utf-8"))
     print(f"written to {md}")
     return 0
@@ -265,7 +280,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run only this engine (repeatable; default both)",
     )
     p.add_argument("--iso-mm", type=float, default=1.0, help="registration grid (default 1.0)")
-    p.add_argument("--threads", type=int, default=8, help="ITK threads for ANTs (default 8)")
+    p.add_argument(
+        "--threads",
+        type=int,
+        help="cap the CPU threads of ANTs and of FastWarp's CPU work (default: all cores)",
+    )
     p.add_argument(
         "--ants-dir",
         type=Path,
@@ -286,7 +305,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run only this engine (repeatable; default both)",
     )
     p.add_argument("--iso-mm", type=float, default=1.0, help="registration grid (default 1.0)")
-    p.add_argument("--threads", type=int, default=8, help="ITK threads for ANTs (default 8)")
+    p.add_argument(
+        "--threads",
+        type=int,
+        help="cap the CPU threads of ANTs and of FastWarp's CPU work (default: all cores)",
+    )
     p.add_argument("--ants-dir", type=Path, help="folder with the ANTs programs to use")
     p.add_argument("--adapter", help="GPU adapter name substring")
     p.add_argument("--retry-failed", action="store_true")
@@ -299,7 +322,14 @@ def main(argv: list[str] | None = None) -> int:
     _add_selection(p)
     _add_work(p)
     p.add_argument("--iso-mm", type=float, default=1.0, help="registration grid (default 1.0)")
-    p.add_argument("--threads", type=int, default=8, help="CPU threads of both tools (default 8)")
+    p.add_argument(
+        "--threads",
+        type=int,
+        help="cap the CPU threads of ANTs and of FastWarp's CPU work (default: all cores)",
+    )
+    p.add_argument(
+        "--gzip", action="store_true", help="also time writing .nii.gz outputs (doubles the time)"
+    )
     p.add_argument("--ants-dir", type=Path, help="folder with the ANTs programs to use")
     p.add_argument("--retry-failed", action="store_true")
     p.add_argument("--ants-timeout-h", type=float, default=1.0)
@@ -317,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--recipe", default="cohort", choices=sorted(recipes.RECIPES))
     _add_work(p, data=False)
     p.add_argument("--no-plot", action="store_true")
+    p.add_argument("--iso-mm", type=float, help="only timings on this grid (default: all, grouped)")
     p.set_defaults(func=_cmd_report)
 
     args = parser.parse_args(argv)

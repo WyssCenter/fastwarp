@@ -90,7 +90,7 @@ def test_an_unknown_stage_transform_gives_no_split():
     t = timing.ants_registration_timings(log, n_stages=3)
     assert t["linear_s"] is None and t["syn_s"] is None and t["total_s"] == 1.276
     assert "transform" in t["note"]
-    assert timing.is_linear("BSplineSyN") is False and timing.is_linear("Euler3DTransform")
+    assert timing.is_linear("SyN") is False and timing.is_linear("Euler3DTransform")
 
 
 def test_one_stage_logs_count_as_linear():
@@ -132,6 +132,11 @@ def test_itk_threads_is_restored_and_child_env_carries_it(monkeypatch):
     with run.itk_threads(5):
         pass
     assert run.ITK_THREADS not in os.environ
+    monkeypatch.setenv(run.ITK_THREADS, "7")
+    with run.itk_threads(None):
+        assert run.ITK_THREADS not in os.environ
+    assert os.environ[run.ITK_THREADS] == "7"
+    monkeypatch.delenv(run.ITK_THREADS)
     env = run.child_env(4)
     assert env[run.ITK_THREADS] == "4" and "ANTS_RANDOM_SEED" not in env
     assert run.ITK_THREADS not in os.environ
@@ -276,6 +281,7 @@ def _work_pair(work: Path, dataset: str, pair: str, rec: dict, iso_mm: float = 1
             "recipe": rec,
             "iso_mm": iso_mm,
             "wall_s": wall,
+            "finished": "2026-11-13T00:00:00+00:00",
             "timings": timings,
             "environment": {"cpu": "test cpu", "gpu": {"name": "test gpu"}, "itk_threads": 8},
         }
@@ -295,17 +301,26 @@ def _work_pair(work: Path, dataset: str, pair: str, rec: dict, iso_mm: float = 1
     return folder
 
 
-def _stub_steps(seconds: float):
-    def fastwarp_steps(reference, moving, forward, inverse, tmp):
-        assert os.environ["RAYON_NUM_THREADS"] == "2" and tmp.is_dir()
-        (tmp / "fastwarp_forward_field.nii.gz").write_bytes(b"x")
-        steps = {s: {"seconds": seconds, "voxels": 1_000_000} for s in post.STEPS}
+def _stub_steps(seconds: float, threads: int | None = 2):
+    def fastwarp_steps(reference, moving, forward, inverse, tmp, formats):
+        assert os.environ.get("RAYON_NUM_THREADS") == (None if threads is None else str(threads))
+        assert os.environ.get(run.ITK_THREADS) == (None if threads is None else str(threads))
+        assert tmp.is_dir()
+        (tmp / "fastwarp_forward_field.nii").write_bytes(b"x")
+        entry = {"seconds": seconds, "voxels": 1_000_000, "bytes": 2_000_000}
+        steps = {s: {fmt: dict(entry) for fmt in formats} for s in post.STEPS}
         return {"steps": steps, "wall_s": 3 * seconds}
 
-    def ants_steps(reference, moving, forward, inverse, tmp, *, threads, ants_dir, timeout_s):
-        assert threads == 2 and forward.name == "reg_Composite.h5"
+    expected = threads
+
+    def ants_steps(
+        reference, moving, forward, inverse, tmp, *, threads, ants_dir, timeout_s, formats
+    ):
+        assert threads == expected
+        assert forward.name == "reg_Composite.h5"
         assert forward.parent.name == "fastwarp"
-        steps = {s: {"seconds": 10 * seconds} for s in post.STEPS}
+        entry = {"seconds": 10 * seconds, "bytes": 3_000_000}
+        steps = {s: {fmt: dict(entry) for fmt in formats} for s in post.STEPS}
         return {"steps": steps, "wall_s": 30 * seconds}
 
     def compare(tmp):
@@ -318,18 +333,32 @@ def _stub_steps(seconds: float):
     return {"fastwarp_steps": fastwarp_steps, "ants_steps": ants_steps, "compare": compare}
 
 
+def _environment_after_cap(**kw):
+    threads = kw["threads"]
+    assert os.environ.get("RAYON_NUM_THREADS") == (None if threads is None else str(threads))
+    return {
+        "cpu": "test cpu",
+        "threads": run.thread_setting(threads),
+        "itk_threads": threads,
+        "rayon_threads": os.environ.get("RAYON_NUM_THREADS"),
+    }
+
+
 def test_post_runs_each_pair_once_and_cleans_up(tmp_path, monkeypatch):
     rec = recipes.recipe("cohort")
     work = tmp_path / "work"
     folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
-    monkeypatch.setattr(post, "environment", lambda **kw: {"cpu": "test cpu"})
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
     monkeypatch.delenv("RAYON_NUM_THREADS", raising=False)
     kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 2, "threads": 2}
     rows = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
     assert [(r["status"], r["ran"]) for r in rows] == [("ok", True), (None, False)]
     record = json.loads((folder / "post.json").read_text())
-    assert record["source_engine"] == "fastwarp" and record["rayon_threads_requested"] == 2
+    assert record["source_engine"] == "fastwarp" and record["threads"] == 2
+    assert record["environment"]["rayon_threads"] == "2"
+    assert record["config"]["outputs"] == ["nii"]
     assert not (folder / "post_tmp").exists() and "RAYON_NUM_THREADS" not in os.environ
+    assert json.loads((work / "environment_post.json").read_text())["itk_threads"] == 2
     assert post.post_done(folder, post.config(rec, 1.0))
     again = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
     assert not any(r["ran"] for r in again)
@@ -340,6 +369,39 @@ def test_post_runs_each_pair_once_and_cleans_up(tmp_path, monkeypatch):
     assert p["post"]["mindboggle"]["to_run"] == 0
 
 
+def test_post_uses_all_cores_without_threads(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    work = tmp_path / "work"
+    folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
+    monkeypatch.setenv("RAYON_NUM_THREADS", "3")
+    monkeypatch.setenv(run.ITK_THREADS, "3")
+    kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 1}
+    rows = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5, threads=None))
+    assert [r["status"] for r in rows] == ["ok"]
+    record = json.loads((folder / "post.json").read_text())
+    assert record["threads"] == "all cores" and record["environment"]["threads"] == "all cores"
+    assert os.environ["RAYON_NUM_THREADS"] == "3" and os.environ[run.ITK_THREADS] == "3"
+    assert run.ITK_THREADS not in run.child_env(None)
+
+
+def test_post_with_gzip_times_both_formats(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    work = tmp_path / "work"
+    _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
+    kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 1, "threads": 2}
+    post.run_post(**kw, gzip=True, log=lambda s: None, **_stub_steps(0.5))
+    got = post.rows(work, "cohort", rec)
+    assert sorted({(r["step"], r["format"]) for r in got}) == sorted(
+        (s, f) for s in post.STEPS for f in ("nii", "nii.gz")
+    )
+    assert all(r["fastwarp_bytes"] == 2_000_000 and r["iso_mm"] == 1.0 for r in got)
+    other = recipes.recipe("cohort")
+    other["syn"]["cc_radius"] = 2
+    assert post.rows(work, "cohort", other) == []
+
+
 def test_a_failing_fastwarp_step_is_recorded(tmp_path, monkeypatch):
     rec = recipes.recipe("cohort")
     folder = _work_pair(tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
@@ -348,8 +410,6 @@ def test_a_failing_fastwarp_step_is_recorded(tmp_path, monkeypatch):
         raise RuntimeError("no luck")
 
     stubs = {**_stub_steps(1.0), "fastwarp_steps": broken}
-    from benchmarks.accuracy import datasets
-
     record = post.post_pair(
         datasets.get("mindboggle"),
         folder,
@@ -391,13 +451,15 @@ def _linear_records(work: Path, rec: dict) -> None:
             (folder / engine).mkdir(parents=True)
             (folder / engine / "run.json").write_text(json.dumps(record))
         comparison = {
+            "config": cfg,
+            "iso_mm": 1.0,
             "fits": {
                 "rigid": {
                     "fastwarp": {"landmark_mean_mm": 4.0},
                     "ants": {"landmark_mean_mm": 4.2},
                     "agreement": {"mean_mm": 0.3, "max_mm": 0.9},
                 }
-            }
+            },
         }
         (folder / "comparison.json").write_text(json.dumps(comparison))
 
@@ -412,7 +474,8 @@ def test_report_tabulates_the_timings_without_an_evaluation(tmp_path, monkeypatc
     data["timings"]["total_s"] = 363.0
     data["environment"]["cpu"] = "another cpu"
     run_json.write_text(json.dumps(data))
-    monkeypatch.setattr(post, "environment", lambda **kw: {"cpu": "test cpu"})
+    _work_pair(work, "mindboggle", "OASIS-TRT-20-3__OASIS-TRT-20-4", rec, iso_mm=2.0)
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
     post.run_post(
         data=tmp_path,
         work=work,
@@ -428,20 +491,41 @@ def test_report_tabulates_the_timings_without_an_evaluation(tmp_path, monkeypatc
     )
     md = report.report(work=work, recipe_name="cohort", plot=False).read_text(encoding="utf-8")
     assert "## Registration time" in md and "## Linear fits" in md and "## Post-processing" in md
-    assert "| mindboggle | fastwarp | 2 | 2.0 (2.0–2.0) | 6.0 (6.0–6.0) | 10.0 (10.0–10.0) |" in md
-    assert "| mindboggle | ants | 2 | 60.0 (60.0–60.0) | 300.0 (300.0–300.0) | 362.0" in md
-    ratio = "| mindboggle | ANTs / FastWarp, per pair |  | 30.0x (2 pairs) | 50.0x (2 pairs) |"
+    fw = "| mindboggle | 1 mm | 8 | fastwarp | 2 | 2.0 (2.0–2.0) | 6.0 (6.0–6.0) |"
+    assert fw in md
+    assert (
+        "| mindboggle | 1 mm | 8 | ants | 2 | 60.0 (60.0–60.0) | 300.0 (300.0–300.0) | 362.0" in md
+    )
+    ratio = "| mindboggle | 1 mm | 8 | ANTs / FastWarp |  | 30.0x (2 pairs) | 50.0x (2 pairs) |"
     assert ratio + " 36.2x (2 pairs) | 33.2x (2 pairs) |" in md
-    assert "| snsx | rigid | 2 | 1.50 (1.25–1.75) | 20.00 (20.00–20.00) | 13.3x | 4.00" in md
-    assert "| snsx | session preparation | 2 | 0.50 (0.50–0.50) | n/a | n/a |" in md
-    assert "| snsx | rigid multi-start | 2 | 4.00 (4.00–4.00) | n/a |" in md
-    assert "forward field (compose) | 1 | 1.0 M | 5.00 | 0.50 | 10.0x | max 0.010 mm |" in md
+    assert "| mindboggle | 2 mm | 8 | fastwarp | 1 |" in md
+    lin = "| snsx | 1 mm | not recorded | rigid | 2 / 2 | 1.50 (1.25–1.75) | 20.00 (20.00–20.00) |"
+    assert lin + " 15.0x (2 pairs) | 4.00 (4.00–4.00) | 4.20 (4.20–4.20) | 0.30 (0.30–0.30) |" in md
+    both = "| snsx | 1 mm | not recorded | rigid + affine (FastWarp with its preparation) | 2 / 2 |"
+    assert both + " 3.50 (3.25–3.75) | 50.50 (50.25–50.75) | 14.7x (2 pairs) |" in md
+    assert (
+        "| snsx | 1 mm | not recorded | session preparation | 2 / 0 | 0.50 (0.50–0.50) | n/a |"
+        in md
+    )
+    assert (
+        "| snsx | 1 mm | not recorded | rigid multi-start | 2 / 0 | 4.00 (4.00–4.00) | n/a |" in md
+    )
+    post_row = (
+        "| mindboggle | 1 mm | 2 | forward field (compose) | .nii | 1 | 1.0 M | 5.00 | 0.50 |"
+    )
+    assert post_row + " 10.0x (1 pair) | 2 / 3 | max 0.010 mm |" in md
     assert "relative RMS 1.00e-06" in md
     assert "## Machines" in md and "another cpu" in md
-    assert "ANTs 2.6.5" in md
+    assert "ANTs 2.6.5" in md and "driver name" in md
+    assert "- `run`: threads 8 (ANTs and FastWarp's CPU work)" in md
+    assert "- `post`: threads 2 (ANTs and FastWarp's CPU work)" in md
     out = work / "results" / "cohort"
     assert (out / "timings.csv").is_file() and (out / "linear.csv").is_file()
-    assert (out / "post.csv").read_text().startswith("dataset,pair,step")
+    assert (out / "post.csv").read_text().startswith("dataset,iso_mm,pair,step,format")
+    only = report.report(work=work, recipe_name="cohort", plot=False, iso_mm=2.0).read_text(
+        encoding="utf-8"
+    )
+    assert "| mindboggle | 2 mm | 8 | fastwarp | 1 |" in only and "| 1 mm |" not in only
 
 
 def test_report_refuses_an_empty_work_folder(tmp_path):
@@ -457,7 +541,9 @@ def test_measured_seconds_keep_the_steps_apart(tmp_path):
     assert secs["fastwarp"] == run.DEFAULT_SECONDS["fastwarp"]
     left = linear.todo_count(tmp_path, ["snsx"], "cohort", 3, False, 1.0)
     assert left["snsx"] == {"pairs": 3, "to_run": {"fastwarp": 1, "ants": 1}}
-    assert len(linear.rows(tmp_path, "cohort")) == 12
+    got = linear.rows(tmp_path, "cohort")
+    assert len(got) == 16 and {r["iso_mm"] for r in got} == {1.0}
+    assert [r["agreement_mean_mm"] for r in got if r["fit"] == "rigid"] == [None, 0.3, None, 0.3]
     other = recipes.recipe("cohort")
     other["rigid"]["gradient_step"] = 0.2
     recipes.RECIPES["other-linear"] = other
@@ -465,13 +551,19 @@ def test_measured_seconds_keep_the_steps_apart(tmp_path):
         assert linear.rows(tmp_path, "other-linear") == []
     finally:
         del recipes.RECIPES["other-linear"]
+    comparison = tmp_path / "snsx" / "linear" / SNSX_PAIRS[0] / "comparison.json"
+    stale = json.loads(comparison.read_text())
+    stale["iso_mm"] = 2.0
+    comparison.write_text(json.dumps(stale))
+    got = linear.rows(tmp_path, "cohort")
+    assert [r["landmark_mean_mm"] for r in got if r["fit"] == "rigid"] == [None, None, 4.2, 4.0]
 
 
 def test_post_redoes_a_pair_whose_registration_changed(tmp_path, monkeypatch):
     rec = recipes.recipe("cohort")
     work = tmp_path / "work"
     folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
-    monkeypatch.setattr(post, "environment", lambda **kw: {})
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
     kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 1, "threads": 2}
     post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
     cfg = post.config(rec, 1.0)
@@ -484,6 +576,29 @@ def test_post_redoes_a_pair_whose_registration_changed(tmp_path, monkeypatch):
     rows = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
     assert [(r["status"], r["ran"]) for r in rows] == [("ok", True)]
     assert json.loads((folder / "post.json").read_text())["source_finished"] == data["finished"]
+
+
+def test_a_failed_post_is_retried_after_its_registration_changed(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    work = tmp_path / "work"
+    folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
+    kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 1, "threads": 2}
+
+    def broken(tmp):
+        raise ValueError("shapes differ")
+
+    stubs = {**_stub_steps(0.5), "compare": broken}
+    rows = post.run_post(**kw, log=lambda s: None, **stubs)
+    assert [(r["status"], r["ran"]) for r in rows] == [("failed", True)]
+    rows = post.run_post(**kw, log=lambda s: None, **stubs)
+    assert [(r["status"], r["ran"]) for r in rows] == [("failed", False)]
+    run_json = folder / "fastwarp" / "run.json"
+    data = json.loads(run_json.read_text())
+    data["finished"] = "2026-11-14T00:00:00+00:00"
+    run_json.write_text(json.dumps(data))
+    rows = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
+    assert [(r["status"], r["ran"]) for r in rows] == [("ok", True)]
 
 
 def test_a_failed_comparison_fails_the_post_record(tmp_path):
@@ -511,7 +626,7 @@ def test_ants_steps_fall_back_to_the_wall_time(tmp_path, monkeypatch):
     def fake(cmd, log, env, timeout_s):
         assert env[run.ITK_THREADS] == "3"
         out = cmd[cmd.index("--output") + 1].strip("[]").removesuffix(",1")
-        Path(out).write_bytes(b"x")
+        Path(out).write_bytes(b"xyz")
         marker = "" if "inverse" in out else "FASTWARP_BENCH_SECONDS 0.25\n"
         Path(log).write_text(marker)
         return 0, 2.0
@@ -520,12 +635,14 @@ def test_ants_steps_fall_back_to_the_wall_time(tmp_path, monkeypatch):
     f = tmp_path / "x"
     out = post.run_ants_steps(f, f, f, f, tmp_path, threads=3, ants_dir=None, timeout_s=5)
     steps = out["steps"]
-    assert "error" not in out and steps["forward_field"]["seconds"] == 0.25
-    assert steps["inverse_field"]["seconds"] == 2.0 and "timing_note" in steps["inverse_field"]
+    assert "error" not in out and steps["forward_field"]["nii"]["seconds"] == 0.25
+    inverse = steps["inverse_field"]["nii"]
+    assert inverse["seconds"] == 2.0 and "timing_note" in inverse and inverse["bytes"] == 3
+    assert (tmp_path / "ants_lanczos_warp.nii").is_file()
 
 
 def _stub_linear(monkeypatch, calls):
-    monkeypatch.setattr(linear, "environment", lambda **kw: {"cpu": "test cpu"})
+    monkeypatch.setattr(linear, "environment", _environment_after_cap)
 
     def prep(ds, sid, data, work, iso_mm):
         assert os.environ[run.ITK_THREADS] == "2"
@@ -541,27 +658,59 @@ def _stub_linear(monkeypatch, calls):
 
         return fit
 
+    def compare(ds, folder, prep, *, data, cfg, iso_mm):
+        calls.append("compare")
+        return {"fits": {}, "config": cfg, "iso_mm": iso_mm}
+
     monkeypatch.setattr(linear, "run_fastwarp_linear", engine("fastwarp"))
     monkeypatch.setattr(linear, "run_ants_linear", engine("ants"))
-    monkeypatch.setattr(linear, "compare", lambda ds, folder, prep, data: {"fits": {}})
+    monkeypatch.setattr(linear, "compare", compare)
+
+
+def _snsx_data(tmp_path: Path) -> tuple[Path, Path]:
+    data, work = tmp_path / "data", tmp_path / "work"
+    (data / "snsx").mkdir(parents=True)
+    (data / "snsx" / ".fetched.json").write_text("{}")
+    return data, work
 
 
 def test_linear_runs_each_pair_once(tmp_path, monkeypatch):
     calls: list[str] = []
     _stub_linear(monkeypatch, calls)
-    data, work = tmp_path / "data", tmp_path / "work"
-    (data / "snsx").mkdir(parents=True)
-    (data / "snsx" / ".fetched.json").write_text("{}")
+    data, work = _snsx_data(tmp_path)
     monkeypatch.delenv(run.ITK_THREADS, raising=False)
+    monkeypatch.delenv("RAYON_NUM_THREADS", raising=False)
     kw = {"data": data, "work": work, "keys": ["snsx"], "pairs": 2, "threads": 2}
     rows = linear.run_linear(**kw, log=lambda s: None)
-    assert calls == ["fastwarp", "ants", "fastwarp", "ants"]
+    assert calls == ["fastwarp", "ants", "compare"] * 2
     assert all(r["status"] == "ok" and r["ran"] for r in rows)
-    assert run.ITK_THREADS not in os.environ
+    assert run.ITK_THREADS not in os.environ and "RAYON_NUM_THREADS" not in os.environ
     for pair in SNSX_PAIRS[:2]:
         assert (work / "snsx" / "linear" / pair / "comparison.json").is_file()
     again = linear.run_linear(**kw, log=lambda s: None)
-    assert len(calls) == 4 and not any(r["ran"] for r in again)
+    assert len(calls) == 6 and not any(r["ran"] for r in again)
+    again = linear.run_linear(**{**kw, "iso_mm": 2.0}, log=lambda s: None)
+    assert calls[6:] == ["fastwarp", "ants", "compare"] * 2
+
+
+def test_a_failed_linear_comparison_is_a_failed_row(tmp_path, monkeypatch):
+    calls: list[str] = []
+    _stub_linear(monkeypatch, calls)
+
+    def broken(ds, folder, prep, *, data, cfg, iso_mm):
+        raise ValueError("labels differ")
+
+    monkeypatch.setattr(linear, "compare", broken)
+    data, work = _snsx_data(tmp_path)
+    kw = {"data": data, "work": work, "keys": ["snsx"], "pairs": 1, "threads": 2}
+    rows = linear.run_linear(**kw, log=lambda s: None)
+    assert [(r["engine"], r["status"]) for r in rows] == [
+        ("fastwarp", "ok"),
+        ("ants", "ok"),
+        ("comparison", "failed"),
+    ]
+    saved = json.loads((work / "snsx" / "linear" / SNSX_PAIRS[0] / "comparison.json").read_text())
+    assert "labels differ" in saved["error"]
 
 
 def test_linear_records_a_failed_preparation(tmp_path, monkeypatch):
@@ -572,9 +721,7 @@ def test_linear_records_a_failed_preparation(tmp_path, monkeypatch):
         raise OSError("unreadable")
 
     monkeypatch.setattr(linear, "prepare_fixed", broken)
-    data, work = tmp_path / "data", tmp_path / "work"
-    (data / "snsx").mkdir(parents=True)
-    (data / "snsx" / ".fetched.json").write_text("{}")
+    data, work = _snsx_data(tmp_path)
     kw = {"data": data, "work": work, "keys": ["snsx"], "pairs": 1, "threads": 2}
     rows = linear.run_linear(**kw, log=lambda s: None)
     assert [r["status"] for r in rows] == ["failed", "failed"] and calls == []

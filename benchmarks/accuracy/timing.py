@@ -27,8 +27,8 @@ _RUNNING = re.compile(r"^\s*\*\*\* Running (\S+) registration")
 _STAGE = re.compile(r"^\s*Elapsed time \(stage (\d+)\):\s*(\S+)\s*$")
 _TOTAL = re.compile(r"^\s*Total elapsed time:\s*(\S+)\s*$")
 
-#: Names in ``*** Running <name> registration`` of stages that are not linear.
-_DEFORMABLE = ("SyN", "Displacement", "Velocity", "BSpline", "Exponential")
+#: The part of the name in ``*** Running <name> registration`` that marks a SyN stage.
+_DEFORMABLE = ("SyN",)
 #: Names in ``*** Running <name> registration`` of the linear stages.
 _LINEAR = (
     "Euler3DTransform",
@@ -189,7 +189,7 @@ def fingerprint(env: dict[str, Any] | None) -> dict[str, Any]:
         "gpu_driver": gpu.get("driver"),
         "gpu_backend": gpu.get("backend"),
         "cpu": env.get("cpu"),
-        "itk_threads": env.get("itk_threads"),
+        "threads": env.get("threads", env.get("itk_threads")),
         "fastwarp": env.get("fastwarp"),
         "ants": env.get("ants_version") or env.get("ants_program"),
     }
@@ -206,12 +206,17 @@ def read_records(paths: Iterable[Path]) -> list[tuple[Path, dict[str, Any]]]:
     return out
 
 
-def registration_rows(work: Path, recipe_name: str) -> list[dict[str, Any]]:
-    """One row per finished registration of ``recipe_name`` in ``work``: dataset, pair,
-    engine, ``linear_s``, ``syn_s``, ``total_s``, ``wall_s`` and the machine fingerprint."""
+def registration_rows(
+    work: Path, recipe_name: str, recipe: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """One row per finished registration in ``work/*/<recipe_name>/`` (made with ``recipe``,
+    if given): dataset, grid, pair, engine, ``linear_s``, ``syn_s``, ``total_s``, ``wall_s``
+    and the machine fingerprint."""
     rows = []
     for path, rec in read_records(work.glob(f"*/{recipe_name}/*/*/run.json")):
         if rec.get("status") != "ok" or rec.get("kind", "registration") != "registration":
+            continue
+        if recipe is not None and rec.get("recipe") != recipe:
             continue
         engine = rec.get("engine")
         if engine not in ("fastwarp", "ants"):
@@ -220,6 +225,7 @@ def registration_rows(work: Path, recipe_name: str) -> list[dict[str, Any]]:
         rows.append(
             {
                 "dataset": path.parents[3].name,
+                "iso_mm": rec.get("iso_mm"),
                 "pair": path.parents[1].name,
                 "engine": engine,
                 "read_s": rec.get("read_s"),

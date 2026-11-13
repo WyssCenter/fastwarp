@@ -14,14 +14,17 @@ reader cannot repeat.
 ## What is measured
 
 All times are wall-clock seconds. ANTs runs in a child process, one at a time, never at the same
-time as FastWarp, with `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` set to `--threads` (default 8).
+time as FastWarp. Both use all cores unless `--threads N` caps both alike (ANTs through
+`ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`, FastWarp's CPU work through `RAYON_NUM_THREADS`; the GPU
+work is not affected). Every record states the setting and the core counts; timings with
+different settings are not comparable, and the report keeps them apart.
 [Timings](benchmarks.md#timings) on the benchmark page defines every field exactly.
 
 | Measurement | Command | FastWarp | ANTs | Data |
 | --- | --- | --- | --- | --- |
 | Registration: Linear, SyN, total | `run` | `register_syn`'s `linear_s`, `syn_s`, `total_s`, and the call's wall time | `antsRegistration` with the same recipe: the stage times and `Total elapsed time` of its `--verbose 1` log, and the process wall time | every pair of the benchmark (default 50) |
-| Linear sessions | `linear` | one `linear_session` per pair: preparation, rigid fit, affine fit from it, a rigid multi-start | `antsRegistration` with the same rigid stage, then the same affine stage from its result: each stage's time | `snsx` (subjects onto the MNI 2009c template; default 20 pairs) |
-| Post-processing | `post` | `compose_field` (forward and inverse displacement field), `apply_transforms` (Lanczos re-warp), each with reading and writing | `antsApplyTransforms --float 1` doing the same, same threads | the pairs `run` registered |
+| Linear sessions | `linear` | one `linear_session` per pair: preparation (including opening the GPU), rigid fit, affine fit from it, a rigid multi-start; and preparation + rigid + affine together | `antsRegistration` with the same rigid stage, then the same affine stage from its result: each stage's time, and both together | `snsx` (subjects onto the MNI 2009c template; default 20 pairs) |
+| Post-processing | `post` | `compose_field` (forward and inverse displacement field), `apply_transforms` (Lanczos re-warp), each with reading and writing an uncompressed `.nii` (with `--gzip` also `.nii.gz`) | `antsApplyTransforms --float 1` doing the same | the pairs `run` registered |
 
 Each step also records an accuracy figure: the registrations are scored against manual labels
 and landmarks (`evaluate`); the linear fits by their landmark error and their distance from
@@ -41,22 +44,23 @@ group, FastWarp from the checkout or from PyPI), then, with folders outside the 
 ```bash
 B="uv run --no-sync python -m benchmarks.accuracy"
 $B fetch --data ~/fastwarp-bench/data
-$B run --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work --threads 8
-$B linear --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work --threads 8
-$B post --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work --threads 8
+$B run --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work
+$B linear --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work
+$B post --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work
 $B evaluate --data ~/fastwarp-bench/data --work ~/fastwarp-bench/work
 $B report --work ~/fastwarp-bench/work
 ```
 
 `--ants-dir DIR` runs the ANTs programs in `DIR` (for example a release of ANTs 2.6.5) instead of
 the ones bundled with ANTsPy; `--adapter NAME` picks a GPU. Use a machine that does nothing
-else during the run, and set `--threads` to the physical cores ANTs may use. `plan` estimates
-the time left; every step resumes where it stopped.
+else during the run; `--threads N` caps both engines' CPU threads if the machine is needed
+meanwhile, and its timings are then reported separately. `plan` estimates the time left; every
+step resumes where it stopped.
 
 ## Where the results are
 
 - `<work>/results/cohort/summary.md`: the tables to paste here, with the machine and software
-  (CPU, GPU and driver, operating system, fastwarp and ANTs versions, thread settings, the
+  (CPU, GPU and its driver name, operating system, fastwarp and ANTs versions, thread settings of each command, the
   benchmark's git commit);
 - `timings.csv`, `linear.csv`, `post.csv` beside it: one row per registration, fit or step;
 - the records they come from: `<work>/<dataset>/cohort/<pair>/{fastwarp,ants}/run.json`,

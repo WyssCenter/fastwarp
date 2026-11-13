@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from . import linear, post, timing
+from . import linear, post, recipes, timing
 from .stats import paired_summary
 
 #: Per-pair metrics compared between the engines, if present, and which way is better.
@@ -195,10 +195,11 @@ def _plot(pairs: list[dict[str, str]], path: Path) -> bool:
 
 
 #: Order of the linear fits and post-processing steps in the tables.
-LINEAR_FITS = ("prepare", "rigid", "affine", "multistart")
+LINEAR_FITS = ("prepare", "rigid_affine", "rigid", "affine", "multistart")
 POST_STEPS = ("forward_field", "inverse_field", "lanczos_warp")
 _FIT_NAMES = {
     "prepare": "session preparation",
+    "rigid_affine": "rigid + affine (FastWarp with its preparation)",
     "rigid": "rigid",
     "affine": "affine (from the rigid fit)",
     "multistart": "rigid multi-start",
@@ -208,10 +209,16 @@ _STEP_NAMES = {
     "inverse_field": "inverse field (compose)",
     "lanczos_warp": "Lanczos re-warp",
 }
+#: The commands whose environment files hold their thread settings.
+COMMANDS = (
+    ("run", "environment.json"),
+    ("linear", "environment_linear.json"),
+    ("post", "environment_post.json"),
+)
 
 
 def _summaries(rows: list[dict[str, Any]], keys: tuple[str, ...], fields: tuple[str, ...]):
-    return {tuple(r[k] for k in keys): r for r in timing.summary_rows(rows, keys, fields)}
+    return {tuple(r.get(k) for k in keys): r for r in timing.summary_rows(rows, keys, fields)}
 
 
 def _cell(stats: dict[str, Any], rows: int, digits: int = 1) -> str:
@@ -221,112 +228,170 @@ def _cell(stats: dict[str, Any], rows: int, digits: int = 1) -> str:
     return text
 
 
-def paired_ratios(rows: list[dict[str, Any]], dataset: str, field: str) -> dict[str, Any]:
-    """:func:`timing.describe` of ANTs / FastWarp per pair of ``dataset``, over the pairs where
-    both engines have ``field``."""
+def _grid(iso_mm: Any) -> str:
+    v = _float(iso_mm)
+    return "n/a" if math.isnan(v) else f"{v:g} mm"
+
+
+def _groups(s: dict[tuple, Any]) -> list[tuple[Any, Any, Any]]:
+    return sorted({k[:3] for k in s}, key=lambda g: (str(g[0]), _float(g[1]), str(g[2])))
+
+
+def _same(r: dict[str, Any], dataset: Any, iso: Any, threads: Any) -> bool:
+    return r["dataset"] == dataset and r.get("iso_mm") == iso and r.get("threads") == threads
+
+
+def engine_ratios(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    """:func:`timing.describe` of ANTs / FastWarp of ``field`` per pair, over the pairs of
+    ``rows`` (one row per pair and engine) where both engines have it."""
     by: dict[str, dict[str, float]] = defaultdict(dict)
     for r in rows:
-        if r["dataset"] == dataset:
-            by[r["pair"]][r["engine"]] = _float(r.get(field))
+        by[r["pair"]][r["engine"]] = _float(r.get(field))
     return timing.describe(
-        timing.ratio(v["ants"], v["fastwarp"]) for v in by.values() if len(v) == 2
+        timing.ratio(v["ants"], v["fastwarp"])
+        for v in by.values()
+        if "ants" in v and "fastwarp" in v
     )
 
 
+def _ratio_cell(d: dict[str, Any]) -> str:
+    if not d["n"]:
+        return "n/a"
+    return f"{d['median']:.1f}x ({d['n']} pair{'' if d['n'] == 1 else 's'})"
+
+
 def registration_timing_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per dataset and engine: registrations and ``median (q1–q3)`` of the linear, SyN, engine
-    total and wall seconds (``[n=k]`` when only ``k`` registrations have the value), and the
-    median over pairs of ANTs / FastWarp, taken on the pairs where both engines have it."""
+    """Per dataset, grid and engine: registrations and ``median (q1–q3)`` of the linear, SyN,
+    engine total and wall seconds (``[n=k]`` when only ``k`` registrations have the value), and
+    the median over pairs of ANTs / FastWarp, on the pairs where both engines have it."""
     fields = ("linear_s", "syn_s", "total_s", "wall_s")
-    s = _summaries(rows, ("dataset", "engine"), fields)
+    s = _summaries(rows, ("dataset", "iso_mm", "threads", "engine"), fields)
     out = []
-    for dataset in sorted({k[0] for k in s}):
+    for dataset, iso, threads in _groups(s):
         for engine in ("fastwarp", "ants"):
-            r = s.get((dataset, engine))
+            r = s.get((dataset, iso, threads, engine))
             if r is None:
                 continue
-            row: dict[str, Any] = {"dataset": dataset, "engine": engine, "n": r["rows"]}
+            row: dict[str, Any] = {
+                "dataset": dataset,
+                "grid": _grid(iso),
+                "threads": _value(threads),
+                "engine": engine,
+                "n": r["rows"],
+            }
             for f in fields:
                 row[f] = _cell(timing.stats_of(r, f), r["rows"])
             out.append(row)
-        if s.get((dataset, "fastwarp")) and s.get((dataset, "ants")):
-            row = {"dataset": dataset, "engine": "ANTs / FastWarp, per pair", "n": ""}
+        if s.get((dataset, iso, threads, "fastwarp")) and s.get((dataset, iso, threads, "ants")):
+            sel = [r for r in rows if _same(r, dataset, iso, threads)]
+            row = {
+                "dataset": dataset,
+                "grid": _grid(iso),
+                "threads": _value(threads),
+                "engine": "ANTs / FastWarp",
+                "n": "",
+            }
             for f in fields:
-                d = paired_ratios(rows, dataset, f)
-                row[f] = "n/a" if not d["n"] else f"{d['median']:.1f}x ({d['n']} pairs)"
+                row[f] = _ratio_cell(engine_ratios(sel, f))
             out.append(row)
     return out
 
 
-def _ratio_text(a: Any, b: Any) -> str:
-    r = timing.ratio(_float(a), _float(b))
-    return "n/a" if math.isnan(r) else f"{r:.1f}x"
-
-
 def linear_timing_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per dataset and fit: FastWarp and ANTs seconds (``median (q1–q3)``), their ratio, each
-    engine's median landmark error and the median distance between the engines' fits."""
+    """Per dataset, grid and fit: the pairs of each engine, FastWarp and ANTs seconds
+    (``median (q1–q3)``), the median over pairs of ANTs / FastWarp (pairs both engines have),
+    each engine's median landmark error and the median distance between the engines' fits."""
     fields = ("seconds", "landmark_mean_mm", "agreement_mean_mm", "agreement_max_mm")
-    s = _summaries(rows, ("dataset", "fit", "engine"), fields)
+    s = _summaries(rows, ("dataset", "iso_mm", "threads", "fit", "engine"), fields)
     out = []
-    for dataset in sorted({k[0] for k in s}):
+    for dataset, iso, threads in _groups(s):
         for fit in LINEAR_FITS:
-            fw, an = s.get((dataset, fit, "fastwarp")), s.get((dataset, fit, "ants"))
+            fw = s.get((dataset, iso, threads, fit, "fastwarp"))
+            an = s.get((dataset, iso, threads, fit, "ants"))
             if fw is None and an is None:
                 continue
 
-            def cell(r: dict[str, Any] | None, f: str, digits: int = 1) -> str:
-                return "n/a" if r is None else timing.spread(timing.stats_of(r, f), digits)
+            def cell(r: dict[str, Any] | None, f: str) -> str:
+                return "n/a" if r is None else _cell(timing.stats_of(r, f), r["rows"], 2)
 
+            sel = [r for r in rows if _same(r, dataset, iso, threads) and r["fit"] == fit]
             out.append(
                 {
                     "dataset": dataset,
-                    "fit": _FIT_NAMES[fit],
-                    "n": max(r["rows"] for r in (fw, an) if r is not None),
-                    "fastwarp_s": cell(fw, "seconds", 2),
-                    "ants_s": cell(an, "seconds", 2),
-                    "ratio": _ratio_text(
-                        an and an.get("seconds_median"), fw and fw.get("seconds_median")
-                    ),
-                    "landmark_fastwarp": cell(fw, "landmark_mean_mm", 2),
-                    "landmark_ants": cell(an, "landmark_mean_mm", 2),
-                    "agreement_mean": cell(fw, "agreement_mean_mm", 2),
-                    "agreement_max": cell(fw, "agreement_max_mm", 2),
+                    "grid": _grid(iso),
+                    "threads": _value(threads),
+                    "fit": _FIT_NAMES.get(fit, fit),
+                    "n": f"{fw['rows'] if fw else 0} / {an['rows'] if an else 0}",
+                    "fastwarp_s": cell(fw, "seconds"),
+                    "ants_s": cell(an, "seconds"),
+                    "ratio": _ratio_cell(engine_ratios(sel, "seconds")),
+                    "landmark_fastwarp": cell(fw, "landmark_mean_mm"),
+                    "landmark_ants": cell(an, "landmark_mean_mm"),
+                    "agreement_mean": cell(fw, "agreement_mean_mm"),
+                    "agreement_max": cell(fw, "agreement_max_mm"),
                 }
             )
     return out
 
 
 def post_timing_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per dataset and step: voxels, ANTs and FastWarp seconds (``median (q1–q3)``), their
-    ratio and the median difference between the two outputs."""
-    fields = ("voxels", "fastwarp_s", "ants_s", "field_diff_max_mm", "image_diff_rms_relative")
-    s = _summaries(rows, ("dataset", "step"), fields)
+    """Per dataset, grid, step and output format: voxels, ANTs and FastWarp seconds
+    (``median (q1–q3)``), the median over pairs of ANTs / FastWarp, the median output sizes and
+    the median difference between the two (uncompressed) outputs."""
+    fields = (
+        "voxels",
+        "fastwarp_s",
+        "ants_s",
+        "fastwarp_bytes",
+        "ants_bytes",
+        "field_diff_max_mm",
+        "image_diff_rms_relative",
+    )
+    s = _summaries(rows, ("dataset", "iso_mm", "threads", "step", "format"), fields)
+    formats = sorted({k[4] for k in s}, key=lambda f: post.FORMATS.index(f))
     out = []
-    for dataset in sorted({k[0] for k in s}):
+    for dataset, iso, threads in _groups(s):
         for step in POST_STEPS:
-            r = s.get((dataset, step))
-            if r is None:
-                continue
-            if step == "lanczos_warp":
-                diff = _fmt(_float(r.get("image_diff_rms_relative_median")))
-                diff = f"relative RMS {diff}"
-            else:
-                diff = f"max {_fmt(_float(r.get('field_diff_max_mm_median')))} mm"
-            voxels = _float(r.get("voxels_median"))
-            out.append(
-                {
-                    "dataset": dataset,
-                    "step": _STEP_NAMES[step],
-                    "n": r["rows"],
-                    "voxels": "n/a" if math.isnan(voxels) else f"{voxels / 1e6:.1f} M",
-                    "ants_s": timing.spread(timing.stats_of(r, "ants_s"), 2),
-                    "fastwarp_s": timing.spread(timing.stats_of(r, "fastwarp_s"), 2),
-                    "ratio": _ratio_text(r.get("ants_s_median"), r.get("fastwarp_s_median")),
-                    "difference": diff,
-                }
-            )
+            for fmt in formats:
+                r = s.get((dataset, iso, threads, step, fmt))
+                if r is None:
+                    continue
+                if step == "lanczos_warp":
+                    diff = _fmt(_float(r.get("image_diff_rms_relative_median")))
+                    diff = f"relative RMS {diff}"
+                else:
+                    diff = f"max {_fmt(_float(r.get('field_diff_max_mm_median')))} mm"
+                sel = [
+                    x
+                    for x in rows
+                    if _same(x, dataset, iso, threads) and x["step"] == step and x["format"] == fmt
+                ]
+                ratios = timing.describe(
+                    timing.ratio(_float(x.get("ants_s")), _float(x.get("fastwarp_s"))) for x in sel
+                )
+                voxels = _float(r.get("voxels_median"))
+                sizes = [_float(r.get(f"{e}_bytes_median")) / 1e6 for e in ("fastwarp", "ants")]
+                out.append(
+                    {
+                        "dataset": dataset,
+                        "grid": _grid(iso),
+                        "threads": _value(threads),
+                        "step": _STEP_NAMES[step],
+                        "format": f".{fmt}",
+                        "n": r["rows"],
+                        "voxels": "n/a" if math.isnan(voxels) else f"{voxels / 1e6:.1f} M",
+                        "ants_s": _cell(timing.stats_of(r, "ants_s"), r["rows"], 2),
+                        "fastwarp_s": _cell(timing.stats_of(r, "fastwarp_s"), r["rows"], 2),
+                        "ratio": _ratio_cell(ratios),
+                        "size": " / ".join("n/a" if math.isnan(v) else f"{v:.0f}" for v in sizes),
+                        "difference": diff,
+                    }
+                )
     return out
+
+
+def _value(v: Any) -> str:
+    return "not recorded" if v is None or v == "" else str(v)
 
 
 def machine_lines(env: dict[str, Any]) -> list[str]:
@@ -334,19 +399,29 @@ def machine_lines(env: dict[str, Any]) -> list[str]:
     gpu = env.get("gpu") or {}
     fw_env = env.get("fastwarp_env") or {}
     return [
-        f"- CPU: {env.get('cpu')}, {env.get('cpu_count')} logical cores; ITK threads (ANTs) "
-        f"{env.get('itk_threads')}; RAYON_NUM_THREADS {env.get('rayon_threads') or 'not set'}",
-        f"- GPU: {gpu.get('name', gpu.get('error'))}, {gpu.get('device_type')}, "
-        f"{gpu.get('backend')}, driver {gpu.get('driver')}",
-        f"- OS: {env.get('platform')}; Python {env.get('python')}, NumPy {env.get('numpy')}, "
-        f"SciPy {env.get('scipy')}",
-        f"- fastwarp {env.get('fastwarp')} (engine {env.get('fastwarp_engine_source')}); "
-        f"ANTs {env.get('ants_version')} ({env.get('ants_program')}); ANTsPy "
-        f"{env.get('antspyx')}"
+        f"- CPU: {_value(env.get('cpu'))}, {_value(env.get('cpu_count'))} logical cores, "
+        f"{_value(env.get('cpu_count_physical'))} physical",
+        f"- GPU: {_value(gpu.get('name', gpu.get('error')))}, {_value(gpu.get('device_type'))}, "
+        f"{_value(gpu.get('backend'))}, driver name {_value(gpu.get('driver'))}",
+        f"- OS: {_value(env.get('platform'))}; Python {_value(env.get('python'))}, NumPy "
+        f"{_value(env.get('numpy'))}, SciPy {_value(env.get('scipy'))}",
+        f"- fastwarp {_value(env.get('fastwarp'))} (engine "
+        f"{_value(env.get('fastwarp_engine_source'))}); ANTs {_value(env.get('ants_version'))} "
+        f"({_value(env.get('ants_program'))}); ANTsPy {_value(env.get('antspyx'))}"
         + ("; " + ", ".join(f"{k}={v}" for k, v in sorted(fw_env.items())) if fw_env else ""),
-        f"- benchmark commit {env.get('benchmark_commit')}"
+        f"- benchmark commit {_value(env.get('benchmark_commit'))}"
         + (" with local changes" if env.get("benchmark_tree_dirty") else "")
-        + f", recorded {env.get('recorded')}",
+        + f", recorded {_value(env.get('recorded'))}",
+    ]
+
+
+def thread_lines(envs: dict[str, dict[str, Any]]) -> list[str]:
+    """The thread setting each command ran with (from its environment file) and the cores."""
+    return [
+        f"- `{command}`: threads {_value(env.get('threads', env.get('itk_threads')))} "
+        f"(ANTs and FastWarp's CPU work); {_value(env.get('cpu_count'))} logical, "
+        f"{_value(env.get('cpu_count_physical'))} physical cores"
+        for command, env in envs.items()
     ]
 
 
@@ -362,20 +437,23 @@ def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str
             "",
             "## Registration time",
             "",
-            "Seconds per registration, median (quartiles). Linear: the rigid and affine stages; "
-            "SyN: the SyN stage; total: the engine's own total (FastWarp: GPU set-up, "
-            "resampling, both stages and writing the transforms; ANTs: `Total elapsed time`, "
-            "the stages and their set-up without reading the images or writing the "
-            "transforms), so the totals do not cover the same work; wall: FastWarp's "
-            "`register_syn` call (images already read), ANTs' whole process (start, reading, "
-            "writing; with ANTsPy also starting Python). ANTs' split comes from its "
-            "`--verbose 1` log. The ratio row is the median over pairs of ANTs / FastWarp, on "
-            "the pairs where both engines have the value.",
+            "Seconds per registration, median (quartiles); `[n=k]`: only k registrations have "
+            "the value. Linear: the rigid and affine stages; SyN: the SyN stage; total: the "
+            "engine's own total (FastWarp: opening the GPU, resampling, preprocessing, both "
+            "stages, warping the moving image onto the grid and writing the transforms; ANTs: "
+            "`Total elapsed time`, the stages and their set-up without reading the images or "
+            "writing the transforms), so the totals do not cover the same work; wall: "
+            "FastWarp's `register_syn` call (images already read), ANTs' whole process (start, "
+            "reading, writing; with ANTsPy also starting Python). ANTs' split comes from its "
+            "`--verbose 1` log. ANTs / FastWarp: the median over pairs of the ratio, on the "
+            "pairs where both engines have the value.",
             "",
             _md_table(
                 registration_timing_table(reg),
                 [
                     ("dataset", "Dataset"),
+                    ("grid", "Grid"),
+                    ("threads", "Threads"),
                     ("engine", "Engine"),
                     ("n", "Registrations"),
                     ("linear_s", "Linear (s)"),
@@ -390,19 +468,23 @@ def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str
             "",
             "## Linear fits",
             "",
-            "Seconds per fit, median (quartiles). FastWarp: one `linear_session` per pair "
-            "(preparation once, its own row; the fits exclude it), rigid from the centres of "
-            "mass, affine from the rigid result, then a rigid multi-start; ANTs: one "
+            "Seconds per fit, median (quartiles). FastWarp: one `linear_session` per pair; its "
+            "preparation (opening the GPU, converting, winsorizing and uploading the images, "
+            "the centre-of-mass start) is its own row and not part of the fits; rigid from the "
+            "centres of mass, affine from the rigid result, then a rigid multi-start. ANTs: one "
             "`antsRegistration` stage time each, which includes the stage's own image "
-            "preparation (no multi-start). ANTs' threads are capped, FastWarp's CPU work is "
-            "not. Landmark error: mean over the landmarks of a pair, mm; "
-            "FastWarp - ANTs: mean and max distance between the two fits over the fixed brain "
-            "mask, mm (the multi-start against ANTs' rigid fit).",
+            "preparation; no multi-start. Rigid + affine compares FastWarp's preparation and "
+            "both fits with ANTs' two stages. Pairs: FastWarp / ANTs. ANTs / FastWarp: the "
+            "median over pairs of the ratio. Landmark error: mean over the landmarks of a pair, "
+            "mm; FastWarp - ANTs: mean and max distance between the two fits over the fixed "
+            "brain mask, mm (the multi-start against ANTs' rigid fit).",
             "",
             _md_table(
                 linear_timing_table(lin),
                 [
                     ("dataset", "Dataset"),
+                    ("grid", "Grid"),
+                    ("threads", "Threads"),
                     ("fit", "Fit"),
                     ("n", "Pairs"),
                     ("fastwarp_s", "FastWarp (s)"),
@@ -421,20 +503,27 @@ def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str
             "## Post-processing",
             "",
             "Seconds per step, median (quartiles), each including reading the inputs and "
-            "writing the `.nii.gz` output; ANTs: `antsApplyTransforms --float 1`. Difference: "
-            "median over pairs of the max field difference (mm) or of the relative RMS "
-            "difference of the re-warped images.",
+            "writing the output; ANTs: `antsApplyTransforms --float 1`. `.nii`: uncompressed "
+            "output; `.nii.gz`: FastWarp's fields gzip level 1 in parallel, ITK (ANTs' outputs "
+            "and FastWarp's re-warped image) its default level on one thread. Size: median "
+            "output MB, FastWarp / ANTs. ANTs / FastWarp: the median over pairs of the ratio. "
+            "Difference (of the `.nii` outputs): median over pairs of the max field difference "
+            "(mm) or of the relative RMS difference of the re-warped images.",
             "",
             _md_table(
                 post_timing_table(pst),
                 [
                     ("dataset", "Dataset"),
+                    ("grid", "Grid"),
+                    ("threads", "Threads"),
                     ("step", "Step"),
+                    ("format", "Output"),
                     ("n", "Pairs"),
                     ("voxels", "Voxels"),
                     ("ants_s", "ANTs (s)"),
                     ("fastwarp_s", "FastWarp (s)"),
                     ("ratio", "ANTs / FastWarp"),
+                    ("size", "Size (MB)"),
                     ("difference", "Difference"),
                 ],
             ),
@@ -452,10 +541,10 @@ def _timing_sections(reg: list, lin: list, pst: list, records: list) -> list[str
                 [
                     ("records", "Records"),
                     ("gpu", "GPU"),
-                    ("gpu_driver", "Driver"),
+                    ("gpu_driver", "Driver name"),
                     ("gpu_backend", "Backend"),
                     ("cpu", "CPU"),
-                    ("itk_threads", "ITK threads"),
+                    ("threads", "Threads"),
                     ("fastwarp", "fastwarp"),
                     ("ants", "ANTs"),
                 ],
@@ -473,32 +562,54 @@ def _timing_records(work: Path, recipe_name: str) -> list[dict[str, Any]]:
     return [rec for _, rec in timing.read_records(paths) if rec.get("status") == "ok"]
 
 
-def report(*, work: Path, recipe_name: str, plot: bool = True) -> Path:
+def _environments(work: Path) -> dict[str, dict[str, Any]]:
+    out = {}
+    for command, name in COMMANDS:
+        path = work / name
+        if path.is_file():
+            try:
+                out[command] = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
+def report(*, work: Path, recipe_name: str, plot: bool = True, iso_mm: float | None = None) -> Path:
     """Write ``summary.md`` with the accuracy tables (when ``evaluate`` has run) and the timing
     tables, and the CSVs behind them (``paired.csv``, ``agreement_summary.csv``,
     ``structures.csv``, ``timings.csv``, ``linear.csv``, ``post.csv``; with matplotlib
-    ``summary.png``) under ``<work>/results/<recipe>/``; returns the Markdown path."""
+    ``summary.png``) under ``<work>/results/<recipe>/``; returns the Markdown path. Timings are
+    taken only from records of the recipe as it is defined now, grouped by registration grid
+    (only ``iso_mm``, if given)."""
     folder = work / "results" / recipe_name
     pairs = _read_csv(folder / "pairs.csv")
-    reg = timing.registration_rows(work, recipe_name)
+    rec = recipes.recipe(recipe_name)
+    reg = timing.registration_rows(work, recipe_name, rec)
     lin = linear.rows(work, recipe_name)
-    pst = post.rows(work, recipe_name)
+    pst = post.rows(work, recipe_name, rec)
+    if iso_mm is not None:
+        reg, lin, pst = ([r for r in x if r.get("iso_mm") == iso_mm] for x in (reg, lin, pst))
     if not (pairs or reg or lin or pst):
         raise RuntimeError(f"nothing to report in {work} for {recipe_name}; run (and evaluate)")
     folder.mkdir(parents=True, exist_ok=True)
-    env_path = work / "environment.json"
-    env = json.loads(env_path.read_text(encoding="utf-8")) if env_path.is_file() else {}
-    source = "the latest `run` (`environment.json`)"
-    if not env:
-        records = _timing_records(work, recipe_name)
-        env = next((r["environment"] for r in records if r.get("environment")), {})
-        source = "the first timing record"
+    envs = _environments(work)
+    env: dict[str, Any] = {}
+    source = "no command (no environment file)"
+    for command, name in COMMANDS:
+        if command in envs:
+            env, source = envs[command], f"the latest `{command}` (`{name}`)"
+            break
     lines = [
         f"# FastWarp benchmark: recipe `{recipe_name}`",
         "",
         f"Machine and software of {source}:",
         "",
         *machine_lines(env),
+        "",
+        "Thread setting of each command (all cores unless `--threads` capped both engines; "
+        "timings with different settings are not comparable, so the tables keep them apart):",
+        "",
+        *thread_lines(envs),
     ]
     if pairs:
         paired = paired_table(pairs)

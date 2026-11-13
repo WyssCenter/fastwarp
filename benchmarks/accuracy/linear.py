@@ -44,6 +44,7 @@ from .run import (
     pair_id,
     prepare_fixed,
     prepare_moving,
+    rayon_threads,
     run_child,
     same_config,
     select_pairs,
@@ -265,7 +266,7 @@ def run_ants_linear(
     out: Path,
     cfg: dict[str, Any],
     *,
-    threads: int,
+    threads: int | None,
     ants_dir: Path | None,
     timeout_s: float | None,
 ) -> dict[str, Any]:
@@ -314,23 +315,32 @@ def run_ants_linear(
 
 
 def compare(
-    ds: datasets.Dataset, folder: Path, prep: dict[str, Any], *, data: Path
+    ds: datasets.Dataset,
+    folder: Path,
+    prep: dict[str, Any],
+    *,
+    data: Path,
+    cfg: dict[str, Any],
+    iso_mm: float,
 ) -> dict[str, Any]:
-    """Landmark errors of each engine's fits and the distance between the engines' fits over
-    the fixed brain mask, for a pair folder; written as ``comparison.json``."""
+    """Landmark errors of each engine's fits of ``cfg`` at ``iso_mm`` and the distance between
+    the engines' fits over the fixed brain mask, for a pair folder; written as
+    ``comparison.json``."""
     import ants
 
     pair = json.loads((folder / "pair.json").read_text(encoding="utf-8"))
     fits = {
         e: (_record(folder / e) or {}).get("fits", {})
         for e in ENGINES
-        if (_record(folder / e) or {}).get("status") == "ok"
+        if linear_done(folder / e, cfg, iso_mm)
     }
     out: dict[str, Any] = {
         "dataset": ds.key,
         "pair": folder.name,
         "fixed": pair["fixed"],
         "moving": pair["moving"],
+        "config": cfg,
+        "iso_mm": iso_mm,
         "fits": {},
     }
     mask_img = ants.image_read(prep["files"]["mask"])
@@ -376,7 +386,7 @@ def run_linear(
     quick: bool = False,
     engines: tuple[str, ...] = ENGINES,
     iso_mm: float = 1.0,
-    threads: int = 8,
+    threads: int | None = None,
     ants_dir: Path | None = None,
     adapter: str | None = None,
     retry_failed: bool = False,
@@ -390,7 +400,7 @@ def run_linear(
             raise ValueError(f"unknown engine {e!r}")
     cfg = config(recipes.recipe(recipe_name))
     rows: list[dict[str, Any]] = []
-    with RunLock(work):
+    with RunLock(work), rayon_threads(threads):
         env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter)
         _write_json(work / "environment_linear.json", env)
         for key in keys:
@@ -418,8 +428,9 @@ def run_linear(
                     else:
                         todo.append(engine)
                 compared = _read_json(folder / "comparison.json")
+                current = compared.get("config") == cfg and compared.get("iso_mm") == iso_mm
                 finished = any(linear_done(folder / e, cfg, iso_mm) for e in engines)
-                if not todo and (not finished or (compared and "error" not in compared)):
+                if not todo and (not finished or (current and "error" not in compared)):
                     continue
                 try:
                     with itk_threads(threads):
@@ -485,10 +496,13 @@ def run_linear(
                     log(f"    {record['status']} in {record.get('wall_s', math.nan):.1f} s")
                     rows.append(_row(ds.key, folder.name, engine, record["status"], True))
                 try:
-                    _write_json(folder / "comparison.json", compare(ds, folder, prep, data=data))
+                    result = compare(ds, folder, prep, data=data, cfg=cfg, iso_mm=iso_mm)
                 except Exception as e:
-                    log(f"    comparison failed: {type(e).__name__}: {e}")
-                    _write_json(folder / "comparison.json", {"error": f"{type(e).__name__}: {e}"})
+                    error = f"{type(e).__name__}: {e}"
+                    log(f"    comparison failed: {error}")
+                    result = {"error": error, "config": cfg, "iso_mm": iso_mm}
+                    rows.append(_row(ds.key, folder.name, "comparison", "failed", True))
+                _write_json(folder / "comparison.json", result)
     return rows
 
 
@@ -516,10 +530,18 @@ def todo_count(
     return out
 
 
+def _sum(values: list[Any]) -> float | None:
+    if any(not isinstance(v, (int, float)) for v in values):
+        return None
+    return float(sum(values))
+
+
 def rows(work: Path, recipe_name: str | None = None) -> list[dict[str, Any]]:
-    """One row per dataset, pair, engine and fit of the finished linear runs in ``work`` (of
-    ``recipe_name``'s linear stages, if given): seconds, landmark errors, agreement with ANTs
-    and the machine fingerprint."""
+    """One row per dataset, grid, pair, engine and fit of the finished linear runs in ``work``
+    (of ``recipe_name``'s linear stages, if given): seconds, landmark errors, agreement with
+    ANTs and the machine fingerprint. ``prepare`` is FastWarp's session preparation;
+    ``rigid_affine`` the like-for-like sum (FastWarp: preparation, rigid and affine fits; ANTs:
+    the rigid and affine stages)."""
     cfg = None if recipe_name is None else config(recipes.recipe(recipe_name))
     out = []
     for path, rec in timing.read_records(work.glob(f"*/{FOLDER}/*/*/run.json")):
@@ -529,39 +551,38 @@ def rows(work: Path, recipe_name: str | None = None) -> list[dict[str, Any]]:
             continue
         engine = rec.get("engine")
         folder = path.parents[1]
-        comparison = {}
-        cpath = folder / "comparison.json"
-        if cpath.is_file():
-            try:
-                comparison = json.loads(cpath.read_text(encoding="utf-8")).get("fits", {})
-            except json.JSONDecodeError:
-                comparison = {}
-        fp = timing.fingerprint(rec.get("environment"))
+        comparison = _read_json(folder / "comparison.json")
+        if comparison.get("config") != rec.get("config") or comparison.get("iso_mm") != rec.get(
+            "iso_mm"
+        ):
+            comparison = {}
+        compared = comparison.get("fits", {})
+        base = {
+            "dataset": folder.parents[1].name,
+            "iso_mm": rec.get("iso_mm"),
+            "pair": folder.name,
+            "engine": engine,
+            **timing.fingerprint(rec.get("environment")),
+        }
+        fits = rec.get("fits", {})
         if engine == "fastwarp" and rec.get("prepare_s") is not None:
+            out.append({**base, "fit": "prepare", "seconds": rec["prepare_s"]})
+        parts = [fits.get(k, {}).get("seconds") for k in ("rigid", "affine")]
+        if engine == "fastwarp":
+            parts.append(rec.get("prepare_s"))
+        out.append({**base, "fit": "rigid_affine", "seconds": _sum(parts)})
+        for fit, f in fits.items():
+            c = compared.get(fit, {})
+            agreement = (c.get("agreement") or {}) if engine == "fastwarp" else {}
             out.append(
                 {
-                    "dataset": folder.parents[1].name,
-                    "pair": folder.name,
-                    "engine": engine,
-                    "fit": "prepare",
-                    "seconds": rec["prepare_s"],
-                    **fp,
+                    **base,
+                    "fit": fit,
+                    "seconds": f.get("seconds"),
+                    "wall_s": f.get("wall_s"),
+                    "landmark_mean_mm": (c.get(engine) or {}).get("landmark_mean_mm"),
+                    "agreement_mean_mm": agreement.get("mean_mm"),
+                    "agreement_max_mm": agreement.get("max_mm"),
                 }
             )
-        for fit, f in rec.get("fits", {}).items():
-            c = comparison.get(fit, {})
-            agreement = (c.get("agreement") or {}) if engine == "fastwarp" else {}
-            row = {
-                "dataset": folder.parents[1].name,
-                "pair": folder.name,
-                "engine": engine,
-                "fit": fit,
-                "seconds": f.get("seconds"),
-                "wall_s": f.get("wall_s"),
-                "landmark_mean_mm": (c.get(engine) or {}).get("landmark_mean_mm"),
-                "agreement_mean_mm": agreement.get("mean_mm"),
-                "agreement_max_mm": agreement.get("max_mm"),
-                **fp,
-            }
-            out.append(row)
     return out

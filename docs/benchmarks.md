@@ -209,8 +209,8 @@ ANTs tag `v2.6.5`; older versions of the script used 0.1 and 4). Both engines ru
 `fastwarp.cohort_recipe(1)`. `--verbose 1` only makes ANTs print its progress and stage times,
 which the benchmark reads (see [Timings](#timings)); it does not change the registration.
 
-ANTs runs as a child process, one at a time, with `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` set
-by `--threads` (default 8), never at the same time as FastWarp. By default it is ANTsPy's
+ANTs runs as a child process, one at a time, never at the same time as FastWarp, on all cores
+unless `--threads` caps it (see [Timings](#timings)). By default it is ANTsPy's
 bundled `antsRegistration`; `--ants-dir` runs an `antsRegistration` program instead (for example
 the ANTs 2.6.5 release the CI uses). Precision is ANTs' default (double). A fixed seed does not
 make ANTs repeatable with more than one thread, because its threads sum in any order; FastWarp
@@ -249,7 +249,23 @@ p-values treat them as if they were, and should be read as descriptive.
 ### Timings
 
 Three steps record timings; each writes them next to its outputs, with the machine and software
-(`environment` in every record), and `report` tabulates the median and quartiles over pairs.
+(`environment` in every record), and `report` tabulates the median and quartiles over pairs,
+per dataset and registration grid, from the records of the recipe as it is defined now. A ratio
+ANTs / FastWarp is the median over pairs of the per-pair ratio, on the pairs where both engines
+have the value; a cell marked `[n=k]` has a value for only k pairs.
+
+**Threads.** By default the timings are taken with all cores: `run`, `linear` and `post` set
+no thread limit for either engine, and remove `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` and
+`RAYON_NUM_THREADS` from the environment they run in. `--threads N` caps both engines alike,
+for when the machine is needed during a run: `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=N` in the
+environment of every ANTs process (and, restored afterwards, around this process's own ANTsPy
+calls such as reading and resampling the images), and `RAYON_NUM_THREADS=N` for FastWarp's CPU
+work (resampling, preprocessing, composing fields, resampling images), set before FastWarp is
+first used; FastWarp reads it once, when its thread pool starts (opening the GPU starts it). The
+GPU work itself is not affected. Every record's `environment` states the setting (`threads`:
+`"all cores"` or N) and the logical and physical core counts (the physical count is read on
+Linux and macOS only), and the report lists it per command. Timings taken with different
+settings are not comparable: the report keeps them in separate rows (column Threads).
 
 **Registration (`run`).** For every registration, both engines:
 
@@ -257,38 +273,40 @@ Three steps record timings; each writes them next to its outputs, with the machi
 | --- | --- | --- |
 | `linear_s` | the engine's `linear_s`: centre of mass, rigid and affine stages | the sum of `Elapsed time (stage 0)` and `(stage 1)` (rigid, affine) |
 | `syn_s` | the engine's `syn_s`: the SyN stage with its smoothing and transfers | `Elapsed time (stage 2)` (SyN) |
-| `total_s` | the engine's `total_s`: opening the GPU, resampling, preprocessing, both stages, writing the transforms | `Total elapsed time`: the stages and their set-up, without reading the images or writing the transforms |
-| `wall_s` | the `register_syn` call | the `antsRegistration` process |
+| `total_s` | the engine's `total_s`: opening the GPU, resampling, preprocessing, both stages, warping the moving image onto the registration grid (`warp_s`) and writing the transforms | `Total elapsed time`: the stages and their set-up, without reading the images or writing the transforms |
+| `wall_s` | the `register_syn` call, with the images already read (`read_s` records reading them) | the `antsRegistration` process, including its start, reading and writing (with ANTsPy also starting Python) |
 
 ANTs prints these lines with `--verbose 1` (ITK's wall-clock `TimeProbe`, in seconds); the
 stage a time belongs to is the one named in the `*** Running <transform> registration ***` line
-before it. When a log lacks a line (an interrupted run, or a run recorded before the benchmark
-passed `--verbose 1`), the missing part is left empty and `run.json` says why (`timings.note`);
-nothing is estimated. The two totals do not cover the same work (FastWarp's includes opening
-the GPU and writing the transforms, ANTs' neither reading nor writing), and neither do the two
-wall times (FastWarp's starts with the images already read, `read_s` records reading them;
-ANTs' includes starting the process, and with ANTsPy starting Python). `report` gives the
-ratio ANTs / FastWarp as the median over pairs, on the pairs where both engines have the value.
+before it (`Euler3DTransform`, `AffineTransform` and `SyN` for the benchmark's recipes; any
+other name leaves the split empty). When a log lacks a line (an interrupted run, or a run
+recorded before the benchmark passed `--verbose 1`), the missing part is left empty and
+`run.json` says why (`timings.note`); nothing is estimated. Because the two totals and the two
+wall times do not cover the same work, compare them as what they are: the engines' own
+accounting, and the time a caller waits.
 
 **Linear fits (`linear`).** On the same prepared images as `run` (the fixed and moving images of
 a pair, at the registration grid), with the recipe's `rigid` and `affine` stages:
 
-- FastWarp: one `fastwarp.linear_session` per pair (its set-up time is `prepare_s`: converting,
-  winsorizing and uploading the images and the centre-of-mass start), then a rigid fit from the
-  centres of mass, an affine fit from that rigid result, and a rigid multi-start: a coarse rigid
-  fit (the first two levels) from the centre-of-mass start rotated by 0°, ±15° about x and
-  ±15° about z, then the two best (lowest MI) refined with the full rigid stage. A fit's time is
-  the `total_s` that `LinearSession.register` returns; it does not include `prepare_s`, which
-  the report lists as its own row. FastWarp's CPU work is not capped to `--threads`.
+- FastWarp: one `fastwarp.linear_session` per pair; its preparation (`prepare_s`: opening the
+  GPU, converting, winsorizing and uploading the images, the centre-of-mass start) is timed on
+  its own. Then a rigid fit from the centres of mass, an affine fit from that rigid result, and
+  a rigid multi-start: a coarse rigid fit (the first two levels) from the centre-of-mass start
+  rotated by 0°, ±15° about x and ±15° about z, then the two best (lowest MI) refined with the
+  full rigid stage. A fit's time is the `total_s` that `LinearSession.register` returns.
 - ANTs: `antsRegistration` with only the rigid stage (centre-of-mass start), then a second
   process with only the affine stage starting from the rigid result (`--initial-moving-transform
   [rigid_0GenericAffine.mat]`). A fit's time is that stage's `Elapsed time`, which includes the
   stage's own image preparation (winsorizing, smoothing); the process wall time is kept as well.
   ANTs has no multi-start option, so the multi-start has no ANTs time.
-- Accuracy: the mean landmark error of each fit (the fixed image's landmarks moved through the
-  affine, against the moving image's; datasets with landmarks only), and the mean and maximum
-  distance between where FastWarp's and ANTs' fits move the points of the fixed brain mask
-  (every second voxel), the multi-start against ANTs' rigid fit.
+- Like for like: the report's "rigid + affine" row adds FastWarp's preparation to its two fits
+  and compares them with ANTs' two stage times.
+- Accuracy (`comparison.json`, made from the records of the same configuration and grid): the
+  mean landmark error of each fit (the fixed image's landmarks moved through the affine, against
+  the moving image's; datasets with landmarks only), and the mean and maximum distance between
+  where FastWarp's and ANTs' fits move the points of the fixed brain mask (every second voxel),
+  the multi-start against ANTs' rigid fit. A comparison that fails is a failed row, and the
+  command exits with an error.
 
 None of the datasets has two images of one subject (for example a T2w or CT to align to the
 T1w), so the linear fits register a subject onto the template (`snsx`, the default) or one
@@ -303,20 +321,22 @@ into:
 | --- | --- | --- |
 | forward field | `compose_field([Composite.h5], fixed reference)` | `antsApplyTransforms -r <fixed reference> -t Composite.h5 -o [<file>,1]` |
 | inverse field | `compose_field([InverseComposite.h5], moving image)` | `antsApplyTransforms -r <moving image> -t InverseComposite.h5 -o [<file>,1]` |
-| Lanczos re-warp | `apply_transforms(moving, fixed reference, [Composite.h5], interpolation="lanczosWindowedSinc")` and writing the result | `antsApplyTransforms -i <moving image> -r <fixed reference> -t Composite.h5 -n LanczosWindowedSinc -o <file>` |
+| Lanczos re-warp | `apply_transforms(moving, fixed reference, [Composite.h5], interpolation="lanczosWindowedSinc")`, then writing the result with ANTsPy | `antsApplyTransforms -i <moving image> -r <fixed reference> -t Composite.h5 -n LanczosWindowedSinc -o <file>` |
 
 The fixed reference is the cropped native grid of the fixed image (the evaluation grid), the
-moving image the subject's original file. Each time covers reading the inputs and writing a
-`.nii.gz` output; ANTs runs with `--float 1`, so both write `float32`. The step's time is the
-process wall time for an ANTs program (`--ants-dir`), and for ANTsPy's bundled program the time
-around the library call inside the child process (Python's start and `import ants` are not
-counted). The `post` command sets `RAYON_NUM_THREADS` (FastWarp's CPU threads) at its start and
-gives ANTs `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`, both `--threads`; FastWarp reads its variable
-once per process, so the cap holds for the command, not for `post.run_post` called from a
-process that has used FastWarp already. The two outputs are compared (field differences in mm,
-the relative RMS difference of the re-warped images), then deleted; only `post.json` stays. A
-pair whose comparison fails is recorded as failed, without times. `post` redoes a pair when its
-registration was run again since.
+moving image the subject's original file. Each time covers reading the inputs and writing the
+output; ANTs runs with `--float 1`, so both write `float32`. The outputs are uncompressed `.nii`
+files, so the times compare the computation and a raw write. With `--gzip` every step runs a
+second time writing `.nii.gz`: `compose_field` compresses at gzip level 1 on all its threads,
+ITK (ANTs' outputs, and FastWarp's re-warped image, which ANTsPy writes) at its default level
+on one thread, so those rows measure the compression as much as the computation; the report
+gives the output sizes. The step's time is the process wall time for an ANTs program
+(`--ants-dir`), and for ANTsPy's bundled program the time around the library call inside the
+child process (Python's start and `import ants` are not counted). The `.nii` outputs are
+compared (field differences in mm, the relative RMS difference of the re-warped images), then
+all outputs are deleted; only `post.json` stays. A pair whose comparison fails is recorded as
+failed, without times. `post` redoes a pair, done or failed, when its registration was run
+again since.
 
 ## Running it
 
@@ -361,16 +381,19 @@ $B report --work ~/fastwarp-bench/work
   that does not read, an engine that fails) is recorded in its `run.json` and the run goes on. A
   lock file stops two runs from sharing a work folder.
 - `--dataset KEY` (repeatable) selects datasets, `--pairs N` the number of pairs, `--recipe
-  syn-sh` the other recipe, `--engine fastwarp` or `--engine ants` one engine, `--threads N` the
-  ITK threads, `--ants-dir DIR` an ANTs installation, `--adapter NAME` a GPU, `--iso-mm` the
-  registration grid (default 1.0).
+  syn-sh` the other recipe, `--engine fastwarp` or `--engine ants` one engine, `--threads N` a
+  cap on the CPU threads of ANTs and of FastWarp's CPU work (default: all cores; see
+  [Timings](#timings)), `--ants-dir DIR` an ANTs installation, `--adapter NAME` a GPU,
+  `--iso-mm` the registration grid (default 1.0).
 - `linear` takes the same selection options as `run` (default dataset `snsx`, the default-run
   dataset with landmarks; `--dataset` chooses others), `--engine`, `--threads`, `--ants-dir`
   and `--adapter`. It resumes like `run` and writes
   `<work>/<dataset>/linear/<pair>/{fastwarp,ants}/run.json` (times and fitted affines; ANTs'
-  logs and `.mat` files beside them) and `comparison.json` (landmark errors, agreement).
-- `post` post-processes the pairs `run` finished (same selection options, `--threads` for both
-  tools, `--ants-dir`); it resumes, and writes `<work>/<dataset>/<recipe>/<pair>/post.json`.
+  logs and `.mat` files beside them), `comparison.json` (landmark errors, agreement) and
+  `<work>/environment_linear.json`. A changed recipe or `--iso-mm` fits the pair again.
+- `post` post-processes the pairs `run` finished (same selection options and `--iso-mm`,
+  `--threads`, `--ants-dir`, `--gzip`); it resumes, and writes
+  `<work>/<dataset>/<recipe>/<pair>/post.json` and `<work>/environment_post.json`.
   `--ants-dir` must hold `antsApplyTransforms` as well as `antsRegistration`.
 - `plan` estimates `run`, `evaluate`, `post` and `linear` together (`linear` on its default
   datasets unless `--dataset` is given).
@@ -382,15 +405,17 @@ $B report --work ~/fastwarp-bench/work
 - `report` writes `summary.md` (the tables to paste: accuracy when `evaluate` has run, and the
   registration, linear-fit and post-processing times with the machine that produced them),
   `paired.csv`, `agreement_summary.csv`, `structures.csv`, `timings.csv`, `linear.csv`,
-  `post.csv` and, with matplotlib, `summary.png`. When the timing records come from more than
-  one machine or software version, `summary.md` lists each with its number of records.
-- `environment.json` and every `run.json` and `post.json` record the versions (FastWarp and its
-  engine revision, ANTsPy, the ANTs version from `antsRegistration --version` and the program
-  used, NumPy, SciPy, Python), the operating system, the GPU (`fastwarp.gpu_info()`: name,
-  backend, device type, driver), the CPU and its logical cores, the ITK thread count,
-  `RAYON_NUM_THREADS` and any `FASTWARP_*` variables, the benchmark's git commit and whether the
-  checkout had local changes, the exact recipe, the registration grid and the ANTs argument
-  list.
+  `post.csv` and, with matplotlib, `summary.png`. The timing tables are grouped by
+  registration grid; `--iso-mm` keeps one grid. When the timing records come from more than one
+  machine or software version, `summary.md` lists each with its number of records.
+- `environment.json` (`run`), `environment_linear.json`, `environment_post.json` and every
+  `run.json` and `post.json` record the versions (FastWarp and its engine revision, ANTsPy, the
+  ANTs version from `antsRegistration --version` and the program used, NumPy, SciPy, Python),
+  the operating system, the GPU (`fastwarp.gpu_info()`: name, backend, device type, and the
+  driver name, which is the vendor's driver name, not a version), the CPU and its logical cores,
+  the ITK and FastWarp thread counts, any `FASTWARP_*` variables, the benchmark's git commit and
+  whether the checkout had local changes, the exact recipe, the registration grid and the ANTs
+  argument list.
 
 ### Time and disk
 
@@ -399,18 +424,18 @@ already run, so run `--quick` first and check `plan` before starting the night.
 
 | Step | Assumption | Default run |
 | --- | --- | --- |
-| ANTs, one registration on a 1 mm grid, 8 threads | about 400 s (a guess for one channel on the cropped, skull-stripped grids; the earlier 1000–1500 s on 16 threads in [Performance](performance.md) were for two channels on a whole-head grid, so it may be longer) | 50 registrations: about 5.6 h |
+| ANTs, one registration on a 1 mm grid, all cores of a desktop | about 400 s (a guess for one channel on the cropped, skull-stripped grids; the earlier 1000–1500 s on 16 threads in [Performance](performance.md) were for two channels on a whole-head grid, so it may be longer) | 50 registrations: about 5.6 h |
 | FastWarp, one registration | about 40 s or less on a desktop GPU | about 0.6 h |
 | Evaluation per pair | about 60 s | about 0.8 h |
-| `linear`, one pair: ANTs rigid and affine, 8 threads; FastWarp's fits | about 120 s and 20 s | 20 `snsx` pairs: about 0.8 h |
-| `post`, one pair: ANTs, 8 threads; FastWarp | about 90 s and 15 s | 50 pairs: about 1.5 h |
+| `linear`, one pair: ANTs rigid and affine; FastWarp's fits | about 120 s and 20 s | 20 `snsx` pairs: about 0.8 h |
+| `post`, one pair, `.nii` outputs: ANTs; FastWarp (`--gzip` about doubles it) | about 90 s and 15 s | 50 pairs: about 1.5 h |
 | Total (20 `mindboggle` + 10 `deep7t` + 20 `snsx` pairs) | | about 9.3 h; allow 10–12 h |
 
 `--quick` (one pair per dataset) takes about 30 min without `linear` and `post`. If the night
 is short, lower the pairs (`--pairs`, also per step) or
 run the datasets or the steps on separate nights; every step resumes where it stopped.
-`post` writes up to six fields and images per pair (about 1 GB for a 7 T pair) and deletes
-them after comparing. Disk: 1.6 GB
+`post` writes six uncompressed fields and images per pair (about 1 GB for a 7 T pair;
+twice as many files with `--gzip`) and deletes them after comparing. Disk: 1.6 GB
 of data after extraction, 4.5 GB at the peak (the 2.85 GB 7 T archive is deleted after
 extraction unless `--keep-archives`), about 60 MB per pair in the work folder (transforms of both
 engines), so about 3 GB for the default run. Memory: about 4 GB of RAM for ANTs and evaluation; the GPU
@@ -420,7 +445,7 @@ needs the memory `fastwarp.fits_gpu` checks (a pair that does not fit is recorde
 
 Run the night on a machine that does nothing else: ANTs' time depends on the CPU and on other
 load, and the GPU time on other GPU work. Record the machine with the results (`report` prints
-it). Report runs with `--threads` equal to the physical cores you give ANTs.
+it). Leave `--threads` out for the timings to report; with it, say so next to the results.
 
 ## Supply chain
 
