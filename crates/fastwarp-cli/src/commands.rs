@@ -9,14 +9,13 @@ use std::time::Instant;
 
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::register::write_linear_output;
-use fastwarp_reg::transform::ants_io::{
-    with_suffix, AFFINE_SUFFIX, COMPOSITE_SUFFIX, INVERSE_COMPOSITE_SUFFIX,
-};
+use fastwarp_reg::transform::ants_io::{with_suffix, AFFINE_SUFFIX, COMPOSITE_SUFFIX};
 use fastwarp_reg::transform::{read_transform_file, AffineTransform, TransformElem};
 use serde_json::{json, Value};
 
 use crate::args::{
     ApplyArgs, Command, ComposeArgs, FitsArgs, GpuInfoArgs, LinearArgs, RecipeArgs, RegisterArgs,
+    TransformArg,
 };
 use crate::engine::{self, SynOutputs, SynRun};
 use crate::image;
@@ -72,6 +71,8 @@ pub(crate) fn load_recipe(path: Option<&Path>, channels: usize) -> Result<Recipe
         None => Ok(Recipe::cohort(channels)),
         Some(p) => {
             let v = read_json(p, "recipe")?;
+            let base = p.parent().unwrap_or_else(|| Path::new(""));
+            let v = crate::recipe::resolve_initial_path(&v, base);
             Recipe::from_json(&v, channels)
                 .map_err(|e| CliError::usage(format!("recipe file {}: {e}", p.display())))
         }
@@ -112,6 +113,15 @@ pub(crate) fn syn_run_json(run: &SynRun) -> Value {
         })).collect::<Vec<_>>(),
         "affine_parameters": run.affine_parameters,
         "affine_center": run.affine_center,
+        "initial_parameters": run.initial_parameters,
+        "initial_center": run.initial_center,
+        "linear_stages": run.linear_stages.iter().map(|s| json!({
+            "transform": s.transform,
+            "iterations": s.iterations,
+            "metric": s.metric,
+        })).collect::<Vec<_>>(),
+        "deformable": run.deformable,
+        "files": run.files.iter().map(|p| path_text(p)).collect::<Vec<_>>(),
         "peak_gpu_bytes": run.peak_gpu_bytes,
         "memory_budget_bytes": run.memory_budget_bytes,
         "recipe": run.recipe.to_json(),
@@ -152,6 +162,7 @@ fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError
     let outputs = SynOutputs {
         prefix: a.output.clone(),
         write_warped: a.write_warped,
+        layout: engine::output_layout(a.outputs.name())?,
     };
     let run = engine::register_syn(
         fixed,
@@ -162,16 +173,7 @@ fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError
         None,
         recipe,
     )?;
-    let mut files = vec![
-        with_suffix(&a.output, COMPOSITE_SUFFIX),
-        with_suffix(&a.output, INVERSE_COMPOSITE_SUFFIX),
-    ];
-    if run.affine_parameters.is_some() {
-        files.push(with_suffix(&a.output, AFFINE_SUFFIX));
-    }
-    if a.write_warped {
-        files.push(with_suffix(&a.output, "_Warped.nii.gz"));
-    }
+    let files = &run.files;
     if a.common.json {
         let mut v = syn_run_json(&run);
         v["outputs"] = json!(files.iter().map(|p| path_text(p)).collect::<Vec<_>>());
@@ -190,12 +192,19 @@ fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError
             t.syn_s,
             run.total_s
         );
-        for f in &files {
+        for f in files {
             text.push_str(&format!("wrote {}\n", f.display()));
         }
         print(out, &text)?;
     }
     Ok(ExitStatus::Ok)
+}
+
+/// The paths of `-t` values and their inverse flags (`None` when none is inverted).
+fn transform_paths(t: &[TransformArg]) -> (Vec<PathBuf>, Option<Vec<bool>>) {
+    let paths = t.iter().map(|a| a.path.clone()).collect();
+    let flags: Vec<bool> = t.iter().map(|a| a.invert).collect();
+    (paths, flags.iter().any(|f| *f).then_some(flags))
 }
 
 fn read_initial(path: &Path) -> Result<AffineTransform, CliError> {
@@ -335,7 +344,15 @@ fn apply(a: ApplyArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
     image::check_nifti_name(&a.output, "output image")?;
     let grid = image::grid(&a.reference, "reference image")?;
     let input = image::load(&a.input, "input image")?;
-    let data = engine::apply(&input, &grid, &a.transforms, interp, a.default_value)?;
+    let (paths, invert) = transform_paths(&a.transforms);
+    let data = engine::apply(
+        &input,
+        &grid,
+        &paths,
+        invert.as_deref(),
+        interp,
+        a.default_value,
+    )?;
     image::create_parent(&a.output)?;
     image::save(&a.output, grid, data)?;
     print(out, &format!("wrote {}\n", a.output.display()))?;
@@ -348,7 +365,14 @@ fn compose(a: ComposeArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> 
     image::check_nifti_name(&a.output, "output field")?;
     let grid = image::grid(&a.reference, "reference image")?;
     image::create_parent(&a.output)?;
-    engine::compose(&a.transforms, &grid, &a.output, a.compression_level)?;
+    let (paths, invert) = transform_paths(&a.transforms);
+    engine::compose(
+        &paths,
+        invert.as_deref(),
+        &grid,
+        &a.output,
+        a.compression_level,
+    )?;
     print(out, &format!("wrote {}\n", a.output.display()))?;
     Ok(ExitStatus::Ok)
 }
@@ -392,7 +416,14 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         .map(|p| image::grid(p, "moving image").map(|g| engine::iso_dims(&g, iso_mm)))
         .transpose()?;
     let channels = usize::from(a.channels);
-    let check = engine::capacity_check(dims, moving_dims, channels, a.common.adapter.clone())?;
+    let recipe = load_recipe(a.recipe.as_deref(), channels)?;
+    let check = engine::capacity_check(
+        dims,
+        moving_dims,
+        channels,
+        a.common.adapter.clone(),
+        &recipe,
+    )?;
     if a.common.json {
         print_json(
             out,

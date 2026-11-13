@@ -12,20 +12,24 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 
-use fastwarp_gpu::{plan_capacity_pair, BackendSelect, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::{
+    plan_capacity_linear, plan_capacity_pair, BackendSelect, CapacityCaps, CapacityError,
+    WgpuBackend,
+};
 use fastwarp_reg::init::{initial_transform, InitFeature};
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
-use fastwarp_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
+use fastwarp_reg::register::RegisterTimings;
+use fastwarp_reg::stages::{register_stages, write_stage_outputs, StagePlan};
 use fastwarp_reg::syn::SynOptions;
 use fastwarp_reg::transform::ants_io::{with_suffix, COMPOSITE_SUFFIX};
 use fastwarp_reg::transform::{
-    read_transform_file, write_composite_pair, AffineTransform, TransformChain,
+    read_transform_file, AffineTransform, TransformChain, TransformElem,
 };
 use fastwarp_reg::{Grid, RegError, Volume};
 
 use crate::post;
-use crate::recipe::Recipe;
+use crate::recipe::{kind_name, Recipe};
 use crate::session::Session;
 
 /// Why an engine call failed.
@@ -163,12 +167,37 @@ pub fn check_winsorize(winsorize: Option<(f32, f32)>) -> Result<(), Failure> {
     }
 }
 
-/// Where [`register_syn`] writes: `<prefix>Composite.h5`, `<prefix>InverseComposite.h5`,
-/// `<prefix>0GenericAffine.mat` and, with `write_warped`, `<prefix>_Warped.nii.gz`.
+pub use fastwarp_reg::stages::OutputLayout;
+
+/// The layout of an `outputs` name: `composite`, `split` or `both`.
+pub fn output_layout(name: &str) -> Result<OutputLayout, Failure> {
+    match name {
+        "composite" => Ok(OutputLayout::Composite),
+        "split" => Ok(OutputLayout::Split),
+        "both" => Ok(OutputLayout::Both),
+        other => Err(Failure::Invalid(format!(
+            "outputs must be 'composite', 'split' or 'both', not {other:?}"
+        ))),
+    }
+}
+
+/// Where [`register_syn`] writes: under `prefix` in `layout` (`Composite`: `Composite.h5`,
+/// `InverseComposite.h5`, `0GenericAffine.mat`; `Split`: `0GenericAffine.mat` and, after a SyN
+/// stage, `1Warp.nii.gz` / `1InverseWarp.nii.gz`; `Both`) and, with `write_warped`,
+/// `<prefix>_Warped.nii.gz`.
 #[derive(Clone, Debug)]
 pub struct SynOutputs {
     pub prefix: PathBuf,
     pub write_warped: bool,
+    pub layout: OutputLayout,
+}
+
+/// One linear stage of a run: kind (`rigid` / `affine`), iterations per level, final metric.
+#[derive(Clone, Debug)]
+pub struct StageSummary {
+    pub transform: &'static str,
+    pub iterations: Vec<u32>,
+    pub metric: Option<f64>,
 }
 
 /// One SyN level of a run: level, grid, iterations, converged, last energy.
@@ -191,16 +220,47 @@ pub struct SynRun {
     pub total_s: f64,
     pub write_s: f64,
     pub timings: RegisterTimings,
+    /// SyN levels; empty without a SyN stage.
     pub levels: Vec<LevelSummary>,
-    pub affine_parameters: Option<[f64; 12]>,
-    pub affine_center: Option<[f64; 3]>,
+    /// The collapsed affine (start and linear stages), what `0GenericAffine.mat` holds.
+    pub affine_parameters: [f64; 12],
+    pub affine_center: [f64; 3],
+    /// The start of the chain.
+    pub initial_parameters: [f64; 12],
+    pub initial_center: [f64; 3],
+    /// The linear stages, in order.
+    pub linear_stages: Vec<StageSummary>,
+    /// Whether a SyN stage ran.
+    pub deformable: bool,
+    /// The files written, in the order composites, affine, warps, warped image.
+    pub files: Vec<PathBuf>,
     pub peak_gpu_bytes: u64,
     pub memory_budget_bytes: u64,
 }
 
+/// The pre-flight capacity check of every stage of `plan` for a `dims` registration grid and a
+/// `moving_dims` moving grid: the linear stages (their sample buffers summed over the chain) and,
+/// when there is one, the SyN stage. The idle linear buffers are freed before the SyN stage, so the
+/// two are separate checks.
+pub fn check_plan_capacity(
+    plan: &StagePlan,
+    dims: [usize; 3],
+    moving_dims: [usize; 3],
+    channels: usize,
+    caps: &CapacityCaps,
+) -> Result<(), CapacityError> {
+    if !plan.linear.is_empty() {
+        plan_capacity_linear(dims, moving_dims, &plan.linear, caps)?;
+    }
+    if plan.syn.is_some() {
+        plan_capacity_pair(dims, moving_dims, channels, caps)?;
+    }
+    Ok(())
+}
+
 /// Registers `moving` to `fixed` (1 or 2 channels each, checked by the caller with
 /// [`check_channels`]) with `recipe` on the GPU, the registration grid isotropic at `iso_mm`.
-/// Checks the capacity first. Writes `outputs` when given.
+/// Checks the capacity of every stage first. Writes `outputs` when given.
 pub fn register_syn(
     fixed: Vec<Volume<f64>>,
     moving: Vec<Volume<f64>>,
@@ -220,16 +280,15 @@ pub fn register_syn(
             .map(|m| iso_dims(m.grid(), iso_mm))
             .max_by_key(|d| d.iter().map(|n| *n as u128).product::<u128>())
             .unwrap_or(dims);
-        plan_capacity_pair(dims, moving_dims, fixed.len(), &caps)
+        check_plan_capacity(&recipe.plan, dims, moving_dims, fixed.len(), &caps)
             .map_err(|e| Failure::GpuCapacity(format!("{e} (at {iso_mm} mm)")))?;
         let options = SynOptions {
             cancel: cancel.as_deref(),
         };
-        let out = register_full(
+        let out = register_stages(
             &g,
             &g,
-            &recipe.linear,
-            &recipe.syn,
+            &recipe.plan,
             &fixed,
             &moving,
             Some(iso_mm),
@@ -238,18 +297,23 @@ pub fn register_syn(
         .map_err(reg_err)?;
         drop((fixed, moving));
         let t = Instant::now();
-        if let Some(o) = &outputs {
-            let io = |e: RegError| Failure::Write(format!("writing outputs: {e}"));
-            if o.write_warped {
-                write_outputs(&o.prefix, &out).map_err(io)?;
-            } else {
-                write_composite_pair(&o.prefix, &out.pair).map_err(io)?;
-            }
-            if let Some(chain) = &out.linear {
-                write_linear_output(&o.prefix, &chain.total).map_err(io)?;
-            }
-        }
+        let files = match &outputs {
+            Some(o) => write_stage_outputs(&o.prefix, &out, o.layout, o.write_warped)
+                .map_err(|e| Failure::Write(format!("writing outputs: {e}")))?,
+            None => Vec::new(),
+        };
         let write_s = t.elapsed().as_secs_f64();
+        let linear_stages = recipe
+            .plan
+            .linear
+            .iter()
+            .zip(&out.linear)
+            .map(|(r, s)| StageSummary {
+                transform: kind_name(r.kind),
+                iterations: s.levels.iter().map(|l| l.cg.iterations).collect(),
+                metric: s.final_metric(),
+            })
+            .collect();
         Ok(SynRun {
             recipe,
             adapter: adapter_name(&g),
@@ -268,8 +332,13 @@ pub fn register_syn(
                     energy: l.iterations.last().map(|i| i.energy).unwrap_or(0.0),
                 })
                 .collect(),
-            affine_parameters: out.linear.as_ref().map(|c| c.total.parameters()),
-            affine_center: out.linear.as_ref().map(|c| c.total.center),
+            affine_parameters: out.total.parameters(),
+            affine_center: out.total.center,
+            initial_parameters: out.initial.parameters(),
+            initial_center: out.initial.center,
+            linear_stages,
+            deformable: out.deformable,
+            files,
             peak_gpu_bytes: g.peak_allocated_bytes(),
             memory_budget_bytes: caps.memory_budget,
         })
@@ -301,14 +370,16 @@ pub fn gpu_info(adapter: Option<String>) -> Result<GpuInfo, Failure> {
 }
 
 /// Whether a registration of a `dims` fixed grid and a `moving_dims` moving grid (default: the
-/// fixed grid) with `channels` channels fits the GPU, as [`register_syn`] checks it.
+/// fixed grid) with `channels` channels and the stages of `recipe` fits the GPU, as
+/// [`register_syn`] checks it.
 pub fn fits(
     dims: [usize; 3],
     moving_dims: Option<[usize; 3]>,
     channels: usize,
     adapter: Option<String>,
+    recipe: &Recipe,
 ) -> Result<bool, Failure> {
-    Ok(capacity_check(dims, moving_dims, channels, adapter)?.is_ok())
+    Ok(capacity_check(dims, moving_dims, channels, adapter, recipe)?.is_ok())
 }
 
 /// The capacity check of [`fits`], with the reason when the grid does not fit.
@@ -317,28 +388,63 @@ pub fn capacity_check(
     moving_dims: Option<[usize; 3]>,
     channels: usize,
     adapter: Option<String>,
+    recipe: &Recipe,
 ) -> Result<Result<(), String>, Failure> {
     let g = open_gpu(adapter)?;
     let caps = CapacityCaps::from_context(g.context());
-    Ok(
-        plan_capacity_pair(dims, moving_dims.unwrap_or(dims), channels, &caps)
-            .map(|_| ())
-            .map_err(|e| e.to_string()),
+    Ok(check_plan_capacity(
+        &recipe.plan,
+        dims,
+        moving_dims.unwrap_or(dims),
+        channels,
+        &caps,
     )
+    .map_err(|e| e.to_string()))
 }
 
-/// The chain `ants.apply_transforms(transformlist=transforms)` and `antsApplyTransforms -t
-/// transforms[0] -t transforms[1] ...` apply: a reference point goes through `transforms[0]`
-/// first (measured against ANTsPy, see `tests/test_post.py`). The queue applies its last element
-/// first, so the files are pushed in reverse.
-pub fn read_chain(transforms: &[PathBuf]) -> Result<TransformChain, Failure> {
+/// The chain `ants.apply_transforms(transformlist=transforms, whichtoinvert=invert)` and
+/// `antsApplyTransforms -t transforms[0] -t transforms[1] ...` apply: a reference point goes
+/// through `transforms[0]` first (measured against ANTsPy, see `tests/test_post.py`). The queue
+/// applies its last element first, so the files are pushed in reverse. A file whose `invert` flag
+/// is set is replaced by its inverse in place (`-t [file,1]`); only linear transforms have one,
+/// so inverting a displacement field is refused.
+pub fn read_chain(
+    transforms: &[PathBuf],
+    invert: Option<&[bool]>,
+) -> Result<TransformChain, Failure> {
     if transforms.is_empty() {
         return Err(Failure::Invalid("give at least one transform file".into()));
     }
+    if let Some(flags) = invert {
+        if flags.len() != transforms.len() {
+            return Err(Failure::Invalid(format!(
+                "invert has {} flags for {} transforms",
+                flags.len(),
+                transforms.len()
+            )));
+        }
+    }
     let mut chain = TransformChain::new();
-    for path in transforms.iter().rev() {
-        let part = read_transform_file(path)
+    for (i, path) in transforms.iter().enumerate().rev() {
+        let mut part = read_transform_file(path)
             .map_err(|e| Failure::Read(format!("reading {}: {e}", path.display())))?;
+        if invert.is_some_and(|f| f[i]) {
+            let field = part
+                .queue()
+                .iter()
+                .any(|t| matches!(t, TransformElem::DisplacementField(_)));
+            part = part.inverse().map_err(|e| {
+                Failure::Invalid(if field {
+                    format!(
+                        "cannot invert the displacement field in {}: pass the matching \
+                         InverseWarp / InverseComposite file",
+                        path.display()
+                    )
+                } else {
+                    format!("cannot invert {}: {e}", path.display())
+                })
+            })?;
+        }
         chain.extend(part);
     }
     Ok(chain)
@@ -352,33 +458,37 @@ pub fn check_compression_level(level: Option<u32>) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Writes the transforms as one displacement field on `grid` (`antsApplyTransforms --compose`).
+/// Writes the transforms as one displacement field on `grid` (`antsApplyTransforms --compose`);
+/// `invert` as in [`read_chain`].
 pub fn compose(
     transforms: &[PathBuf],
+    invert: Option<&[bool]>,
     grid: &Grid,
     out_path: &Path,
     compression_level: Option<u32>,
 ) -> Result<(), Failure> {
     check_compression_level(compression_level)?;
     guarded(|| {
-        let chain = read_chain(transforms)?;
+        let chain = read_chain(transforms, invert)?;
         let field = post::compose_field(&chain, grid).map_err(reg_err)?;
         post::write_field(out_path, &field, compression_level)
             .map_err(|e| Failure::Write(format!("writing {}: {e}", out_path.display())))
     })
 }
 
-/// `image` resampled onto `grid` through the transforms (`antsApplyTransforms`); points that map
-/// outside the image take `default_value`. The voxels are `f32`, x fastest.
+/// `image` resampled onto `grid` through the transforms (`antsApplyTransforms`, `invert` as in
+/// [`read_chain`]); points that map outside the image take `default_value`. The voxels are
+/// `f32`, x fastest.
 pub fn apply(
     image: &Volume<f64>,
     grid: &Grid,
     transforms: &[PathBuf],
+    invert: Option<&[bool]>,
     interp: post::Interp,
     default_value: f64,
 ) -> Result<Vec<f32>, Failure> {
     guarded(|| {
-        let chain = read_chain(transforms)?;
+        let chain = read_chain(transforms, invert)?;
         post::resample(image, grid, &chain, interp, default_value).map_err(reg_err)
     })
 }
@@ -472,17 +582,71 @@ mod tests {
         assert!(check_compression_level(Some(10)).is_err());
         assert!(interpolator("nearestNeighbor").is_ok());
         assert!(interpolator("bspline").is_err());
-        assert!(matches!(read_chain(&[]), Err(Failure::Invalid(_))));
+        assert!(matches!(read_chain(&[], None), Err(Failure::Invalid(_))));
         assert!(matches!(
-            read_chain(&[PathBuf::from("no/such/file.mat")]),
+            read_chain(&[PathBuf::from("no/such/file.mat")], None),
             Err(Failure::Read(_))
         ));
+        assert!(matches!(
+            read_chain(&[PathBuf::from("a.mat")], Some(&[true, false])),
+            Err(Failure::Invalid(_))
+        ));
+        assert!(output_layout("split").is_ok());
+        assert!(matches!(output_layout("tar"), Err(Failure::Invalid(_))));
     }
 
     #[test]
     fn a_missing_output_folder_is_refused() {
         assert!(check_out_folder(Path::new("no_such_folder_fastwarp/sub_")).is_err());
         assert!(check_out_folder(Path::new("sub_")).is_ok());
+    }
+
+    #[test]
+    fn an_inverted_affine_is_its_inverse_and_an_inverted_field_is_refused() {
+        use fastwarp_reg::transform::field_nifti::write_field_nifti;
+        use fastwarp_reg::transform::itk_mat::write_mat_file;
+        use fastwarp_reg::DisplacementField;
+        let d = std::env::temp_dir().join(format!("fastwarp_cli_engine_{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = AffineTransform::new(
+            [[1.05, 0.04, 0.0], [-0.03, 0.97, 0.02], [0.01, 0.0, 1.02]],
+            [1.3, -2.1, 0.7],
+            [2.0, 30.0, 10.0],
+        );
+        let shift = AffineTransform::from_translation([4.0, 0.0, -1.0]);
+        let (pa, ps) = (d.join("a.mat"), d.join("shift.mat"));
+        write_mat_file(&pa, &[TransformElem::Affine(a)]).unwrap();
+        write_mat_file(&ps, &[TransformElem::Affine(shift)]).unwrap();
+        let chain = read_chain(&[pa.clone(), ps.clone()], Some(&[true, false])).unwrap();
+        let inv = a.inverse().unwrap();
+        for p in [[0.0, 0.0, 0.0], [12.0, -5.0, 33.0]] {
+            let want = shift.apply(inv.apply(p));
+            let got = chain.apply(p);
+            for k in 0..3 {
+                assert!((got[k] - want[k]).abs() < 1e-12, "{got:?} {want:?}");
+            }
+        }
+        let plain = read_chain(std::slice::from_ref(&pa), None).unwrap();
+        assert_eq!(
+            plain,
+            read_chain(std::slice::from_ref(&pa), Some(&[false])).unwrap()
+        );
+        let grid = Grid::new(
+            [3, 3, 3],
+            [1.0; 3],
+            [0.0; 3],
+            fastwarp_reg::linalg::IDENTITY3,
+        )
+        .unwrap();
+        let pf = d.join("1Warp.nii.gz");
+        write_field_nifti(&pf, &DisplacementField::zeros(grid)).unwrap();
+        match read_chain(&[pa, pf], Some(&[false, true])) {
+            Err(Failure::Invalid(m)) => {
+                assert!(m.contains("cannot invert the displacement field"), "{m}")
+            }
+            other => panic!("{other:?}"),
+        }
+        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]

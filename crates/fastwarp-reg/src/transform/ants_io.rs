@@ -91,6 +91,18 @@ impl CompositePair {
     }
 }
 
+impl CompositePair {
+    /// The pair of a linear-only registration: `[affine]` and `[affine^-1]`, what ANTs writes as
+    /// `Composite.h5` / `InverseComposite.h5` for a run without a deformable stage. Fails when the
+    /// affine is singular.
+    pub fn linear(affine: &AffineTransform) -> Result<Self> {
+        Ok(Self {
+            forward: TransformChain::from_queue(vec![TransformElem::Affine(*affine)]),
+            inverse: TransformChain::from_queue(vec![TransformElem::Affine(affine.inverse()?)]),
+        })
+    }
+}
+
 /// Writes `<prefix>Composite.h5` and `<prefix>InverseComposite.h5`.
 pub fn write_composite_pair(prefix: &Path, pair: &CompositePair) -> Result<()> {
     write_h5_file(&with_suffix(prefix, COMPOSITE_SUFFIX), &pair.forward)?;

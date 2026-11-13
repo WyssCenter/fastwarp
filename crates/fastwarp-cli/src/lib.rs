@@ -277,6 +277,59 @@ mod tests {
     }
 
     #[test]
+    fn transform_values() {
+        let t = |p: &str, invert: bool| args::TransformArg {
+            path: std::path::PathBuf::from(p),
+            invert,
+        };
+        assert_eq!(args::parse_transform("a.mat"), Ok(t("a.mat", false)));
+        assert_eq!(args::parse_transform("[a.mat,1]"), Ok(t("a.mat", true)));
+        assert_eq!(
+            args::parse_transform("[ a.mat , 0 ]"),
+            Ok(t("a.mat", false))
+        );
+        assert_eq!(args::parse_transform("[a.mat]"), Ok(t("a.mat", false)));
+        assert_eq!(
+            args::parse_transform("[x,y.txt,true]"),
+            Ok(t("x,y.txt", true))
+        );
+        assert!(args::parse_transform("[a.mat,2]").is_err());
+        assert_eq!(
+            args::parse_transform("[dir,with,comma.mat]"),
+            Ok(t("dir,with,comma.mat", false))
+        );
+        assert!(args::parse_transform("[a.mat,1").is_err());
+        assert!(args::parse_transform("[,1]").is_err());
+        assert!(args::parse_transform("").is_err());
+        let cli = args::Cli::try_parse_from([
+            "fastwarp",
+            "register",
+            "f.nii",
+            "m.nii",
+            "-o",
+            "x_",
+            "--outputs",
+            "split",
+        ])
+        .unwrap();
+        match cli.command {
+            args::Command::Register(a) => assert_eq!(a.outputs, args::Outputs::Split),
+            other => panic!("{other:?}"),
+        }
+        assert!(args::Cli::try_parse_from([
+            "fastwarp",
+            "register",
+            "f.nii",
+            "m.nii",
+            "-o",
+            "x_",
+            "--outputs",
+            "tar",
+        ])
+        .is_err());
+    }
+
+    #[test]
     fn winsorize_values() {
         assert_eq!(args::parse_winsorize("0.005,0.995"), Ok((0.005, 0.995)));
         assert_eq!(args::parse_winsorize(" 0 , 1 "), Ok((0.0, 1.0)));

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from os import PathLike, fspath
 from pathlib import Path
 from typing import Any
@@ -77,6 +77,10 @@ def _prepared_prefix(out_prefix: str | PathLike[str]) -> str:
     return prefix
 
 
+#: Output layouts :func:`register_syn` writes.
+OUTPUT_LAYOUTS = ("composite", "split", "both")
+
+
 def register_syn(
     fixed: Any | list[Any],
     moving: Any | list[Any],
@@ -86,30 +90,49 @@ def register_syn(
     write_warped: bool = False,
     adapter: str | None = None,
     cancel: CancelToken | None = None,
-    recipe: Mapping[str, Mapping[str, Any]] | None = None,
+    recipe: Mapping[str, Any] | None = None,
+    outputs: str = "composite",
 ) -> dict[str, Any]:
-    """Register ``moving`` to ``fixed`` on the GPU: Rigid and Affine (Mattes MI, first channel),
-    then SyN (CC, every channel), from a centre-of-mass start.
+    """Register ``moving`` to ``fixed`` on the GPU. By default: Rigid and Affine (Mattes MI,
+    first channel), then SyN (CC, every channel), from a centre-of-mass start.
 
     ``fixed`` / ``moving``: one image, or a list of two (T1w + T2w) for the multispectral SyN
-    stage, the moving T2w already in the moving T1w's space. Writes
-    ``<out_prefix>Composite.h5`` and ``<out_prefix>InverseComposite.h5`` (ANTs layout:
-    ``[Affine, Warp]`` and ``[InverseWarp, Affine^-1]``) plus ``<out_prefix>0GenericAffine.mat``.
-    A prefix string ending in a path separator, such as ``"out/sub/"``, is a folder, as in ANTs
-    (a ``pathlib.Path`` drops a trailing separator). Returns timings and per-level diagnostics.
+    stage, the moving T2w already in the moving T1w's space. A prefix string ending in a path
+    separator, such as ``"out/sub/"``, is a folder, as in ANTs (a ``pathlib.Path`` drops a
+    trailing separator). Returns timings and per-level diagnostics.
 
-    ``recipe`` sets the schedule: ``{"rigid": {...}, "affine": {...}, "syn": {...}}`` with the
-    fields :func:`cohort_recipe` returns. A stage or field left out keeps the dbs-localizer cohort
-    value; an unknown key or a value the GPU kernels do not support (MI bins other than 32, a CC
-    radius above 8) raises ``ValueError`` before any work. The result's ``"recipe"`` is the full
-    recipe that ran.
+    ``outputs`` chooses the transform files (ANTs names, after ``out_prefix``):
+    ``"composite"`` (default) writes ``Composite.h5`` and ``InverseComposite.h5`` (``[Affine,
+    Warp]`` and ``[InverseWarp, Affine^-1]``; ``[Affine]`` and ``[Affine^-1]`` without a SyN
+    stage) plus ``0GenericAffine.mat``; ``"split"`` writes what ``antsRegistration`` writes without
+    ``--write-composite-transform``: ``0GenericAffine.mat`` and, after a SyN stage,
+    ``1Warp.nii.gz`` / ``1InverseWarp.nii.gz`` (``float32`` fields; ANTs writes ``float64``);
+    ``"both"`` writes all. The result's ``"files"``
+    lists the paths written.
+
+    ``recipe`` sets the stages and their schedule, in one of two forms. The cohort form
+    ``{"rigid": {...}, "affine": {...}, "syn": {...}}`` takes the fields :func:`cohort_recipe`
+    returns. The stage-list form ``{"initial": ..., "stages": [...]}`` takes ``initial``:
+    ``"com"`` (default, centres of intensity mass), ``"identity"``, a transform file as
+    ``pathlib.Path`` or ``{"path": ..., "invert": bool}`` (one affine, ``.mat``/``.txt``), or
+    ``(parameters, center)`` / ``{"parameters": [...], "center": [...]}`` (a relative path is
+    read from the current folder); and ``stages``: a list
+    of dicts with ``"transform"`` ``"rigid"``, ``"affine"`` or ``"syn"`` plus that stage's fields,
+    any number of linear stages followed by at most one SyN stage (SyN alone is allowed; default:
+    the cohort's three). Both forms take ``"winsorize"``: ``[lower, upper]`` intensity quantiles
+    (default ``[0.005, 0.995]``) or ``None`` for ANTs' plain rescale to [0, 1] (what
+    ``antsRegistration`` does without ``--winsorize-image-intensities``). A stage or field left
+    out keeps the dbs-localizer cohort value; an unknown key or a value the GPU kernels do not
+    support (MI bins other than 32, a CC radius above 8) raises ``ValueError`` before any work.
+    The result's ``"recipe"`` is the full recipe that ran, in the form given.
 
     ``adapter`` picks a GPU by a substring of its name. ``cancel`` stops the run at the next
     iteration when another thread calls ``cancel.cancel()``; the GIL is released while it runs.
 
     Raises :class:`GpuUnavailableError` (no hardware GPU), :class:`GpuCapacityError` (the
-    ``iso_mm`` grid does not fit; checked before any work), :class:`RegistrationCancelled` and
-    :class:`RegistrationError`. The first two mean "use another engine".
+    ``iso_mm`` grid does not fit; checked for every stage before any work),
+    :class:`RegistrationCancelled` and :class:`RegistrationError`. The first two mean "use another
+    engine".
     """
     return _register_syn(
         [_image_args(i) for i in _as_list(fixed)],
@@ -119,12 +142,45 @@ def register_syn(
         write_warped=write_warped,
         adapter=adapter,
         cancel=cancel,
-        recipe=None if recipe is None else {k: _as_dict(v) for k, v in recipe.items()},
+        recipe=_recipe_arg(recipe),
+        outputs=outputs,
     )
 
 
 def _as_dict(stage: Any) -> Any:
     return dict(stage) if isinstance(stage, Mapping) else stage
+
+
+def _initial_arg(initial: Any) -> Any:
+    if isinstance(initial, PathLike):
+        return {"path": fspath(initial)}
+    if isinstance(initial, Mapping):
+        d = dict(initial)
+        if isinstance(d.get("path"), PathLike):
+            d["path"] = fspath(d["path"])
+        return d
+    if isinstance(initial, (tuple, list)) and len(initial) == 2:
+        params, center = _initial((initial[0], initial[1]))
+        return {"parameters": list(params), "center": list(center)}
+    return initial
+
+
+def _recipe_arg(recipe: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """``recipe`` as plain dicts and lists for the extension: mappings copied, the stage list
+    made a list of dicts, a path start made ``{"path": str}``."""
+    if recipe is None:
+        return None
+    out: dict[str, Any] = {}
+    for k, v in recipe.items():
+        if k == "stages" and isinstance(v, Sequence) and not isinstance(v, (str, bytes)):
+            out[k] = [_as_dict(stage) for stage in v]
+        elif k == "initial":
+            out[k] = _initial_arg(v)
+        elif k == "winsorize" and isinstance(v, tuple):
+            out[k] = list(v)
+        else:
+            out[k] = _as_dict(v)
+    return out
 
 
 def cohort_recipe(channels: int = 1) -> dict[str, dict[str, Any]]:
@@ -155,15 +211,18 @@ def fits_gpu(
     iso_mm: float = 1.0,
     channels: int | None = None,
     adapter: str | None = None,
+    recipe: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Whether :func:`register_syn` of ``fixed`` at ``iso_mm`` fits the GPU (False without one).
+    """Whether :func:`register_syn` of ``fixed`` at ``iso_mm`` with ``recipe`` (default: the cohort
+    chain) fits the GPU (False without one).
 
     ``fixed`` / ``moving`` are what :func:`register_syn` takes: an image or a list of 1 or 2 of
     them (the first fixed image sets the grid; the moving grid is the largest of the moving
     images, and there are as many moving images as fixed ones). ``channels`` defaults to the number
     of fixed images; give it to ask about a second channel when passing one image. Give ``moving``
     to get exactly the answer of the capacity check ``register_syn`` runs; without it the moving
-    image is assumed to have the fixed grid, which undercounts when it is larger. Invalid
+    image is assumed to have the fixed grid, which undercounts when it is larger. ``recipe`` is
+    what :func:`register_syn` takes; a chain without a SyN stage needs far less memory. Invalid
     arguments raise ``ValueError`` as in :func:`register_syn`.
     """
     fixed_list = _as_list(fixed)
@@ -187,7 +246,9 @@ def fits_gpu(
         grids = [iso_grid_dims(m, iso_mm) for m in moving_list]
         moving_dims = max(grids, key=lambda d: d[0] * d[1] * d[2])
     try:
-        return _fits_gpu(iso_grid_dims(fixed_img, iso_mm), channels, adapter, moving_dims)
+        return _fits_gpu(
+            iso_grid_dims(fixed_img, iso_mm), channels, adapter, moving_dims, _recipe_arg(recipe)
+        )
     except GpuUnavailableError:
         return False
 
@@ -232,29 +293,49 @@ def _transform_paths(transforms: Any) -> list[str]:
     return [str(t) for t in items]
 
 
+def _invert_flags(invert: Any, count: int) -> list[bool] | None:
+    """``invert`` as one ``bool`` per transform (``None`` stays ``None``: nothing inverted)."""
+    if invert is None:
+        return None
+    if isinstance(invert, np.ndarray) and invert.ndim == 1 and invert.dtype == bool:
+        invert = invert.tolist()
+    if isinstance(invert, (bool, np.bool_)) or not isinstance(invert, Sequence):
+        raise ValueError("invert must be a list with one bool per transform")
+    flags = list(invert)
+    if len(flags) != count:
+        raise ValueError(f"invert has {len(flags)} flags for {count} transforms")
+    if not all(isinstance(f, (bool, np.bool_)) for f in flags):
+        raise ValueError("invert must hold bools (True inverts that transform)")
+    return [bool(f) for f in flags]
+
+
 def compose_field(
     transforms: str | PathLike[str] | list[str | PathLike[str]],
     reference: Any,
     out_path: str | PathLike[str],
     *,
     compression_level: int | None = None,
+    invert: Sequence[bool] | None = None,
 ) -> Path:
     """Write the transforms as one displacement field on ``reference``'s grid.
 
     The file ``antsApplyTransforms --compose`` / ``ants.apply_transforms(compose=...)`` writes
     (vectors in LPS mm, ``float32``), computed in parallel and written with parallel gzip when
     ``out_path`` ends in ``.nii.gz``. ``transforms`` is a list as ``ants.apply_transforms`` takes
-    it, with the same meaning.
+    it, with the same meaning; ``invert`` as in :func:`apply_transforms`.
     ``compression_level`` (0 to 9) sets the gzip level; 0 stores the data in valid gzip without
     compressing it, which suits displacement fields (they barely compress).
     """
+    paths = _transform_paths(transforms)
+    flags = _invert_flags(invert, len(paths))
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     _compose_field(
-        _transform_paths(transforms),
+        paths,
         _grid_args(reference),
         str(out),
         compression_level=compression_level,
+        invert=flags,
     )
     return out
 
@@ -266,21 +347,30 @@ def apply_transforms(
     *,
     interpolation: str = "linear",
     default_value: float = 0.0,
+    invert: Sequence[bool] | None = None,
 ) -> Any:
     """Resample ``moving`` onto ``reference`` through ``transforms`` (``antsApplyTransforms``).
 
     ``transforms`` is a list as ``ants.apply_transforms`` takes it, with the same meaning.
-    ``interpolation`` is one of :data:`INTERPOLATORS`. Returns an ``ANTsImage`` like
+    ``invert`` is ANTsPy's ``whichtoinvert``: one ``bool`` per transform (a list, tuple or 1-D
+    boolean array; ``0`` / ``1`` are refused), ``True`` to use that transform's inverse in its
+    place (``antsApplyTransforms -t [file,1]``). Only linear transforms
+    (``.mat``, ``.txt``, or a composite holding only affines) can be inverted; a displacement
+    field raises ``ValueError`` (pass the matching ``InverseWarp`` / ``InverseComposite`` file).
+    ``None`` inverts nothing; unlike ANTsPy there is no automatic default for an affine followed
+    by a field. ``interpolation`` is one of :data:`INTERPOLATORS`. Returns an ``ANTsImage`` like
     ``reference`` when it is one, else a ``float32`` array of the reference's shape. Points that
     map outside ``moving`` take ``default_value``.
     """
     size, spacing, origin, direction = _grid_args(reference)
+    paths = _transform_paths(transforms)
     flat = _apply_transforms(
         _image_args(moving),
         (size, spacing, origin, direction),
-        _transform_paths(transforms),
+        paths,
         interpolation=interpolation,
         default_value=float(default_value),
+        invert=_invert_flags(invert, len(paths)),
     )
     arr = flat.reshape(size, order="F")
     if hasattr(reference, "new_image_like"):
@@ -402,7 +492,11 @@ def linear_session(
 
     ``fixed_mask``: an image on any grid whose non-zero voxels are where the metric samples (in
     fits with ``use_mask`` that bring no mask of their own). ``winsorize``: ``(lower, upper)``
-    intensity quantiles, as ``--winsorize-image-intensities``.
+    intensity quantiles, as ``--winsorize-image-intensities``; ``(0.0, 1.0)`` is exactly what
+    ``antsRegistration`` does without that option (a rescale to [0, 1]). ``None`` (default) feeds
+    the intensities as they are. Mattes MI is invariant to that affine rescale in exact arithmetic,
+    but the ``float32`` GPU kernels are not, so the two can take different optimiser paths and
+    end at slightly different transforms; pass ``(0.0, 1.0)`` to preprocess as ANTs does.
     """
     return LinearSession(fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter)
 

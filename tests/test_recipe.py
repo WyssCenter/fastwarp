@@ -91,7 +91,7 @@ def _bad(**stages):
         (_bad(syn={"sigma_units": "px"}), "'vox' or 'mm'"),
         (_bad(rigid={"sampling_percentage": 1.5}), "sampling percentage"),
         (_bad(syn={"gradient_step": 0.0}), "gradient step"),
-        (_bad(syn={"smoothing_sigmas": [3.0, 2.0, float("nan"), 0.0]}), "smoothing sigmas"),
+        (_bad(syn={"smoothing_sigmas": [3.0, 2.0, float("nan"), 0.0]}), "smoothing_sigmas.*finite"),
         (_bad(affine={"convergence_window": 1}), "window"),
     ],
 )

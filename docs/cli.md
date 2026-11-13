@@ -45,15 +45,22 @@ it does not exist.
 
 ```bash
 fastwarp register FIXED MOVING -o PREFIX [--fixed2 F2 --moving2 M2] [--iso-mm MM]
-                  [--recipe FILE] [--write-warped] [--adapter NAME] [--json]
+                  [--recipe FILE] [--outputs composite|split|both] [--write-warped]
+                  [--adapter NAME] [--json]
 ```
 
 Registers MOVING to FIXED: centre of mass, Rigid and Affine (Mattes mutual information, first
-channel), then SyN (cross-correlation, every channel). This is `fastwarp.register_syn`.
+channel), then SyN (cross-correlation, every channel), or the start and stages a stage-list
+recipe names. This is `fastwarp.register_syn`.
 
 - `-o, --output PREFIX`: writes `<PREFIX>Composite.h5` (`[Affine, Warp]`),
   `<PREFIX>InverseComposite.h5` (`[InverseWarp, Affine^-1]`) and `<PREFIX>0GenericAffine.mat`.
   A prefix that ends in a path separator, such as `out/sub/`, is a folder, as in ANTs.
+- `--outputs`: `composite` (default, the files above), `split` (what `antsRegistration` writes
+  without `--write-composite-transform`: `<PREFIX>0GenericAffine.mat` and, after a SyN stage,
+  `<PREFIX>1Warp.nii.gz` and `<PREFIX>1InverseWarp.nii.gz`, written as `float32` where ANTs
+  writes `float64`) or `both`. Without a SyN stage the
+  composites hold only the affine.
 - `--fixed2 F2 --moving2 M2`: a second channel (for example T2w) for the SyN stage. The second
   moving image must already be in the space of MOVING. Give both or neither.
 - `--iso-mm MM`: spacing of the isotropic grid the registration runs on, in millimetres. The
@@ -63,17 +70,30 @@ channel), then SyN (cross-correlation, every channel). This is `fastwarp.registe
   This default differs from the Python function: `register_syn` uses 1.0 mm unless `iso_mm` is
   given. To get the result of a Python call that leaves `iso_mm` out, pass `--iso-mm 1`. A finer
   grid needs more GPU memory and time; `fastwarp fits` tells whether it fits.
-- `--recipe FILE`: the schedule as a JSON file, in the form `fastwarp recipe` prints. A stage or
-  field left out keeps the default value. An unknown key, a wrong type or a value the GPU
-  kernels do not support is refused with exit status 2 before any work.
+- `--recipe FILE`: the schedule as a JSON file, in the form `fastwarp recipe` prints or in the
+  stage-list form of the Python API, for example a SyN-only run from the identity:
+
+  ```json
+  {"initial": "identity", "stages": [{"transform": "syn", "cc_radius": 2}], "winsorize": null}
+  ```
+
+  `initial` is `"com"`, `"identity"`, `{"path": "start.mat", "invert": false}` (a relative path
+  is read from the folder of the recipe file) or `{"parameters": [...], "center": [...]}`;
+  `stages` lists
+  `rigid` / `affine` stages and at most one `syn` stage, last; `winsorize` is `[lower, upper]`
+  or `null` (ANTs' plain rescale to [0, 1]). A stage or field left out keeps the default value.
+  An unknown key, a wrong type, an unsupported stage order or a value the GPU kernels do not
+  support is refused with exit status 2 before any work.
 - `--write-warped`: also writes `<PREFIX>_Warped.nii.gz`, MOVING on the registration grid.
 - `--adapter NAME`: use the GPU whose name contains NAME.
 - `--json`: print the timings and diagnostics as JSON: the keys of the dictionary
-  `register_syn` returns, with `levels` as a list of objects, and `outputs`, the files written.
+  `register_syn` returns (`files` among them), with `levels` as a list of objects, and
+  `outputs`, the files written (the same list as `files`).
 
 The capacity check runs before the registration: a grid that does not fit the GPU stops with
 exit status 5, and no transform files are written (the output folder may already have been
-created).
+created). It checks the linear stages and the SyN stage each on its own and requires the larger
+of the two to fit.
 
 ### linear
 
@@ -115,8 +135,12 @@ does. This is `fastwarp.apply_transforms`; it runs on the CPU and needs no GPU.
   `antsApplyTransforms -t` and of the list `ants.apply_transforms` takes: a point of the
   reference grid goes through the first transform given first, then through the next. For the
   output of `fastwarp register`, give `-t <PREFIX>Composite.h5` to bring MOVING onto FIXED, and
-  `-t <PREFIX>InverseComposite.h5` to bring FIXED onto MOVING. Inverting a transform file
-  (`[file,1]` in ANTs) is not supported.
+  `-t <PREFIX>InverseComposite.h5` to bring FIXED onto MOVING. `-t [FILE,1]` uses the inverse of
+  a linear transform (`.mat`, `.txt`, or a composite of affines) in its place, as in ANTs
+  (quote it in a shell that expands brackets); with the split outputs FIXED goes onto
+  MOVING with `-t [<PREFIX>0GenericAffine.mat,1] -t <PREFIX>1InverseWarp.nii.gz`. Inverting a
+  displacement field is refused with exit status 2 (ANTs exits 1 without a message): pass the
+  matching `InverseWarp` / `InverseComposite` file.
 - `-n, --interpolation`: `linear` (default), `nearestNeighbor` or `lanczosWindowedSinc`.
 - `-f, --default-value`: value of points that map outside INPUT (default 0).
 
@@ -156,14 +180,17 @@ found.
 ### fits
 
 ```bash
-fastwarp fits FIXED [MOVING] [--iso-mm MM] [--channels 1|2] [--adapter NAME] [--json]
+fastwarp fits FIXED [MOVING] [--iso-mm MM] [--channels 1|2] [--recipe FILE] [--adapter NAME]
+              [--json]
 ```
 
 Checks whether a registration of FIXED (and MOVING) at `--iso-mm` fits the GPU, with the check
 `register` runs first. `--iso-mm` defaults to the smallest voxel spacing of FIXED, as for
 `register` (the Python function `fits_gpu` defaults to 1.0 mm). Only the image headers are
 read. Exit status 0 when it fits, 5 when it does not, 4 when there is no usable GPU. Without
-MOVING, the moving grid is taken to be the fixed grid. This is `fastwarp.fits_gpu`.
+MOVING, the moving grid is taken to be the fixed grid. `--recipe` checks the stages of that
+recipe (default: the cohort recipe); a chain without a SyN stage needs far less GPU memory. This
+is `fastwarp.fits_gpu`.
 
 ### bench
 

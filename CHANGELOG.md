@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Stage lists: `register_syn(recipe={"initial": ..., "stages": [...]})` runs any number of
+  Rigid / Affine stages followed by at most one SyN stage (SyN alone is allowed), from the centres
+  of mass (`"com"`, the default), the identity (`"identity"`), one affine from a `.mat` / `.txt`
+  file (optionally inverted) or given parameters. Without a SyN stage the composites hold only the
+  affine, as ANTs writes them. The capacity check (in `register_syn`, `fits_gpu(recipe=...)` and
+  `fastwarp fits --recipe`) covers every stage: a linear-only chain is checked against the memory
+  its sample buffers need, not the SyN stage's, and a chain with both is refused when the larger
+of the two phases does not fit. A relative path of the start file is read from the current folder
+in Python and from the recipe file's folder in `fastwarp register --recipe`. The existing recipe form keeps working and gives
+  bit-identical outputs. The result dict adds `initial_parameters`, `initial_center`,
+  `linear_stages`, `deformable` and `files`.
+- The recipe key `"winsorize"`: `[lower, upper]` quantiles (default `[0.005, 0.995]`, as before) or
+  `None` for ANTs' plain rescale to [0, 1], what `antsRegistration` (and every ANTsPy call) does
+  without `--winsorize-image-intensities`. `LinearSession(winsorize=None)` is unchanged: it uses
+  the intensities without any rescale; `winsorize=(0.0, 1.0)` is ANTs' default preprocessing.
+- `register_syn(outputs="split" | "both")` (`fastwarp register --outputs`) writes ANTs'
+  non-composite files `0GenericAffine.mat`, `1Warp.nii.gz`, `1InverseWarp.nii.gz`; the fields are
+  `float32` (ANTs writes `float64`).
+- `apply_transforms(..., invert=[...])` and `compose_field(..., invert=[...])`, ANTsPy's
+  `whichtoinvert` (one flag per transform), and `fastwarp apply` / `compose -t [file,1]`, as
+  `antsApplyTransforms -t [file,1]`: a linear transform is replaced by its inverse in place.
+  Inverting a displacement field raises `ValueError` (exit status 2) instead of ANTs' silent exit 1.
 - A command line, `fastwarp` (also `python -m fastwarp`), for NIfTI files: `register`
   (`register_syn`), `linear` (one rigid or affine fit), `apply` (`apply_transforms`), `compose`
   (`compose_field`), `recipe` (the default recipe as JSON), `gpu-info`, `fits` and `bench` (timings

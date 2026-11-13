@@ -142,8 +142,8 @@ def test_fits_gpu_passes_the_largest_moving_grid(monkeypatch):
     monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a) or True)
     g.fits_gpu(phantom(), iso_mm=SPACING)
     g.fits_gpu([phantom(), phantom()], [blank((10, 10, 10)), blank((90, 20, 20))], iso_mm=SPACING)
-    assert seen[0] == (SHAPE, 1, None, None)
-    assert seen[1] == (SHAPE, 2, None, (90, 20, 20))
+    assert seen[0] == (SHAPE, 1, None, None, None)
+    assert seen[1] == (SHAPE, 2, None, (90, 20, 20), None)
 
 
 def test_fits_gpu_validates_arguments():

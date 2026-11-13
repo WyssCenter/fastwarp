@@ -553,7 +553,7 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
             failed: None,
             runs: Vec::new(),
         };
-        match engine::capacity_check(dims, Some(moving_dims), 1, adapter.clone())? {
+        match engine::capacity_check(dims, Some(moving_dims), 1, adapter.clone(), &recipe)? {
             Err(why) => case.skipped = Some(format!("does not fit the GPU: {why}")),
             Ok(()) => {
                 let runs = time_case(
@@ -578,7 +578,7 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
                 failed: None,
                 runs: Vec::new(),
             };
-            match engine::capacity_check(size.dims(), None, 1, adapter.clone())? {
+            match engine::capacity_check(size.dims(), None, 1, adapter.clone(), &recipe)? {
                 Err(why) => case.skipped = Some(format!("does not fit the GPU: {why}")),
                 Ok(()) => {
                     let (fixed, moving) = phantom(size)?;

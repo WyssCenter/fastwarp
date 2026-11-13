@@ -363,6 +363,87 @@ def test_fits_agrees_with_fits_gpu(ants, registered):
     assert json.loads(p.stdout)["grid"] == list(g.iso_grid_dims(fixed, SPACING))
 
 
+STAGE_LIST = {
+    "initial": "identity",
+    "stages": [{"transform": "syn", **SMALL_RECIPE["syn"]}],
+    "winsorize": None,
+}
+
+
+@needs_gpu
+def test_a_stage_list_recipe_and_split_outputs_match_the_python_api(ants, registered):
+    d, files, _, _ = registered
+    recipe = d / "stages.json"
+    recipe.write_text(json.dumps(STAGE_LIST))
+    prefix = d / "split" / "sub_"
+    p = ok(
+        "register",
+        files["fixed"],
+        files["moving"],
+        "-o",
+        f"{prefix}",
+        "--iso-mm",
+        str(SPACING),
+        "--recipe",
+        recipe,
+        "--outputs",
+        "split",
+        "--json",
+    )
+    info = json.loads(p.stdout)
+    names = [Path(f).name for f in info["outputs"]]
+    assert names == ["sub_0GenericAffine.mat", "sub_1Warp.nii.gz", "sub_1InverseWarp.nii.gz"]
+    assert info["deformable"] and info["linear_stages"] == []
+    fixed = ants.image_read(str(files["fixed"]))
+    moving = ants.image_read(str(files["moving"]))
+    api = g.register_syn(
+        fixed, moving, d / "split_api" / "sub_", iso_mm=SPACING, recipe=STAGE_LIST, outputs="split"
+    )
+    assert info["recipe"] == api["recipe"]
+    assert info["affine_parameters"] == api["affine_parameters"]
+    for f in names[1:]:
+        mine = ants.image_read(str(d / "split" / f)).numpy()
+        theirs = ants.image_read(str(d / "split_api" / f)).numpy()
+        np.testing.assert_array_equal(mine, theirs)
+    out = d / "split_warped.nii.gz"
+    tx = [f"{prefix}1Warp.nii.gz", f"{prefix}0GenericAffine.mat"]
+    ok("apply", "-r", files["fixed"], "-i", files["moving"], "-o", out, "-t", tx[0], "-t", tx[1])
+    theirs = ants.apply_transforms(fixed=fixed, moving=moving, transformlist=tx)
+    assert np.abs(ants.image_read(str(out)).numpy() - theirs.numpy()).max() < 1e-3
+
+
+@needs_gpu
+def test_fits_checks_the_stages_of_the_recipe(ants, registered, monkeypatch):
+    d, files, _, _ = registered
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "1")
+    linear = d / "linear.json"
+    linear.write_text(json.dumps({"stages": [{"transform": "rigid"}]}))
+    common = ("fits", files["fixed"], files["moving"], "--iso-mm", str(SPACING))
+    assert run(*common).returncode == 5
+    assert run(*common, "--recipe", linear).returncode == 0
+
+
+def test_apply_inverts_an_affine_like_ants(ants, tmp_path):
+    img = ants.from_numpy(_head(), spacing=(SPACING,) * 3)
+    src = tmp_path / "img.nii.gz"
+    ants.image_write(img, str(src))
+    tx = ants.create_ants_transform(
+        transform_type="AffineTransform",
+        dimension=3,
+        matrix=np.array([[1.04, 0.02, 0.0], [-0.01, 0.97, 0.0], [0.0, 0.03, 1.0]]),
+        translation=(2.0, -1.0, 3.0),
+        center=(50.0, 60.0, 40.0),
+    )
+    mat = tmp_path / "a.mat"
+    ants.write_transform(tx, str(mat))
+    out = tmp_path / "inv.nii.gz"
+    ok("apply", "-r", src, "-i", src, "-o", out, "-t", f"[{mat},1]")
+    theirs = ants.apply_transforms(
+        fixed=img, moving=img, transformlist=[str(mat)], whichtoinvert=[True]
+    )
+    assert np.abs(ants.image_read(str(out)).numpy() - theirs.numpy()).max() < 1e-3
+
+
 @needs_gpu
 def test_the_default_grid_is_the_finest_fixed_spacing(tmp_path):
     sform = np.diag([1.2, 0.8, 1.5, 1.0])
