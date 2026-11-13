@@ -375,13 +375,9 @@ def test_the_default_grid_is_the_finest_fixed_spacing(tmp_path):
 
 
 @needs_gpu
-def test_gpu_info_is_the_python_gpu_info():
-    cli = json.loads(ok("gpu-info").stdout)
-    py = g.gpu_info()
-    budget_cli = cli.pop("memory_budget_bytes")
-    budget_py = py.pop("memory_budget_bytes")
-    assert cli == py
-    assert budget_cli == pytest.approx(budget_py, rel=0.05)
+def test_gpu_info_is_the_python_gpu_info(monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "4096")
+    assert json.loads(ok("gpu-info").stdout) == g.gpu_info()
 
 
 def test_no_gpu_gives_exit_4(monkeypatch):
