@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from os import PathLike, fspath
 from pathlib import Path
@@ -152,22 +153,37 @@ def fits_gpu(
     moving: Any | None = None,
     *,
     iso_mm: float = 1.0,
-    channels: int = 1,
+    channels: int | None = None,
     adapter: str | None = None,
 ) -> bool:
     """Whether :func:`register_syn` of ``fixed`` at ``iso_mm`` fits the GPU (False without one).
 
-    ``fixed`` / ``moving`` are what :func:`register_syn` takes: an image or a list of them (the
-    first fixed image sets the grid; the moving grid is the largest of the moving images). Give
-    ``moving`` to get exactly the answer of the capacity check ``register_syn`` runs; without it
-    the moving image is assumed to have the fixed grid, which undercounts when it is larger.
+    ``fixed`` / ``moving`` are what :func:`register_syn` takes: an image or a list of 1 or 2 of
+    them (the first fixed image sets the grid; the moving grid is the largest of the moving
+    images, and there are as many moving images as fixed ones). ``channels`` defaults to the number
+    of fixed images; give it to ask about a second channel when passing one image. Give ``moving``
+    to get exactly the answer of the capacity check ``register_syn`` runs; without it the moving
+    image is assumed to have the fixed grid, which undercounts when it is larger. Invalid
+    arguments raise ``ValueError`` as in :func:`register_syn`.
     """
-    fixed_img = _as_list(fixed)[0]
+    fixed_list = _as_list(fixed)
+    if not 1 <= len(fixed_list) <= 2:
+        raise ValueError("give 1 or 2 fixed images")
+    moving_list = None if moving is None else _as_list(moving)
+    if moving_list is not None and len(moving_list) != len(fixed_list):
+        raise ValueError("give as many moving images as fixed images")
+    if channels is None:
+        channels = len(fixed_list)
+    elif isinstance(fixed, list) and channels != len(fixed_list):
+        raise ValueError(f"channels={channels} does not match {len(fixed_list)} fixed images")
+    elif channels < 1:
+        raise ValueError("channels must be at least 1")
+    if not (math.isfinite(iso_mm) and iso_mm > 0.0):
+        raise ValueError("iso_mm must be a positive number")
+    fixed_img = fixed_list[0]
     moving_dims = None
-    if moving is not None:
-        grids = [iso_grid_dims(m, iso_mm) for m in _as_list(moving)]
-        if not grids:
-            raise ValueError("moving is an empty list")
+    if moving_list is not None:
+        grids = [iso_grid_dims(m, iso_mm) for m in moving_list]
         moving_dims = max(grids, key=lambda d: d[0] * d[1] * d[2])
     try:
         return _fits_gpu(iso_grid_dims(fixed_img, iso_mm), channels, adapter, moving_dims)

@@ -197,7 +197,7 @@ point goes through the first element first.
 | --- | --- |
 | `gpu_available(adapter=None)` | `True` when a usable hardware GPU opens |
 | `gpu_info(adapter=None)` | describes the GPU, or raises `GpuUnavailableError` |
-| `fits_gpu(fixed, moving=None, *, iso_mm=1.0, channels=1, adapter=None)` | whether `register_syn` at `iso_mm` fits; `False` without a GPU; without `moving` the moving image is assumed to have the fixed grid |
+| `fits_gpu(fixed, moving=None, *, iso_mm=1.0, channels=None, adapter=None)` | whether `register_syn` at `iso_mm` fits (`channels` defaults to the number of fixed images); `False` without a GPU; without `moving` the moving image is assumed to have the fixed grid |
 | `iso_grid_dims(img, iso_mm=1.0)` | voxels per axis of the registration grid |
 
 `GpuUnavailableError` and `GpuCapacityError` are raised before any work, so a caller can fall

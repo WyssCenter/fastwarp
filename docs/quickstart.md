@@ -46,7 +46,7 @@ import fastwarp
 fixed = [ants.image_read("tpl_t1.nii"), ants.image_read("tpl_t2.nii")]
 moving = [ants.image_read("sub_T1w.nii.gz"), ants.image_read("sub_T2w_in_T1w.nii.gz")]
 
-if fastwarp.fits_gpu(fixed, moving, iso_mm=1.0, channels=2):
+if fastwarp.fits_gpu(fixed, moving, iso_mm=1.0):
     info = fastwarp.register_syn(fixed, moving, "out/sub_", iso_mm=1.0)
     warped = ants.apply_transforms(fixed[0], moving[0], ["out/sub_Composite.h5"])
     print(info["adapter"], f'{info["total_s"]:.1f} s')

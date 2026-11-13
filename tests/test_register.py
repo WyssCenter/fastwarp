@@ -141,17 +141,53 @@ def test_fits_gpu_passes_the_largest_moving_grid(monkeypatch):
     seen = []
     monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a) or True)
     g.fits_gpu(phantom(), iso_mm=SPACING)
-    g.fits_gpu(phantom(), [blank((10, 10, 10)), blank((90, 20, 20))], iso_mm=SPACING, channels=2)
+    g.fits_gpu([phantom(), phantom()], [blank((10, 10, 10)), blank((90, 20, 20))], iso_mm=SPACING)
     assert seen[0] == (SHAPE, 1, None, None)
     assert seen[1] == (SHAPE, 2, None, (90, 20, 20))
 
 
+def test_fits_gpu_validates_arguments():
+    p = phantom()
+    for call in (
+        lambda: g.fits_gpu([]),
+        lambda: g.fits_gpu([p, p, p]),
+        lambda: g.fits_gpu(p, [p, p]),
+        lambda: g.fits_gpu([p, p], p),
+        lambda: g.fits_gpu([p, p], channels=1),
+        lambda: g.fits_gpu(p, channels=0),
+        lambda: g.fits_gpu(p, iso_mm=-1.0),
+        lambda: g.fits_gpu(p, iso_mm=float("nan")),
+    ):
+        with pytest.raises(ValueError):
+            call()
+
+
+def test_fits_gpu_channels_follow_the_fixed_images(monkeypatch):
+    seen = []
+    monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a[1]) or True)
+    p = phantom()
+    g.fits_gpu(p)
+    g.fits_gpu([p, p], [p, p])
+    g.fits_gpu(p, channels=2)
+    assert seen == [1, 2, 2]
+
+
 @needs_gpu
-def test_fits_gpu_checks_the_moving_grid(monkeypatch):
+def test_fits_gpu_counts_both_channels(monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "30")
+    p = phantom()
+    assert g.fits_gpu(p, iso_mm=SPACING)
+    assert not g.fits_gpu([p, p], [p, p], iso_mm=SPACING)
+
+
+@needs_gpu
+def test_fits_gpu_checks_the_moving_grid(tmp_path, monkeypatch):
     monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "40")
     big = blank((SHAPE[0] * 4, SHAPE[1] * 4, SHAPE[2] * 4))
     assert g.fits_gpu(phantom(), iso_mm=SPACING)
     assert not g.fits_gpu(phantom(), big, iso_mm=SPACING)
+    with pytest.raises(g.GpuCapacityError):
+        g.register_syn(phantom(), big, tmp_path / "big_", iso_mm=SPACING)
     assert g.fits_gpu(phantom(), phantom(), iso_mm=SPACING)
 
 
