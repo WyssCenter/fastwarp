@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any
@@ -58,44 +58,70 @@ DEFAULT_SECONDS = {
 }
 
 
+#: The variables FastWarp's thread pool reads for its thread count.
+RAYON_THREAD_VARS = ("RAYON_NUM_THREADS", "RAYON_RS_NUM_CPUS")
+
+
+def itk_thread_vars(env: Mapping[str, str]) -> tuple[str, ...]:
+    """The variables ITK 5 reads for its default thread count in ``env``:
+    ``ITK_NUMBER_OF_THREADS_ENV_LIST`` itself, the names it lists (``NSLOTS`` when it is not
+    set) and ``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS``, which ITK reads last, so it wins."""
+    listed = env.get("ITK_NUMBER_OF_THREADS_ENV_LIST")
+    names = [n for n in (listed.split(":") if listed is not None else ["NSLOTS"]) if n]
+    return tuple(dict.fromkeys(["ITK_NUMBER_OF_THREADS_ENV_LIST", *names, ITK_THREADS]))
+
+
+def thread_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The thread-count variables of ITK and FastWarp set in ``env`` (default: this process),
+    which the all-cores setting removes."""
+    env = os.environ if env is None else env
+    names = (*itk_thread_vars(env), *RAYON_THREAD_VARS)
+    return {n: env[n] for n in names if n in env}
+
+
+def _with_threads(env: dict[str, str], names: tuple[str, ...], var: str, threads: int | None):
+    for n in names:
+        env.pop(n, None)
+    if threads is not None:
+        env[var] = str(threads)
+
+
 @contextmanager
-def _env_var(name: str, value: str | None) -> Iterator[None]:
-    old = os.environ.get(name)
-    if value is None:
-        os.environ.pop(name, None)
-    else:
-        os.environ[name] = value
+def _swap_env(names: tuple[str, ...], var: str, threads: int | None) -> Iterator[None]:
+    old = {n: os.environ[n] for n in names if n in os.environ}
+    for n in names:
+        os.environ.pop(n, None)
+    if threads is not None:
+        os.environ[var] = str(threads)
     try:
         yield
     finally:
-        if old is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = old
+        for n in names:
+            os.environ.pop(n, None)
+        os.environ.update(old)
 
 
 def itk_threads(threads: int | None) -> AbstractContextManager[None]:
     """A context in which in-process ANTsPy calls use ``threads`` ITK threads (``None``: no
-    cap, all cores); the previous ``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`` is restored after."""
-    return _env_var(ITK_THREADS, None if threads is None else str(threads))
+    cap, all cores: every variable ITK reads for the count is removed); the previous variables
+    are restored after."""
+    return _swap_env((*itk_thread_vars(os.environ), ITK_THREADS), ITK_THREADS, threads)
 
 
 def rayon_threads(threads: int | None) -> AbstractContextManager[None]:
     """A context in which FastWarp's CPU work uses ``threads`` threads (``RAYON_NUM_THREADS``;
-    ``None``: no cap, all cores); the previous value is restored after. FastWarp reads it once,
-    when its thread pool starts (opening the GPU starts it), so it takes effect only if nothing
-    in this process used FastWarp before; the commands enter it before anything else."""
-    return _env_var("RAYON_NUM_THREADS", None if threads is None else str(threads))
+    ``None``: no cap, all cores); the previous values are restored after. FastWarp reads it
+    once, when its thread pool starts (opening the GPU starts it), so it takes effect only if
+    nothing in this process used FastWarp before; the commands enter it before anything else."""
+    return _swap_env(RAYON_THREAD_VARS, "RAYON_NUM_THREADS", threads)
 
 
 def child_env(threads: int | None) -> dict[str, str]:
-    """The environment of an ANTs child process: this one's, with ``threads`` ITK threads
-    (``None``: without ``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS``, so all cores) and without
-    ``ANTS_RANDOM_SEED``."""
+    """The environment of an ANTs child process: this one's, without any variable ITK reads
+    for its thread count, with ``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=threads`` when
+    ``threads`` is given (``None``: all cores), and without ``ANTS_RANDOM_SEED``."""
     env = dict(os.environ)
-    env.pop(ITK_THREADS, None)
-    if threads is not None:
-        env[ITK_THREADS] = str(threads)
+    _with_threads(env, itk_thread_vars(env), ITK_THREADS, threads)
     env.pop("ANTS_RANDOM_SEED", None)
     return env
 
@@ -318,10 +344,15 @@ def _ants_version(ants_dir: Path | None) -> str | None:
 
 
 def environment(
-    *, ants_dir: Path | None, threads: int | None, adapter: str | None
+    *,
+    ants_dir: Path | None,
+    threads: int | None,
+    adapter: str | None,
+    caller_env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Versions and hardware of this run, with the thread setting (``threads``: a cap on both
-    engines' CPU threads, ``None``: all cores)."""
+    engines' CPU threads, ``None``: all cores) and the thread-count variables the caller had
+    set (``caller_env``, which the setting replaced)."""
     import numpy
 
     dirty = _git("status", "--porcelain", "--untracked-files=no")
@@ -337,6 +368,7 @@ def environment(
         "threads": thread_setting(threads),
         "itk_threads": threads,
         "rayon_threads": os.environ.get("RAYON_NUM_THREADS"),
+        "thread_env_of_caller": thread_env() if caller_env is None else dict(caller_env),
         "fastwarp_env": {k: v for k, v in sorted(os.environ.items()) if k.startswith("FASTWARP_")},
         "numpy": numpy.__version__,
     }
@@ -662,8 +694,9 @@ def run(
             raise ValueError(f"unknown engine {e!r}")
     rec = recipes.recipe(recipe_name)
     rows = []
+    caller = thread_env()
     with RunLock(work), rayon_threads(threads):
-        env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter)
+        env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter, caller_env=caller)
         _write_json(work / "environment.json", env)
         log(f"fastwarp {env.get('fastwarp')}, ANTsPy {env.get('antspyx')}, GPU {env.get('gpu')}")
         for key in keys:

@@ -17,15 +17,6 @@ from pathlib import Path
 from . import datasets, recipes
 
 
-def _cap_fastwarp_threads(args: argparse.Namespace) -> None:
-    import os
-
-    if args.threads is None:
-        os.environ.pop("RAYON_NUM_THREADS", None)
-    else:
-        os.environ["RAYON_NUM_THREADS"] = str(args.threads)
-
-
 def _keys(args: argparse.Namespace) -> list[str]:
     if args.dataset:
         for k in args.dataset:
@@ -134,7 +125,6 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    _cap_fastwarp_threads(args)
     from .fetch import check_outside_repo
     from .run import run
 
@@ -161,7 +151,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_linear(args: argparse.Namespace) -> int:
-    _cap_fastwarp_threads(args)
     from .fetch import check_outside_repo
     from .linear import run_linear
 
@@ -187,7 +176,6 @@ def _cmd_linear(args: argparse.Namespace) -> int:
 
 
 def _cmd_post(args: argparse.Namespace) -> int:
-    _cap_fastwarp_threads(args)
     from .fetch import check_outside_repo
     from .post import run_post
 
@@ -338,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("evaluate", help="metrics of the finished pairs, CSV tables")
     _add_selection(p)
     _add_work(p)
-    p.add_argument("--threads", type=int, default=8)
+    p.add_argument("--threads", type=int, help="cap the ITK threads (default: all cores)")
     p.add_argument("--no-surface", action="store_true", help="skip HD95 / ASSD (faster)")
     p.add_argument("--force", action="store_true", help="re-evaluate cached pairs")
     p.set_defaults(func=_cmd_evaluate)

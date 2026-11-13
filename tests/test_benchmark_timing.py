@@ -142,6 +142,34 @@ def test_itk_threads_is_restored_and_child_env_carries_it(monkeypatch):
     assert run.ITK_THREADS not in os.environ
 
 
+def test_all_cores_removes_every_thread_count_variable(monkeypatch):
+    for name in ("ITK_NUMBER_OF_THREADS_ENV_LIST", "RAYON_NUM_THREADS"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NSLOTS", "2")
+    monkeypatch.setenv(run.ITK_THREADS, "3")
+    monkeypatch.setenv("RAYON_RS_NUM_CPUS", "4")
+    assert run.thread_env() == {"NSLOTS": "2", run.ITK_THREADS: "3", "RAYON_RS_NUM_CPUS": "4"}
+    env = run.child_env(None)
+    assert "NSLOTS" not in env and run.ITK_THREADS not in env
+    assert run.child_env(5)[run.ITK_THREADS] == "5" and "NSLOTS" not in run.child_env(5)
+    with run.itk_threads(None), run.rayon_threads(None):
+        assert run.thread_env() == {}
+    assert run.thread_env() == {"NSLOTS": "2", run.ITK_THREADS: "3", "RAYON_RS_NUM_CPUS": "4"}
+    monkeypatch.setenv("ITK_NUMBER_OF_THREADS_ENV_LIST", "MY_SLOTS:")
+    monkeypatch.setenv("MY_SLOTS", "6")
+    assert run.itk_thread_vars(os.environ) == (
+        "ITK_NUMBER_OF_THREADS_ENV_LIST",
+        "MY_SLOTS",
+        run.ITK_THREADS,
+    )
+    env = run.child_env(None)
+    assert "MY_SLOTS" not in env and "ITK_NUMBER_OF_THREADS_ENV_LIST" not in env
+    assert env["NSLOTS"] == "2"
+    with run.itk_threads(None):
+        assert "MY_SLOTS" not in os.environ
+    assert os.environ["MY_SLOTS"] == "6"
+
+
 def test_linear_argv_runs_one_stage_from_a_start():
     rec = recipes.recipe("cohort")
     argv = recipes.ants_linear_argv(rec["rigid"], "rigid", "/f", "/m", "/o/r_")
@@ -267,8 +295,16 @@ def test_post_ants_arguments_and_child_time():
     assert post.child_seconds("nothing") is None
 
 
-def _work_pair(work: Path, dataset: str, pair: str, rec: dict, iso_mm: float = 1.0) -> Path:
+def _work_pair(
+    work: Path,
+    dataset: str,
+    pair: str,
+    rec: dict,
+    iso_mm: float = 1.0,
+    data: Path | None = None,
+) -> Path:
     folder = work / dataset / "cohort" / pair
+    data = work.parent if data is None else data
     for engine, timings, wall in (
         ("fastwarp", {"linear_s": 2.0, "syn_s": 6.0, "total_s": 10.0}, 11.0),
         ("ants", {"linear_s": 60.0, "syn_s": 300.0, "total_s": 361.0}, 365.0),
@@ -298,6 +334,10 @@ def _work_pair(work: Path, dataset: str, pair: str, rec: dict, iso_mm: float = 1
             }
         )
     )
+    (folder / "ref.nii.gz").write_bytes(b"ref")
+    image = data / dataset / datasets.get(dataset).subject(moving).image
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(b"moving")
     return folder
 
 
@@ -355,6 +395,7 @@ def test_post_runs_each_pair_once_and_cleans_up(tmp_path, monkeypatch):
     assert [(r["status"], r["ran"]) for r in rows] == [("ok", True), (None, False)]
     record = json.loads((folder / "post.json").read_text())
     assert record["source_engine"] == "fastwarp" and record["threads"] == 2
+    assert record["warm_up_bytes"] == len(b"ref") + len(b"moving") + 2
     assert record["environment"]["rayon_threads"] == "2"
     assert record["config"]["outputs"] == ["nii"]
     assert not (folder / "post_tmp").exists() and "RAYON_NUM_THREADS" not in os.environ
@@ -404,7 +445,9 @@ def test_post_with_gzip_times_both_formats(tmp_path, monkeypatch):
 
 def test_a_failing_fastwarp_step_is_recorded(tmp_path, monkeypatch):
     rec = recipes.recipe("cohort")
-    folder = _work_pair(tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    folder = _work_pair(
+        tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec, data=tmp_path
+    )
 
     def broken(*args):
         raise RuntimeError("no luck")
@@ -499,9 +542,9 @@ def test_report_tabulates_the_timings_without_an_evaluation(tmp_path, monkeypatc
         in md
     )
     ratio = (
-        "| mindboggle | 1 mm | all cores | ANTs / FastWarp |  | 30.0x (2 pairs) | 50.0x (2 pairs) |"
+        "| mindboggle | 1 mm | all cores | ANTs / FastWarp |  | 30.0x (1 pair) | 50.0x (1 pair) |"
     )
-    assert ratio + " 36.2x (2 pairs) | 33.2x (2 pairs) |" in md
+    assert ratio + " 36.1x (1 pair) | 33.2x (1 pair) |" in md
     assert "| mindboggle | 2 mm | all cores | fastwarp | 1 |" in md
     lin = "| snsx | 1 mm | not recorded | rigid | 2 / 2 | 1.50 (1.25–1.75) | 20.00 (20.00–20.00) |"
     assert lin + " 15.0x (2 pairs) | 4.00 (4.00–4.00) | 4.20 (4.20–4.20) | 0.30 (0.30–0.30) |" in md
@@ -608,7 +651,9 @@ def test_a_failed_post_is_retried_after_its_registration_changed(tmp_path, monke
 
 def test_a_failed_comparison_fails_the_post_record(tmp_path):
     rec = recipes.recipe("cohort")
-    folder = _work_pair(tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec)
+    folder = _work_pair(
+        tmp_path, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", rec, data=tmp_path
+    )
 
     def broken(tmp):
         raise ValueError("shapes differ")
@@ -779,6 +824,9 @@ def test_timings_of_different_thread_settings_stay_apart():
         ("all cores", "ANTs / FastWarp", "", "10.0x (1 pair)"),
     ]
     assert len(timing.machines({"run": rows})) == 2
+    rows[1]["cpu"] = "another cpu"
+    table = report.registration_timing_table(rows)
+    assert [r for r in table if r["engine"] == "ANTs / FastWarp"][0]["total_s"] == "n/a"
 
 
 def test_a_post_that_raised_is_not_retried_until_its_registration_changes(tmp_path, monkeypatch):

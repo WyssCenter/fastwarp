@@ -252,11 +252,16 @@ Three steps record timings; each writes them next to its outputs, with the machi
 (`environment` in every record), and `report` tabulates the median and quartiles over pairs,
 per dataset and registration grid, from the records of the recipe as it is defined now. A ratio
 ANTs / FastWarp is the median over pairs of the per-pair ratio, on the pairs where both engines
-have the value; a cell marked `[n=k]` has a value for only k pairs.
+have the value and ran on the same machine and software (GPU, driver name, backend, CPU, thread
+setting, fastwarp and ANTs versions); a cell marked `[n=k]` has a value for only k pairs.
 
 **Threads.** By default the timings are taken with all cores: `run`, `linear` and `post` set
-no thread limit for either engine, and remove `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS` and
-`RAYON_NUM_THREADS` from the environment they run in. `--threads N` caps both engines alike,
+no thread limit for either engine, and remove every variable that sets one from the
+environment they and ANTs run in: for ITK (ANTs, and ANTsPy in this process)
+`ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`, `NSLOTS` and `ITK_NUMBER_OF_THREADS_ENV_LIST` with the
+names it lists, which is what ITK 5 reads; for FastWarp `RAYON_NUM_THREADS` and
+`RAYON_RS_NUM_CPUS`. The values the caller had set are recorded (`thread_env_of_caller`).
+`--threads N` caps both engines alike,
 for when the machine is needed during a run: `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=N` in the
 environment of every ANTs process (and, restored afterwards, around this process's own ANTsPy
 calls such as reading and resampling the images), and `RAYON_NUM_THREADS=N` for FastWarp's CPU
@@ -324,8 +329,10 @@ into:
 | Lanczos re-warp | `apply_transforms(moving, fixed reference, [Composite.h5], interpolation="lanczosWindowedSinc")`, then writing the result with ANTsPy | `antsApplyTransforms -i <moving image> -r <fixed reference> -t Composite.h5 -n LanczosWindowedSinc -o <file>` |
 
 The fixed reference is the cropped native grid of the fixed image (the evaluation grid), the
-moving image the subject's original file. Each time covers reading the inputs and writing the
-output; ANTs runs with `--float 1`, so both write `float32`. The outputs are uncompressed `.nii`
+moving image the subject's original file. Before either tool runs, the four inputs (both images
+and both composites) are read once, untimed, so that both tools find them in the operating
+system's file cache; FastWarp runs first and would otherwise pay for the cold reads. Each time
+covers reading the inputs and writing the output; ANTs runs with `--float 1`, so both write `float32`. The outputs are uncompressed `.nii`
 files, so the times compare the computation and a raw write. With `--gzip` every step runs a
 second time writing `.nii.gz`: `compose_field` compresses at gzip level 1 on all its threads,
 ITK (ANTs' outputs, and FastWarp's re-warped image, which ANTsPy writes) at its default level

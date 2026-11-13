@@ -241,16 +241,21 @@ def _same(r: dict[str, Any], dataset: Any, iso: Any, threads: Any) -> bool:
     return r["dataset"] == dataset and r.get("iso_mm") == iso and r.get("threads") == threads
 
 
+def _machine(r: dict[str, Any]) -> str:
+    return json.dumps({k: r.get(k) for k in timing.fingerprint(None)}, sort_keys=True, default=str)
+
+
 def engine_ratios(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
     """:func:`timing.describe` of ANTs / FastWarp of ``field`` per pair, over the pairs of
-    ``rows`` (one row per pair and engine) where both engines have it."""
-    by: dict[str, dict[str, float]] = defaultdict(dict)
+    ``rows`` (one row per pair and engine) where both engines have it and ran on the same
+    machine and software (:func:`timing.fingerprint`)."""
+    by: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for r in rows:
-        by[r["pair"]][r["engine"]] = _float(r.get(field))
+        by[r["pair"]][r["engine"]] = r
     return timing.describe(
-        timing.ratio(v["ants"], v["fastwarp"])
+        timing.ratio(_float(v["ants"].get(field)), _float(v["fastwarp"].get(field)))
         for v in by.values()
-        if "ants" in v and "fastwarp" in v
+        if "ants" in v and "fastwarp" in v and _machine(v["ants"]) == _machine(v["fastwarp"])
     )
 
 
@@ -446,7 +451,7 @@ def _timing_sections(reg: list, lin: list, pst: list) -> list[str]:
             "FastWarp's `register_syn` call (images already read), ANTs' whole process (start, "
             "reading, writing; with ANTsPy also starting Python). ANTs' split comes from its "
             "`--verbose 1` log. ANTs / FastWarp: the median over pairs of the ratio, on the "
-            "pairs where both engines have the value.",
+            "pairs where both engines have the value and ran on the same machine and software.",
             "",
             _md_table(
                 registration_timing_table(reg),
@@ -475,7 +480,8 @@ def _timing_sections(reg: list, lin: list, pst: list) -> list[str]:
             "`antsRegistration` stage time each, which includes the stage's own image "
             "preparation; no multi-start. Rigid + affine compares FastWarp's preparation and "
             "both fits with ANTs' two stages. Pairs: FastWarp / ANTs. ANTs / FastWarp: the "
-            "median over pairs of the ratio. Landmark error: mean over the landmarks of a pair, "
+            "median over pairs of the ratio (same machine and software). Landmark error: mean "
+            "over the landmarks of a pair, "
             "mm; FastWarp - ANTs: mean and max distance between the two fits over the fixed "
             "brain mask, mm (the multi-start against ANTs' rigid fit).",
             "",
@@ -502,8 +508,9 @@ def _timing_sections(reg: list, lin: list, pst: list) -> list[str]:
             "",
             "## Post-processing",
             "",
-            "Seconds per step, median (quartiles), each including reading the inputs and "
-            "writing the output; ANTs: `antsApplyTransforms --float 1`. `.nii`: uncompressed "
+            "Seconds per step, median (quartiles), each including reading the inputs (read "
+            "once, untimed, before both tools, so both find them cached) and writing the "
+            "output; ANTs: `antsApplyTransforms --float 1`. `.nii`: uncompressed "
             "output; `.nii.gz`: FastWarp's fields gzip level 1 in parallel, ITK (ANTs' outputs "
             "and FastWarp's re-warped image) its default level on one thread. Size: median "
             "output MB, FastWarp / ANTs. ANTs / FastWarp: the median over pairs of the ratio. "

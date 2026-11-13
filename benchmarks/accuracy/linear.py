@@ -48,6 +48,7 @@ from .run import (
     run_child,
     same_config,
     select_pairs,
+    thread_env,
 )
 
 FOLDER = "linear"
@@ -400,8 +401,9 @@ def run_linear(
             raise ValueError(f"unknown engine {e!r}")
     cfg = config(recipes.recipe(recipe_name))
     rows: list[dict[str, Any]] = []
+    caller = thread_env()
     with RunLock(work), rayon_threads(threads):
-        env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter)
+        env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter, caller_env=caller)
         _write_json(work / "environment_linear.json", env)
         for key in keys:
             ds = datasets.get(key)

@@ -14,7 +14,9 @@ Per pair, three steps, each run once by FastWarp (in this process) and once by
 - ``lanczos_warp``: the moving image resampled onto the fixed evaluation grid through the forward
   composite with windowed-sinc (Lanczos) interpolation.
 
-Each time covers reading the inputs and writing the output, as the ANTs command does. The
+Before either tool runs, the inputs are read once, untimed, so that both find them in the
+operating system's file cache (FastWarp runs first and would otherwise pay for the cold
+reads). Each time covers reading the inputs and writing the output, as the ANTs command does. The
 outputs are uncompressed ``.nii`` files, so the times compare the computation and a raw write;
 with ``gzip`` the steps run again writing ``.nii.gz`` (FastWarp's ``compose_field`` compresses
 in parallel at level 1, ITK, which writes ANTs' outputs and FastWarp's re-warped image, on one
@@ -56,6 +58,7 @@ from .run import (
     rayon_threads,
     run_child,
     select_pairs,
+    thread_env,
     thread_setting,
 )
 
@@ -81,6 +84,7 @@ def config(rec: dict[str, Any], iso_mm: float, gzip: bool = False) -> dict[str, 
         "interpolation": INTERPOLATION,
         "outputs": list(FORMATS if gzip else FORMATS[:1]),
         "ants_float": True,
+        "warm_up": True,
     }
 
 
@@ -140,6 +144,17 @@ def child_seconds(log_text: str) -> float | None:
         return float(m.group(1))
     except ValueError:
         return None
+
+
+def warm_up(paths: list[Path], chunk: int = 1 << 24) -> int:
+    """Read ``paths`` once, untimed, so that neither tool pays for reading them from disk
+    first; returns the bytes read."""
+    total = 0
+    for path in paths:
+        with open(path, "rb") as f:
+            while block := f.read(chunk):
+                total += len(block)
+    return total
 
 
 def output(tmp: Path, tool: str, step: str, fmt: str) -> Path:
@@ -319,6 +334,8 @@ def post_pair(
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     try:
+        if cfg.get("warm_up"):
+            record["warm_up_bytes"] = warm_up([reference, moving, forward, inverse])
         try:
             with rayon_threads(threads), itk_threads(threads):
                 record["fastwarp"] = fastwarp_steps(
@@ -377,8 +394,9 @@ def run_post(
     rec = recipes.recipe(recipe_name)
     cfg = config(rec, iso_mm, gzip)
     rows: list[dict[str, Any]] = []
+    caller = thread_env()
     with RunLock(work), rayon_threads(threads):
-        env = environment(ants_dir=ants_dir, threads=threads, adapter=None)
+        env = environment(ants_dir=ants_dir, threads=threads, adapter=None, caller_env=caller)
         _write_json(work / "environment_post.json", env)
         for key in keys:
             ds = datasets.get(key)
