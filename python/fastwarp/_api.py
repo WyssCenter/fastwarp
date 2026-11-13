@@ -176,8 +176,9 @@ def fits_gpu(
         channels = len(fixed_list)
     elif isinstance(fixed, list) and channels != len(fixed_list):
         raise ValueError(f"channels={channels} does not match {len(fixed_list)} fixed images")
-    elif channels < 1:
-        raise ValueError("channels must be at least 1")
+    elif not 1 <= channels <= 2:
+        raise ValueError("channels must be 1 or 2")
+    iso_mm = float(iso_mm)
     if not (math.isfinite(iso_mm) and iso_mm > 0.0):
         raise ValueError("iso_mm must be a positive number")
     fixed_img = fixed_list[0]

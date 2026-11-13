@@ -155,6 +155,7 @@ def test_fits_gpu_validates_arguments():
         lambda: g.fits_gpu([p, p], p),
         lambda: g.fits_gpu([p, p], channels=1),
         lambda: g.fits_gpu(p, channels=0),
+        lambda: g.fits_gpu(p, channels=3),
         lambda: g.fits_gpu(p, iso_mm=-1.0),
         lambda: g.fits_gpu(p, iso_mm=float("nan")),
     ):
