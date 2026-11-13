@@ -209,6 +209,18 @@ def test_a_missing_output_folder_is_refused_before_any_work(tmp_path):
         _core.register_syn([args], [args], f"{tmp_path}/missing/")
 
 
+@needs_gpu
+def test_a_linear_fit_with_a_missing_output_folder_is_refused(tmp_path):
+    from fastwarp import _core
+
+    session = _core.LinearSession(_image_args(phantom()), _image_args(phantom(SHIFT_MM)))
+    try:
+        with pytest.raises(ValueError, match="does not exist"):
+            session.register(out_prefix=str(tmp_path / "missing" / "x_"))
+    finally:
+        session.close()
+
+
 def test_a_folder_prefix_is_kept_and_its_folder_created(tmp_path):
     prefix = f"{tmp_path}/a/b/"
     assert _prepared_prefix(prefix) == prefix
