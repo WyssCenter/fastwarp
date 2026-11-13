@@ -29,8 +29,9 @@ ANTs.
 ## Who it is for
 
 Developers of neuroimaging pipelines and researchers who register many 3-D images with ANTs and
-want the same transforms faster. The package does not read or write NIfTI images for you: images
-come from ANTsPy (`ANTsImage`) or are passed as arrays with their geometry.
+want the same transforms faster. The Python functions do not read or write NIfTI images for you:
+images come from ANTsPy (`ANTsImage`) or are passed as arrays with their geometry. The
+[command line](cli.md) `fastwarp` works on NIfTI files directly.
 
 TODO(author): name the intended audience beyond the Wyss DBS Localizer and Lead-DBS style
 workflows, if any.
@@ -44,6 +45,7 @@ Source code: <https://github.com/WyssCenter/fastwarp>. Please cite the engine as
 installation
 quickstart
 user-guide
+cli
 api/index
 testing
 performance

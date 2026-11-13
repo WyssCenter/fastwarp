@@ -8,6 +8,7 @@ members = [
     "crates/fastwarp-matfile",
     "crates/fastwarp-reg",
     "crates/fastwarp-gpu",
+    "crates/fastwarp-cli",
     "crates/fastwarp-py",
 ]
 
