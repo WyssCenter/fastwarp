@@ -62,7 +62,7 @@ function Invoke-Child([string[]]$arguments, [hashtable]$environment) {
         $env:FASTWARP_INSTALLER_PATH_KEY = $key
         foreach ($k in $environment.Keys) { [Environment]::SetEnvironmentVariable($k, $environment[$k]) }
         $ErrorActionPreference = 'Continue'
-        $out = & $Shell -NoProfile -NonInteractive -ExecutionPolicy Bypass @arguments 2>&1 | Out-String
+        $out = & $Shell -NoProfile -NonInteractive -ExecutionPolicy Bypass @arguments 2>&1 | Out-String -Width 8192
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = 'Stop'
