@@ -113,6 +113,10 @@ For the 1 mm MNI template that ANTsPy ships (182 × 218 × 182 voxels), at three
 | 1.0 | 182 × 218 × 182 | 7.2 million | 1.13 GiB | 1.26 GiB |
 | 0.5 | 363 × 435 × 363 | 57.3 million | 8.97 GiB | 10.04 GiB |
 
+The `mni-0.5mm` size of [`fastwarp bench`](../cli.md#bench), 364 × 436 × 364 voxels, is a
+synthetic volume with the MNI field of view, not this template's grid, so its memory need is
+close to the last row but not equal to it.
+
 With the 1 GiB reserve, a 1 mm registration of one channel on this template needs a discrete
 GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
 [Performance](../performance.md#earlier-measurements-on-non-public-data) page used a different
