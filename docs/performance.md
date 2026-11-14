@@ -98,9 +98,9 @@ Each figure is the median of three runs of the engine's own `linear_s`, `syn_s` 
 
 The total includes preparing and uploading the images. The A4000 machine was under heavy CPU
 load (load average about 110 on 48 cores) during its runs. On the Quadro K620, 2 GB is too
-little for T1w + T2w at 1 mm, which needs 1.52 GiB of a budget that keeps 1 GiB free for the
+little for T1w + T2w at 1 mm, which needs 1.54 GiB of a budget that keeps 1 GiB free for the
 desktop: the capacity check refuses it before any work ({class}`~fastwarp.GpuCapacityError`).
-T1w alone needs 1.36 GiB and ran only with `FASTWARP_GPU_MEMORY_BUDGET_MB=1900`.
+T1w alone needs 1.38 GiB and ran only with `FASTWARP_GPU_MEMORY_BUDGET_MB=1900`.
 
 Linear fits: one rigid fit of the T2w onto the T1w (the default rigid stage) took 1.2 s on the
 M5 Pro, 1.6 s on the RTX A4000, 1.8 s on the Radeon Pro 5500 XT, 2.1 s on Lunar Lake and 2.7 s

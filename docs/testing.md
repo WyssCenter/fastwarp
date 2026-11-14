@@ -41,7 +41,7 @@ uv run --no-sync pytest -rs
 | `test_rigid.py`, `test_linear.py` | Rigid and affine fits, masks, and agreement with ANTs fits. |
 | `test_post.py` | {func}`~fastwarp.compose_field` and {func}`~fastwarp.apply_transforms` against ANTsPy. |
 | `test_namespace.py` | The public names of the package. |
-| `test_cli.py` | The [command line](cli.md): every command, its exit status, and that it gives the same results as the Python functions. |
+| `test_cli.py` | The [command line](cli.md): every command, its exit status, and that it gives the same results as the Python functions. With `FASTWARP_BIN` set to the standalone `fastwarp` program it also checks that the program behaves like `python -m fastwarp`; unset, those checks skip. |
 | `test_benchmark_metrics.py`, `test_benchmark_fetch.py`, `test_benchmark_recipes.py` | The [accuracy benchmark](benchmarks.md): its metrics, hash-pinned downloads, safe extraction, recipes and pair selection, on tiny synthetic data (no GPU, no network). |
 | `test_benchmark_smoke.py` | The accuracy benchmark end to end on a synthetic phantom with FastWarp and ANTs. Needs a GPU and ANTsPy; about 30 s on a laptop GPU. |
 
@@ -101,14 +101,24 @@ FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-reg -
   -E 'binary_id(fastwarp-reg::ants_compat) | binary_id(fastwarp-reg::coreg_metric) | binary_id(fastwarp-reg::n4_ants)'
 ```
 
+One more, `ants_apply_transforms_reads_the_registration` in `crates/fastwarp-cli/tests/cli.rs`,
+registers a small phantom with `fastwarp register` and checks that `antsApplyTransforms` applies
+the composite as `fastwarp apply` does. It also needs a GPU:
+
+```bash
+FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-cli --run-ignored only \
+  -E 'binary_id(fastwarp-cli::cli) & test(=ants_apply_transforms_reads_the_registration)'
+```
+
 All test variables are listed under [Environment variables](environment.md#tests-and-development).
 
 ## What CI runs
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `ci.yml` | Every push to `main` and every pull request | Lint (`cargo fmt`, `clippy`, `ruff`), the Rust tests and the Python tests on Linux x86_64 with Python 3.13, on lavapipe, with a missing adapter or ANTsPy counted as a failure. |
-| `full.yml` | Non-draft pull requests that change more than documentation, nightly when `main` has changed, and by hand | The tests against the ANTs programs, with the three programs of the official ANTs 2.6.5 Ubuntu 24.04 release, checked against the SHA-256 sums in `.github/ants-2.6.5-ubuntu-24.04.sha256` and cached. |
+| `ci.yml` | Every push to `main` and every pull request | Lint (`cargo fmt`, `clippy`, `ruff`), the Rust tests and the Python tests on Linux x86_64 with Python 3.13, on lavapipe, with a missing adapter or ANTsPy counted as a failure. The Python tests also compare the standalone `fastwarp` program (`FASTWARP_BIN`) with `python -m fastwarp`. |
+| `full.yml` | Non-draft pull requests that change more than documentation, nightly when `main` has changed, and by hand | The tests against the ANTs programs, with the three programs of the official ANTs 2.6.5 Ubuntu 24.04 release, checked against the SHA-256 sums in `.github/ants-2.6.5-ubuntu-24.04.sha256` and cached; the command-line test against `antsApplyTransforms` runs on lavapipe. |
+| `docs.yml` | Pushes to `main` and pull requests that change the documentation or a file it reads, weekly, and by hand | The HTML build of the documentation with warnings as errors, as Read the Docs builds it (Python 3.13, `docs/requirements.txt` installed with `--require-hashes`). The HTML build fetches the intersphinx inventories of Python, NumPy and ANTsPy; the link check, which depends on every linked site, runs only weekly and by hand. |
 | `audit.yml` | When a lockfile, manifest or workflow changes, and weekly | `cargo deny` and `uv audit`. |
 | `wheels.yml` | A `v*` tag, or by hand (`gh workflow run wheels`) | Builds and tests the wheels; on a tag also publishes them (see below). |
 | `paper.yml` | When `paper/` changes | Builds the draft paper as a PDF. |
@@ -121,7 +131,8 @@ PYO3_PYTHON="$PWD/.venv/bin/python" cargo nextest run --locked --workspace \
   --features fastwarp-gpu/dev-tools --profile ci
 uv run --no-sync maturin build --locked --release -o dist
 uv pip install --no-deps dist/*.whl
-uv run --no-sync pytest tests -v -rs
+cargo build --locked --workspace --features fastwarp-gpu/dev-tools --bin fastwarp
+FASTWARP_BIN="$PWD/target/debug/fastwarp" uv run --no-sync pytest tests -v -rs
 ```
 
 It builds a release wheel, installs it, and runs `pytest` against the installed wheel. The local
@@ -166,7 +177,8 @@ uv run --frozen --only-group docs sphinx-build -b linkcheck docs docs/_build/lin
 
 Use `--only-group docs`; `--group docs` would also build the project. Read the Docs builds with
 Python 3.13 and installs `docs/requirements.txt`, a hash-pinned export of the lockfile, and treats
-warnings as errors. Regenerate the file after any change to the `docs` group or `uv.lock`:
+warnings as errors; `docs.yml` builds the same way on pull requests. Regenerate the file after
+any change to the `docs` group or `uv.lock`:
 
 ```bash
 uv export --frozen --only-group docs --no-emit-project --format requirements-txt -o docs/requirements.txt

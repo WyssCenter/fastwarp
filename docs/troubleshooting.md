@@ -117,7 +117,7 @@ channels on a 1 mm grid of 197 × 233 × 189 voxels with `FASTWARP_GPU_MEMORY_BU
 
 ```{code-block} text
 :class: fw-output
-the finest registration level [197, 233, 189] needs 1630954332 bytes of device memory, but the budget is 1073741824 bytes (at 1 mm)
+the SyN stage on the registration grid [197, 233, 189] needs 1658214780 bytes of device memory, but the budget is 1073741824 bytes (at 1 mm)
 ```
 
 The message gives the grid, the bytes it needs and the memory budget. Choose one of:

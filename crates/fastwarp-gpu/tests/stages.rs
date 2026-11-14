@@ -165,7 +165,14 @@ fn a_linear_then_syn_chain_peaks_no_higher_than_its_linear_plan_or_the_syn_stage
         memory_budget: u64::MAX,
     };
     let linear = plan_capacity_linear([48; 3], [48; 3], &stages, &caps).unwrap();
-    let syn = fastwarp_gpu::plan_capacity_pair([48; 3], [48; 3], 1, &caps).unwrap();
+    let syn = fastwarp_gpu::plan_capacity_syn(
+        [48; 3],
+        [48; 3],
+        1,
+        &plan.syn.as_ref().unwrap().shrink_factors,
+        &caps,
+    )
+    .unwrap();
     eprintln!(
         "linear + SyN: peak {peak}, linear plan {}, SyN plan {}",
         linear.level_total_bytes, syn.level_total_bytes
@@ -190,6 +197,13 @@ fn a_linear_then_syn_chain_peaks_no_higher_than_its_linear_plan_or_the_syn_stage
     eprintln!("SyN only: peak {syn_peak}");
     let bound = linear.level_total_bytes.max(syn_peak);
     assert!(peak <= bound, "peak {peak} > {bound}");
+    let planned = linear.level_total_bytes.max(syn.level_total_bytes);
+    assert!(peak <= planned, "peak {peak} > planned {planned}");
+    assert!(
+        syn_peak <= syn.level_total_bytes,
+        "SyN peak {syn_peak} > planned {}",
+        syn.level_total_bytes
+    );
 }
 
 #[test]

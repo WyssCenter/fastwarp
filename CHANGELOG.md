@@ -99,6 +99,12 @@
   report `fastwarp` as their module (was `_core`, which cannot be imported), so they pickle and
   cross process boundaries, for example from a `concurrent.futures.ProcessPoolExecutor` worker.
   `gpu_info` reports `fastwarp` as well (#26).
+- The GPU capacity check (`fits_gpu`, `fastwarp fits` and the check before `register_syn`) no
+  longer underestimates small grids: it now counts the buffers the coarser SyN levels and the
+  device self-test leave allocated, which the finest level's bytes per voxel missed (on a
+  48 x 48 x 48 grid the check planned 18.6 MB for a run that peaked at 20.9 MB). Small grids near
+  the budget can now be refused where they passed before; on a 1 mm head the figure grows by
+  under 2%. Its error now reads "the SyN stage on the registration grid ... needs ... bytes".
 
 ### Deprecated
 

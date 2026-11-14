@@ -76,7 +76,7 @@ locally, lists every test variable, and describes what each workflow runs.
 
 The documentation in `docs/` is built with Sphinx and published on
 [Read the Docs](https://fastwarp.readthedocs.io). Build it locally with warnings as errors, as
-Read the Docs does:
+Read the Docs and the `docs.yml` workflow on pull requests do:
 
 ```bash
 uv run --frozen --only-group docs sphinx-build -W --keep-going -b html docs docs/_build/html
@@ -97,8 +97,9 @@ subject, for example `fix: reject a mask with a different grid` or
 - New behaviour comes with tests. A bug fix comes with a regression test that fails without
   the fix.
 - Add an entry under `## Unreleased` in `CHANGELOG.md` for any change a user can see.
-- CI must pass: lint, the Rust tests and the Python tests (`ci.yml`). `full.yml` runs on
-  non-draft pull requests.
+- CI must pass: lint, the Rust tests and the Python tests (`ci.yml`), and the documentation
+  build (`docs.yml`) when the change touches the documentation. `full.yml` runs on non-draft
+  pull requests.
 - Every file keeps an SPDX header (`Apache-2.0`); data and binaries are covered by `REUSE.toml`.
 
 ## Code ported from ANTs or ITK

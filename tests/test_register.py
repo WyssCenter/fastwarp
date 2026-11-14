@@ -175,7 +175,7 @@ def test_fits_gpu_channels_follow_the_fixed_images(monkeypatch):
 
 @needs_gpu
 def test_fits_gpu_counts_both_channels(monkeypatch):
-    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "30")
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "34")
     p = phantom()
     assert g.fits_gpu(p, iso_mm=SPACING)
     assert not g.fits_gpu([p, p], [p, p], iso_mm=SPACING)

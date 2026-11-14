@@ -69,11 +69,15 @@ jobs:
         run: |
           export PYO3_PYTHON="$PWD/.venv/bin/python"
           cargo nextest run --locked --workspace --features fastwarp-gpu/dev-tools --profile ci
+      - name: Build the standalone fastwarp program
+        run: cargo build --locked --workspace --features fastwarp-gpu/dev-tools --bin fastwarp
       - name: Build and install the wheel
         run: |
           uv run --no-sync maturin build --locked --release -o dist
           uv pip install --no-deps dist/*.whl
       - name: Python tests
+        env:
+          FASTWARP_BIN: ${{ github.workspace }}/target/debug/fastwarp
         run: |
           uv run --no-sync python -c "import fastwarp as g; print(g.gpu_info())"
           uv run --no-sync pytest tests -v -rs
