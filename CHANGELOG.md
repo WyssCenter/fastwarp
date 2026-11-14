@@ -35,6 +35,17 @@
   no usable GPU (4) and a grid too large for the GPU (5); `--json` for machine-readable output.
   See `docs/cli.md`. The Python extension and the standalone program built from the new crate
   `fastwarp-cli` run the same code.
+- Each GitHub release carries the standalone `fastwarp` program, which needs no Python, for Linux
+  x86_64 and aarch64 (glibc 2.28 or later), macOS arm64 and x86_64 (macOS 11 or later) and Windows
+  x86_64 (static C runtime), as `fastwarp-<target>.tar.gz` / `.zip` with a `.sha256` file each,
+  and the installer scripts `fastwarp-installer.sh` (Linux, macOS) and `fastwarp-installer.ps1`
+  (Windows). The installer of a release installs that release and holds the SHA-256 of its
+  archives, so it refuses a download that does not match. It installs without administrator
+  rights into `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\fastwarp\bin`), adds that folder
+  to PATH unless told not to (`--no-modify-path`, `-NoModifyPath`), and records what it did in a
+  receipt next to the program; `--uninstall` (`-Uninstall`) undoes exactly that and leaves alone a
+  `fastwarp` it did not install. Every release file has a GitHub build provenance attestation
+  (`gh attestation verify`). See `docs/cli.md`.
 - `fits_gpu` takes the moving image(s) as an optional second argument and checks the moving grid
   as `register_syn` does; without it a moving image larger than the fixed one could pass
   `fits_gpu` and still raise `GpuCapacityError`. `channels` defaults to the number of fixed

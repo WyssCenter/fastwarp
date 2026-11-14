@@ -1,10 +1,12 @@
 # Command line
 
 The `fastwarp` command runs the registration on NIfTI files without writing Python. It comes
-with the Python package: after `pip install fastwarp`, both `fastwarp ...` and
-`python -m fastwarp ...` work. Both run the same code as the Python functions, so options,
-results and exit status are the same as described here. Each command below names the Python
-function it runs; the [user guide](user-guide.md) explains those functions in more detail.
+with the Python package (after `pip install fastwarp`, both `fastwarp ...` and
+`python -m fastwarp ...` work) and as a standalone program that needs no Python (see
+[Install](#install)). All of them run the same code as the Python functions, so options, results
+and exit status are the same as described here.
+Each command below names the Python function it runs; the [user guide](user-guide.md) explains
+those functions in more detail.
 
 ```bash
 fastwarp register template.nii.gz sub_T1w.nii.gz -o out/sub_
@@ -14,6 +16,173 @@ fastwarp apply -r template.nii.gz -i sub_T1w.nii.gz -o out/sub_in_template.nii.g
 
 `fastwarp --help` lists the commands; `fastwarp <command> --help` lists the options of one
 command. `fastwarp --version` prints the version.
+
+## Install
+
+### With the Python package
+
+```bash
+pip install fastwarp          # into the current Python environment
+uv tool install fastwarp      # into an environment of its own, with fastwarp on PATH
+uvx fastwarp --help           # run it without installing
+```
+
+These need Python 3.11 or later. `uv tool install` puts `fastwarp` in uv's tool folder
+(`~/.local/bin`, on Windows `%USERPROFILE%\.local\bin`); `uv tool uninstall fastwarp` removes it.
+
+### The standalone program
+
+From release 0.2.0, each [GitHub release](https://github.com/WyssCenter/fastwarp/releases)
+carries the program for:
+
+| Archive | System |
+| --- | --- |
+| `fastwarp-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc 2.28 or later (the same baseline as the wheels) |
+| `fastwarp-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64, glibc 2.28 or later |
+| `fastwarp-aarch64-apple-darwin.tar.gz` | macOS 11 or later, Apple silicon |
+| `fastwarp-x86_64-apple-darwin.tar.gz` | macOS 11 or later, Intel |
+| `fastwarp-x86_64-pc-windows-msvc.zip` | Windows 10 or later, x86_64; needs no Visual C++ runtime |
+
+Each archive holds `fastwarp` (`fastwarp.exe`), `LICENSE`, `NOTICE` and a `README.txt`, and has
+a `.sha256` file beside it. The program loads the GPU driver (Vulkan, Metal or DirectX 12) when
+it runs; it needs no other library. The release also carries two installer scripts,
+`fastwarp-installer.sh` (Linux, macOS) and `fastwarp-installer.ps1` (Windows), which pick the
+archive for the machine, check its SHA-256 and install it. The installer of release X.Y.Z
+installs release X.Y.Z and holds the SHA-256 of its archives, so a replaced archive is refused
+even when its `.sha256` file was replaced too.
+
+#### Inspect, then run (recommended)
+
+Download the installer, read it, check that the release workflow of this repository built it,
+then run it. The check needs the [GitHub CLI](https://cli.github.com/), signed in;
+`--signer-workflow` makes it accept only files signed by the release workflow `wheels.yml`.
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSfO https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.sh
+gh attestation verify fastwarp-installer.sh --repo WyssCenter/fastwarp \
+    --signer-workflow WyssCenter/fastwarp/.github/workflows/wheels.yml
+less fastwarp-installer.sh
+sh fastwarp-installer.sh
+```
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.ps1 -OutFile fastwarp-installer.ps1
+gh attestation verify fastwarp-installer.ps1 --repo WyssCenter/fastwarp `
+    --signer-workflow WyssCenter/fastwarp/.github/workflows/wheels.yml
+notepad fastwarp-installer.ps1
+powershell -ExecutionPolicy ByPass -File fastwarp-installer.ps1
+```
+
+#### One line
+
+The same installers, piped straight into the shell. This trusts the download without reading or
+checking it first:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.sh | sh
+```
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.ps1 | iex"
+```
+
+For another release, change the version in the address. Options go after `sh -s --`
+in the piped form (`... | sh -s -- --no-modify-path`); in PowerShell, use the script-block form
+(`& ([scriptblock]::Create((irm <address>))) -NoModifyPath`) or the environment variables below.
+
+#### What the installer does
+
+1. Picks the archive for the operating system and processor, and stops on any other system
+   (32-bit, Windows on ARM, musl-based Linux such as Alpine, glibc older than 2.28, macOS older
+   than 11).
+2. Downloads the archive over HTTPS from the release and compares its SHA-256 with the one the
+   installer holds (for a version other than its own, with the release's `.sha256` file); it
+   stops without installing anything when they differ.
+3. Runs the new program once (`fastwarp --version`) and only then puts it in place. It replaces
+   a `fastwarp` already in the folder only if it installed that one itself (see the receipt
+   below).
+4. Adds the install folder to PATH, unless it is there already or you opt out (below).
+5. Writes a receipt, `.fastwarp-installer`, next to the program: the SHA-256 of the program it
+   installed and the PATH changes it made. Reinstalling and uninstalling read it.
+
+It needs no administrator rights and never calls `sudo`.
+
+| | Linux, macOS (`fastwarp-installer.sh`) | Windows (`fastwarp-installer.ps1`) |
+| --- | --- | --- |
+| Install folder | `$XDG_BIN_HOME` if set, else `~/.local/bin` | `%LOCALAPPDATA%\Programs\fastwarp\bin` |
+| Other folder | `--dir DIR` or `FASTWARP_INSTALL_DIR` | `-Dir DIR` or `FASTWARP_INSTALL_DIR` |
+| Release | `--version X.Y.Z` or `FASTWARP_VERSION` | `-Version X.Y.Z` or `FASTWARP_VERSION` |
+| Do not change PATH | `--no-modify-path` or `FASTWARP_NO_MODIFY_PATH=1` | `-NoModifyPath` or `FASTWARP_NO_MODIFY_PATH=1` |
+| Uninstall | `--uninstall` | `-Uninstall` |
+| Help | `--help` | `-Help` |
+
+`FASTWARP_DOWNLOAD_URL` makes the installer download from another folder that holds the same
+file names, for example a mirror: `https://` or `file://`; `http://` only for the installer's own
+version, whose checksums it holds, or from `localhost`. Redirects must stay on HTTPS: the
+shell installer uses `curl` with `--proto-redir =https`, and with only `wget` (which may follow a
+redirect to plain HTTP) it installs only its own version, whose checksum it holds. The install
+folder must not contain `:`, `\` or a line break (Linux, macOS) or `;` (Windows), which would
+break PATH.
+
+The installer does not replace or remove a `fastwarp` it did not install: one without a matching
+receipt, such as a symbolic link from `uv tool install`, a script from `pip install --user`, a
+program you built, or one changed since the install. Remove that one first, or install elsewhere
+with `--dir`. On Linux and macOS the default folder is the one uv uses for its tools (and pip on
+Linux for `pip install --user`). On Windows the program gets a folder of its own, away from
+`%USERPROFILE%\.local\bin`, where `uv tool install` puts its own `fastwarp.exe`.
+
+#### PATH
+
+On Linux and macOS, when the install folder is not on PATH, the installer appends one line
+ending in `# fastwarp-installer` to `~/.profile`, to `~/.bashrc` when you use bash or the file
+exists, to `~/.bash_profile` when it exists, and to `~/.zshrc` (`$ZDOTDIR/.zshrc`) when you use
+zsh or the file exists; for fish it adds a line to
+`~/.config/fish/conf.d/fastwarp-installer.fish`. The line adds the folder only when it is missing
+from PATH, and the installer never writes it twice. It prints the files it changed and records
+them in the receipt. Open a new terminal, or run `. ~/.profile`, to use `fastwarp`.
+
+On Windows it adds the folder to the start of the user PATH (`HKCU\Environment`, not the PATH of
+the machine), keeps the other entries and their `%VARIABLE%` form, and tells running programs
+that the environment changed. Open a new terminal to use `fastwarp`.
+
+With `--no-modify-path` (`-NoModifyPath`) nothing is changed and the installer prints how to add
+the folder yourself.
+
+#### Uninstall
+
+```bash
+sh fastwarp-installer.sh --uninstall          # add --dir DIR if you installed elsewhere
+```
+
+```powershell
+powershell -ExecutionPolicy ByPass -File fastwarp-installer.ps1 -Uninstall
+```
+
+This removes the program, the receipt and exactly the PATH lines (on Windows: the user PATH
+entry) that the receipt says the installer added, and then the folder if it is empty. PATH
+entries that were there before the install stay. When the folder still holds other programs
+(for example `~/.local/bin`), the installer removes its PATH lines anyway and says that the
+folder is no longer on PATH through them; open a new terminal before installing again, because
+the old one still has the folder on PATH. Removing the program by hand works too: delete
+`fastwarp`, `.fastwarp-installer` and the lines ending in `# fastwarp-installer` (Linux, macOS),
+or the folder `%LOCALAPPDATA%\Programs\fastwarp` and its user PATH entry (Windows).
+
+#### By hand
+
+```bash
+gh release download v0.2.0 -R WyssCenter/fastwarp -p "fastwarp-x86_64-unknown-linux-gnu.tar.gz*"
+sha256sum -c fastwarp-x86_64-unknown-linux-gnu.tar.gz.sha256      # shasum -a 256 -c on macOS
+gh attestation verify fastwarp-x86_64-unknown-linux-gnu.tar.gz --repo WyssCenter/fastwarp \
+    --signer-workflow WyssCenter/fastwarp/.github/workflows/wheels.yml
+tar -xzf fastwarp-x86_64-unknown-linux-gnu.tar.gz
+cp fastwarp-x86_64-unknown-linux-gnu/fastwarp ~/.local/bin/
+```
+
+`SHA256SUMS` in the release lists the SHA-256 of every file of the release. The programs are not
+code-signed: macOS refuses to open a program from an archive downloaded with a web browser
+until you remove the quarantine flag (`xattr -d com.apple.quarantine fastwarp`), and Windows
+SmartScreen may warn about `fastwarp.exe` downloaded with a browser. Downloads made with `curl`,
+`gh` or the installers are not flagged.
 
 ## Images
 
@@ -284,14 +453,16 @@ at the moment the GPU is opened:
 
 The former `DBSLOC_` names are still read when the `FASTWARP_` name is unset.
 
-## The standalone program
+## Building the program
 
-The same command line is also built as a program of its own from the crate `fastwarp-cli`:
+The standalone program is built from the crate `fastwarp-cli`:
 
 ```bash
 cargo build --release --locked -p fastwarp-cli
 target/release/fastwarp --help
 ```
 
-It behaves exactly like `python -m fastwarp` and needs no Python. Release builds of this program
-are not published yet.
+It behaves exactly like `python -m fastwarp` and needs no Python. The release builds add
+`--target <triple>`, build the Linux programs in the manylinux 2.28 container of the wheels and
+link the Windows program with the static C runtime
+(`RUSTFLAGS="-C target-feature=+crt-static"`); see `.github/workflows/wheels.yml`.

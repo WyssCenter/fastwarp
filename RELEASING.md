@@ -43,6 +43,10 @@ only through this manual run. Never push a tag for it: a tag publishes to PyPI.
    notes are the section whose heading starts with the tagged version; the release fails if
    there is none. Add a new `## Unreleased` section with the next change.
 3. Run the checks from [CONTRIBUTING.md](CONTRIBUTING.md) and merge to `main` with CI green.
+   Then run the release workflow by hand on `main` (`gh workflow run wheels.yml --ref main`) and
+   check that it is green: it builds the wheels, the programs and the installers, installs every
+   program except macOS x86_64 with its installer and runs the installer tests on macOS, without
+   publishing anything.
 4. Tag and push: `git tag v<version> && git push origin v<version>`.
 
 ## What the workflow does
@@ -52,12 +56,36 @@ only through this manual run. Never push a tag for it: a tag publishes to PyPI.
 1. `build`: one abi3 wheel for each of Linux x86_64, Linux aarch64, macOS arm64, macOS x86_64 and
    Windows x86_64, with a smoke test and the Python tests where the runner allows.
 2. `sdist`: `maturin sdist`.
-3. `release`: fails unless the tag equals the `Cargo.toml` version, then creates the GitHub
-   release as a draft with the wheels, the sdist and `SHA256SUMS`.
-4. `publish`: after the three jobs above succeed, uploads the wheels and the sdist to PyPI
-   through OIDC trusted publishing, in the `pypi` environment. Only `publish` and
+3. `cli`: the standalone program (`cargo build --release --locked -p fastwarp-cli --target
+   <triple>`) for the same five platforms, packed as `fastwarp-<triple>.tar.gz` (`.zip` on
+   Windows) with `LICENSE`, `NOTICE` and `README.txt`, and a `.sha256` file per archive. Linux
+   builds in the pinned manylinux 2.28 image of the wheels (rustup-init checked against a pinned
+   SHA-256) and checks that the program needs glibc 2.28 at most and links only the C library,
+   `libm`, `libdl`, `libpthread`, `librt` and `libgcc_s` (Vulkan is loaded at run time). macOS
+   checks that only system libraries are linked; Windows links the static C runtime and checks
+   that no Visual C++ runtime DLL is imported. Each program runs `--version`, `recipe` and
+   `gpu-info` (status 0 or 4); the macOS x86_64 program runs only if the runner has Rosetta 2,
+   otherwise the job warns. Every leg except macOS x86_64 then installs and uninstalls its archive
+   with `scripts/install.sh` or `scripts/install.ps1`, and the macOS arm64 leg runs
+   `ci/test-install.sh`.
+4. `installers`: after `cli`, checks the `.sha256` files of the archives and writes the version
+   of `Cargo.toml` and the SHA-256 of every archive into `scripts/install.sh` and
+   `scripts/install.ps1` as `fastwarp-installer.sh` and `fastwarp-installer.ps1`. The installer
+   of a release thus installs that release and checks the download against the checksum it
+   holds, not against a file next to the archive. It then installs and uninstalls the Linux
+   x86_64 archive with the stamped `fastwarp-installer.sh`. On a tag it fails unless the tag
+   equals the `Cargo.toml` version.
+5. `attest`: build provenance attestations (`actions/attest`) for the wheels, the sdist, the
+   archives and the installers. It is the only job with `attestations: write`.
+6. `release`: fails unless the tag equals the `Cargo.toml` version, then creates the GitHub
+   release as a draft with the wheels, the sdist, the archives with their `.sha256` files, the
+   installers and `SHA256SUMS` (every file except the `.sha256` files). The notes are the
+   `CHANGELOG.md` section plus a link to the install instructions in `docs/cli.md`.
+7. `publish`: after the jobs above succeed, uploads the wheels and the sdist to PyPI
+   through OIDC trusted publishing, in the `pypi` environment. Only `attest`, `publish` and
    `publish-testpypi` have `id-token: write`.
-5. `publish-release`: after the upload to PyPI succeeds, publishes the drafted GitHub release.
+8. `publish-release`: after the upload to PyPI succeeds, publishes the drafted GitHub release.
+   A failure in any job above leaves the release a draft and PyPI untouched.
 
 If `publish` fails, the GitHub release stays a draft. Fix the cause and use *Re-run failed jobs*
 on the same run; files that PyPI already has are skipped. Do not use *Re-run all jobs*:
@@ -67,10 +95,34 @@ commit; if the fix is in `wheels.yml`, delete the draft and release the next ver
 A PyPI version cannot be replaced once uploaded. If a release is wrong, yank it on PyPI and
 release the next version.
 
-`gh workflow run wheels` builds the wheels by hand; the `release`, `publish` and
-`publish-release` jobs run only for a pushed tag, never for a manual run.
+`gh workflow run wheels` builds the wheels, the programs and the installers by hand (download
+them from the run's artifacts); the `attest`, `release`, `publish` and `publish-release` jobs run
+only for a pushed tag, never for a manual run.
+
+The installer scripts are tested on every push (`ci.yml`, job `installers`: ShellCheck,
+PSScriptAnalyzer and an end-to-end test of `install.sh` against a fake release) and on ready pull
+requests and nightly (`full.yml`, job `installer-windows`: `install.ps1` on Windows PowerShell 5.1
+and PowerShell 7). The pinned tools (manylinux image, rustup-init, ShellCheck, PSScriptAnalyzer)
+are not updated by Dependabot; update their versions and checksums by hand.
 
 ## After the release
 
 Check the project page at <https://pypi.org/project/fastwarp/> and install the wheel in a clean
 environment: `python -c "import fastwarp; print(fastwarp.__version__)"`.
+
+Check the standalone program on Linux, macOS and Windows with the installer of the release, as a
+user would (see [docs/cli.md](docs/cli.md#install)):
+
+```bash
+v=<version>
+gh release download "v$v" -R WyssCenter/fastwarp -p fastwarp-installer.sh
+gh attestation verify fastwarp-installer.sh --repo WyssCenter/fastwarp \
+    --signer-workflow WyssCenter/fastwarp/.github/workflows/wheels.yml
+sh fastwarp-installer.sh --no-modify-path --dir "$PWD/bin"
+bin/fastwarp --version && bin/fastwarp gpu-info
+sh fastwarp-installer.sh --uninstall --dir "$PWD/bin"
+```
+
+On Windows, the same with `fastwarp-installer.ps1 -NoModifyPath -Dir $PWD\bin` and `-Uninstall`.
+`gh attestation verify <file> --repo WyssCenter/fastwarp --signer-workflow WyssCenter/fastwarp/.github/workflows/wheels.yml`
+checks any file of the release.

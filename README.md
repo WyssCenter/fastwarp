@@ -32,6 +32,9 @@ uv add fastwarp
 The first line is for pip, the second for a uv project (`uv pip install fastwarp` installs into
 an existing environment). For the command line alone, `uv tool install fastwarp` installs it and
 `uvx fastwarp --help` runs it without installing.
+The same wheels are attached to each [GitHub release](https://github.com/WyssCenter/fastwarp/releases).
+The command line `fastwarp` also comes as a standalone program without Python, with installer
+scripts for Linux, macOS and Windows: see [docs/cli.md](docs/cli.md#install).
 
 Wheels are published for Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows
 (x86_64), for Python 3.11 and later. FastWarp needs NumPy 2.0 or later and a GPU;
