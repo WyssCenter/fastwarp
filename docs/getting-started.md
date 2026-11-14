@@ -7,6 +7,10 @@ pip install fastwarp antspyx
 python -c "import fastwarp; print(fastwarp.gpu_info())"
 ```
 
+ANTsPy (`antspyx`) publishes no wheels for Python 3.14 yet; use Python 3.11, 3.12 or 3.13 if you
+want it. FastWarp itself also runs on 3.14, and its [command line](cli.md) reads NIfTI files
+without ANTsPy.
+
 Then follow the [quickstart](quickstart.md). If the second command raises
 `GpuUnavailableError`, see [Troubleshooting](troubleshooting.md#no-gpu-is-found).
 

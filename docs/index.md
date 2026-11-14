@@ -33,6 +33,7 @@ registered onto the MNI 2009c template with the default settings
 - A full normalization in one call: {term}`centre of mass`, Rigid, Affine, then SyN.
 - Rigid or affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like ANTs' `antsApplyTransforms`, on the CPU.
+- A [command line](cli.md), `fastwarp`, for the same steps on NIfTI files.
 :::
 
 :::{grid-item-card} What it works with

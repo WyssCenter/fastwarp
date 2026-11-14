@@ -44,8 +44,9 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 | `snsx` | 32 anatomical fiducials (AFIDs) | 7 T MP2RAGE T1w, 0.7 mm | 32 | 1.09 GB | yes |
 | `lhscpd` | 32 anatomical fiducials (AFIDs) | 1.5 T contrast-enhanced T1w | 40 | 0.34 GB | optional |
 
-### Mindboggle-101, OASIS-TRT-20 (cortical and subcortical labels)
+Open a dataset below for its source, images, ground truth, licence and citation.
 
+:::{dropdown} Mindboggle-101, OASIS-TRT-20 (cortical and subcortical labels)
 - Source: the Mindboggle-101 project on OSF, <https://osf.io/nhtur/>. Images and cortical
   labels: `OASIS-TRT-20_volumes.tar.gz` (<https://osf.io/download/tyvhs/>, 408 MB; only
   `t1weighted_brain.nii.gz` of each subject is extracted). Whole-brain labels:
@@ -67,24 +68,22 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 - Cite: Klein A, Tourville J (2012), *Front Neurosci* 6:171, doi:10.3389/fnins.2012.00171;
   Marcus DS et al. (2007), *J Cogn Neurosci* 19(9):1498–1507, doi:10.1162/jocn.2007.19.9.1498.
 
-```{dropdown} Licence
-The project README: "All labeled data, including nifti volumes (nii), vtk surfaces
-(vtk), and FreeSurfer files (mgh, etc.) for each scanned "GROUP" … are licensed under a
-by-attribution Creative Commons License" (<http://creativecommons.org/licenses/by/4.0>), and
-"The manually labeled subcortical portions of the "WholeBrain" OASIS-TRT-20 labels are
-licensed under a similar Creative Commons License" (<http://creativecommons.org/licenses/by-nc-nd/4.0>).
-The `README_subcortical_labels.txt` beside the label files says the same: "released under a
-different Creative Commons License (http://creativecommons.org/licenses/by-nc-sd/4.0)" (sic).
-The OSF component itself shows CC BY 4.0. We follow the stricter statement: the subcortical
-labels are for non-commercial use without derivatives being distributed. The images derive
-from OASIS-1, whose own terms ("OASIS data are provided for non-commercial, academic research
-purposes only", <https://sites.wustl.edu/oasisbrains/>) ask for the acknowledgement "Data were
-provided [in part] by OASIS"; whether they still bind Mindboggle's CC BY redistribution is not
-stated, so treat the images as non-commercial research data as well.
-```
+- Licence: The project README: "All labeled data, including nifti volumes (nii), vtk surfaces
+  (vtk), and FreeSurfer files (mgh, etc.) for each scanned "GROUP" … are licensed under a
+  by-attribution Creative Commons License" (<http://creativecommons.org/licenses/by/4.0>), and
+  "The manually labeled subcortical portions of the "WholeBrain" OASIS-TRT-20 labels are
+  licensed under a similar Creative Commons License" (<http://creativecommons.org/licenses/by-nc-nd/4.0>).
+  The `README_subcortical_labels.txt` beside the label files says the same: "released under a
+  different Creative Commons License (http://creativecommons.org/licenses/by-nc-sd/4.0)" (sic).
+  The OSF component itself shows CC BY 4.0. We follow the stricter statement: the subcortical
+  labels are for non-commercial use without derivatives being distributed. The images derive
+  from OASIS-1, whose own terms ("OASIS data are provided for non-commercial, academic research
+  purposes only", <https://sites.wustl.edu/oasisbrains/>) ask for the acknowledgement "Data were
+  provided [in part] by OASIS"; whether they still bind Mindboggle's CC BY redistribution is not
+  stated, so treat the images as non-commercial research data as well.
+:::
 
-### 7 T deep nuclei (STN, SN, RN, GPe, GPi)
-
+:::{dropdown} 7 T deep nuclei (STN, SN, RN, GPe, GPi)
 - Source: the data of Isaacs et al. (2020) on OSF, <https://osf.io/4nrku/>, one archive
   `dataset/osf_dataset.tar.gz` (<https://osf.io/download/59kjv/>, 2.85 GB). Only the 7 T part is
   used: per subject the skull-stripped MP2RAGE image (`<id>_7T_WB_MP2RAGE_STD_BET.nii.gz`), its
@@ -102,15 +101,13 @@ stated, so treat the images as non-commercial research data as well.
   scan, so a T1w registration would add the motion between two scans to the error.
 - Cite: Isaacs BR et al. (2020), *PLoS One* 15:e0236208, doi:10.1371/journal.pone.0236208.
 
-```{dropdown} Licence
-The article's data availability statement: "All anonymized data and analysis scripts
-are available from https://osf.io/4nrku/, under the terms of the Creative Commons Attribution
-License and complies with the rules of the General Data Protection Regulation (EU) 2016/679."
-The OSF project itself shows no licence.
-```
+- Licence: The article's data availability statement: "All anonymized data and analysis scripts
+  are available from https://osf.io/4nrku/, under the terms of the Creative Commons Attribution
+  License and complies with the rules of the General Data Protection Regulation (EU) 2016/679."
+  The OSF project itself shows no licence.
+:::
 
-### SNSX: AFIDs on 7 T images (landmarks)
-
+:::{dropdown} SNSX: AFIDs on 7 T images (landmarks)
 - Source: OpenNeuro ds004470 version 1.0.1, <https://openneuro.org/datasets/ds004470/versions/1.0.1>;
   the files are fetched through OpenNeuro's version 1.0.1 snapshot links.
 - Images: 32 healthy adults (20–70 years), 7 T MP2RAGE T1w, 224 × 342 × 342 voxels of
@@ -138,21 +135,19 @@ The OSF project itself shows no licence.
   doi:10.1002/hbm.24695; Fonov V et al. (2011), *NeuroImage* 54:313–327,
   doi:10.1016/j.neuroimage.2010.07.033.
 
-```{dropdown} Licence
-`LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
-`"License": "CC0"`. No data-use agreement.
-```
+- Licence: `LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
+  `"License": "CC0"`. No data-use agreement.
+:::
 
-### LHSCPD: AFIDs on 1.5 T images (optional)
-
+:::{dropdown} LHSCPD: AFIDs on 1.5 T images (optional)
 OpenNeuro ds004471 version 1.0.1 (CC0, same AFIDs layout as SNSX): 40 patients with Parkinson's
 disease before deep brain stimulation surgery, gadolinium-enhanced 1.5 T T1w. It is not in the
 default run, because contrast enhancement makes the images unlike the template; run it with
 `--dataset lhscpd`. Cite Abbass M et al. (2022), *Brain Struct Funct* 227:393–405, and Taha
 et al. (2023).
+:::
 
-### Considered and not used
-
+:::{dropdown} Considered and not used
 | Dataset | Why not (or how to add it) |
 | --- | --- |
 | LPBA40 (40 subjects, 56 manually labelled structures; Shattuck et al. 2008) | Download from LONI after registering and accepting the LONI Research License; no anonymous download to pin. |
@@ -164,6 +159,7 @@ et al. (2023).
 | Mindboggle `labels.DKT31.manual+aseg` subcortical part | FreeSurfer's automatic `aseg`, not manual. |
 | The 3 T part of the Isaacs et al. (2020) archive | Masks on the grid of a separate T2\*-weighted scan, not of the T1w. |
 | AHEAD (Alkemade et al. 2020), MASSP training data (Bazin et al. 2020) | Not checked in depth; the 7 T set above covers the same structures with an anonymous download. |
+:::
 
 ## Protocol
 
@@ -438,7 +434,7 @@ already run, so run `--quick` first and check `plan` before starting the night.
 
 | Step | Assumption | Default run |
 | --- | --- | --- |
-| ANTs, one registration on a 1 mm grid, all cores of a desktop | about 400 s (a guess for one channel on the cropped, skull-stripped grids; the earlier 1000–1500 s on 16 threads in [Performance](performance.md) were for two channels on a whole-head grid, so it may be longer) | 50 registrations: about 5.6 h |
+| ANTs, one registration on a 1 mm grid, all cores of a desktop | about 400 s (a guess for one channel on the cropped, skull-stripped grids) | 50 registrations: about 5.6 h |
 | FastWarp, one registration | about 40 s or less on a desktop GPU | about 0.6 h |
 | Evaluation per pair | about 60 s | about 0.8 h |
 | `linear`, one pair: ANTs rigid and affine; FastWarp's fits | about 120 s and 20 s | 20 `snsx` pairs: about 0.8 h |

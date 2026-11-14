@@ -7,7 +7,7 @@
 | Python | 3.11 or later. One `abi3` wheel per platform serves every Python version from 3.11 on. |
 | NumPy | 2.0 or later. It is the only runtime dependency. |
 | GPU | A hardware GPU with a Vulkan, Metal or DirectX 12 driver. See [GPU and memory](guide/gpu.md). |
-| ANTsPy (optional) | To read and write NIfTI images and to pass them as `ANTsImage`. FastWarp itself reads no images from disk. |
+| ANTsPy (optional) | To read and write images in Python and to pass them as `ANTsImage`. The Python functions read no images from disk; the [command line](cli.md) reads NIfTI files itself. |
 
 The resampling functions {func}`~fastwarp.compose_field` and {func}`~fastwarp.apply_transforms`
 run on the CPU and need no GPU. Every other function that registers images needs one.

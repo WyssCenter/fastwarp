@@ -163,7 +163,7 @@ div.fw-output pre {
 
 svg.fw-diagram {
   width: 100%;
-  max-width: 40rem;
+  max-width: 34rem;
   height: auto;
   display: block;
   margin: 1rem auto;
@@ -178,29 +178,30 @@ svg.fw-diagram .fw-box {
 svg.fw-diagram .fw-title {
   fill: var(--pst-color-text-base);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 21px;
 }
 
 svg.fw-diagram .fw-sub {
   fill: var(--pst-color-text-muted);
-  font-size: 12.5px;
+  font-size: 18px;
 }
 
 svg.fw-diagram .fw-label {
   fill: var(--pst-color-text-base);
-  font-size: 12.5px;
+  font-size: 20px;
+  font-weight: 600;
 }
 
 svg.fw-diagram .fw-points {
   stroke: var(--pst-color-primary);
-  stroke-width: 2.5;
+  stroke-width: 4;
   fill: none;
 }
 
 svg.fw-diagram .fw-images {
   stroke: var(--pst-color-secondary);
-  stroke-width: 2.5;
-  stroke-dasharray: 7 5;
+  stroke-width: 4;
+  stroke-dasharray: 10 7;
   fill: none;
 }
 

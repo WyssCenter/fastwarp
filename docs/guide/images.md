@@ -1,7 +1,8 @@
 # Images
 
-FastWarp does not read image files. You pass images that are already in memory, in one of two
-forms.
+The Python functions do not read image files: you pass images that are already in memory, in one
+of the two forms below. To work on NIfTI files without Python code, use the
+[command line](../cli.md), which reads them as ITK and ANTsPy do.
 
 ## Two ways to pass an image
 

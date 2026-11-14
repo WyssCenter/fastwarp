@@ -3,10 +3,10 @@
 Parts of FastWarp are translations of code from [ITK](https://itk.org) and
 [ANTs](https://github.com/ANTsX/ANTs) into Rust and into GPU shaders. This page lists each of
 these files: where it came from, which class or function it follows, and what was changed. It is
-the record that the Apache License asks for, and it helps when you compare FastWarp's behaviour
-with ANTs.
+the record that section 4 of the Apache License 2.0 asks for, and it helps when you compare
+FastWarp's behaviour with ANTs.
 
-Record of FastWarp source files derived from ANTs or ITK (both Apache License 2.0), as required by Apache-2.0 §4. Each derived file carries the upstream copyright line and the Apache header from [Header template for ported files](#header-template-for-ported-files) below. Upstream notices: ITK — Copyright 1999-2019 Insight Software Consortium, Copyright 2020-present NumFOCUS; ANTs — Copyright the ANTs developers (`COPYING.txt`). Upstream references: ITK `v5.4.4` and ANTs `v2.6.5` tags (`main` / `master` where a file was missing at the tag).
+Each derived file carries the upstream copyright line and the Apache header from [Header template for ported files](#header-template-for-ported-files) below. Upstream notices: ITK — Copyright 1999-2019 Insight Software Consortium, Copyright 2020-present NumFOCUS; ANTs — Copyright the ANTs developers (`COPYING.txt`). Upstream references: ITK `v5.4.4` and ANTs `v2.6.5` tags (`main` / `master` where a file was missing at the tag).
 
 | FastWarp file | Upstream file (version) | Class / function | What changed |
 | --- | --- | --- | --- |

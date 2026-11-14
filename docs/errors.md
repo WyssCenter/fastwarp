@@ -87,6 +87,13 @@ These come from the arguments and are raised before any registration work starts
 The message names the argument or the recipe field, for example
 `recipe['rigid']['bins']: the GPU MI kernels support 32 bins, not 64`.
 
+## Command line
+
+The [command line](cli.md) reports the same errors as exit status: 2 for invalid arguments, 3
+for a file error, 4 for {class}`~fastwarp.GpuUnavailableError`, 5 for
+{class}`~fastwarp.GpuCapacityError`, 1 for other failures. See
+[Exit status](cli.md#exit-status).
+
 ## Warnings
 
 The deprecated names `register_rigid`, `rigid_session` and `RigidSession` emit a
