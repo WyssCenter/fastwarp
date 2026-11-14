@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A command line, `fastwarp` (also `python -m fastwarp`), for NIfTI files: `register`
+  (`register_syn`), `linear` (one rigid or affine fit), `apply` (`apply_transforms`), `compose`
+  (`compose_field`), `recipe` (the default recipe as JSON), `gpu-info`, `fits` and `bench` (timings
+  on built-in synthetic volumes or on your images, with a description of the machine). Images are
+  read as ITK and ANTsPy read them. Distinct exit status for invalid arguments (2), file errors (3),
+  no usable GPU (4) and a grid too large for the GPU (5); `--json` for machine-readable output.
+  See `docs/cli.md`. The Python extension and the standalone program built from the new crate
+  `fastwarp-cli` run the same code.
 - `fits_gpu` takes the moving image(s) as an optional second argument and checks the moving grid
   as `register_syn` does; without it a moving image larger than the fixed one could pass
   `fits_gpu` and still raise `GpuCapacityError`. `channels` defaults to the number of fixed

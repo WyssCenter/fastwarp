@@ -35,6 +35,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
+[project.scripts]
+fastwarp = "fastwarp.__main__:main"
+
 [project.urls]
 Repository = "https://github.com/WyssCenter/fastwarp"
 Documentation = "https://fastwarp.readthedocs.io"

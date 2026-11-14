@@ -4,147 +4,73 @@
 //! The registration recipe as a Python dict: `{"rigid": {...}, "affine": {...}, "syn": {...}}`,
 //! each field of [`LinearRecipe`] / [`SynRecipe`] under its own name. A missing stage or field
 //! keeps the dbs-localizer cohort value, an unknown one is an error, so a caller (leaddbs-py) can
-//! state the whole schedule and a typo never passes silently.
+//! state the whole schedule and a typo never passes silently. The keys, defaults and checks are
+//! those of the command line's JSON recipe (`fastwarp_cli::recipe`).
 
+use fastwarp_cli::recipe::{
+    check_linear, cohort_linear, parse_units, units_name, Recipe, LINEAR_KEYS, STAGE_KEYS, SYN_KEYS,
+};
 use fastwarp_reg::linear::LinearRecipe;
 use fastwarp_reg::pyramid::SigmaUnits;
 use fastwarp_reg::recipe::SynRecipe;
-use fastwarp_reg::register::LinearPlan;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-/// Histogram bins the GPU Mattes MI kernels are built for.
-const GPU_MI_BINS: usize = 32;
-/// Largest CC radius of the GPU box-sum kernels.
-const GPU_CC_RADIUS_MAX: usize = 8;
-
-const LINEAR_KEYS: &[&str] = &[
-    "gradient_step",
-    "iterations",
-    "convergence_threshold",
-    "convergence_window",
-    "shrink_factors",
-    "smoothing_sigmas",
-    "sigma_units",
-    "bins",
-    "sampling_percentage",
-    "seed",
-];
-const SYN_KEYS: &[&str] = &[
-    "gradient_step",
-    "update_field_variance",
-    "total_field_variance",
-    "cc_radius",
-    "channel_weights",
-    "iterations",
-    "convergence_threshold",
-    "convergence_window",
-    "shrink_factors",
-    "smoothing_sigmas",
-    "sigma_units",
-];
-
-/// The three stages that run: Rigid, Affine (Mattes MI, first channel) and SyN (CC, all channels).
-pub struct Recipe {
-    pub linear: LinearPlan,
-    pub syn: SynRecipe,
+fn value_err(msg: String) -> PyErr {
+    PyValueError::new_err(msg)
 }
 
-impl Recipe {
-    /// The dbs-localizer cohort recipe for `channels` channels (weights 1, or 0.5 each for two).
-    pub fn cohort(channels: usize) -> Self {
-        Self {
-            linear: LinearPlan::cohort(),
-            syn: if channels == 2 {
-                SynRecipe::cohort_multispectral()
-            } else {
-                SynRecipe::cohort()
-            },
+/// The cohort recipe with the stages and fields `d` names replaced, checked for `channels`
+/// channels and for what the GPU kernels support.
+pub fn from_dict(d: Option<&Bound<'_, PyDict>>, channels: usize) -> PyResult<Recipe> {
+    let mut r = Recipe::cohort(channels);
+    if let Some(d) = d {
+        check_keys(d, STAGE_KEYS, "recipe")?;
+        if let Some(s) = stage(d, "rigid")? {
+            linear_from(&s, &mut r.linear.rigid, "recipe['rigid']")?;
+        }
+        if let Some(s) = stage(d, "affine")? {
+            linear_from(&s, &mut r.linear.affine, "recipe['affine']")?;
+        }
+        if let Some(s) = stage(d, "syn")? {
+            syn_from(&s, &mut r.syn)?;
         }
     }
+    r.check(channels).map_err(value_err)?;
+    Ok(r)
+}
 
-    /// The cohort recipe with the stages and fields `d` names replaced, checked for `channels`
-    /// channels and for what the GPU kernels support.
-    pub fn from_dict(d: Option<&Bound<'_, PyDict>>, channels: usize) -> PyResult<Self> {
-        let mut r = Self::cohort(channels);
-        if let Some(d) = d {
-            check_keys(d, &["rigid", "affine", "syn"], "recipe")?;
-            if let Some(s) = stage(d, "rigid")? {
-                linear_from(&s, &mut r.linear.rigid, "recipe['rigid']")?;
-            }
-            if let Some(s) = stage(d, "affine")? {
-                linear_from(&s, &mut r.linear.affine, "recipe['affine']")?;
-            }
-            if let Some(s) = stage(d, "syn")? {
-                syn_from(&s, &mut r.syn)?;
-            }
-        }
-        r.check(channels)?;
-        Ok(r)
-    }
-
-    fn check(&self, channels: usize) -> PyResult<()> {
-        check_linear("recipe['rigid']", &self.linear.rigid)?;
-        check_linear("recipe['affine']", &self.linear.affine)?;
-        self.syn
-            .validate()
-            .map_err(|e| PyValueError::new_err(format!("recipe['syn']: {e}")))?;
-        if self.syn.cc_radius > GPU_CC_RADIUS_MAX {
-            return Err(PyValueError::new_err(format!(
-                "recipe['syn']['cc_radius']: the GPU kernels support 1 to {GPU_CC_RADIUS_MAX}, \
-                 not {}",
-                self.syn.cc_radius
-            )));
-        }
-        if self.syn.channel_weights.len() != channels {
-            return Err(PyValueError::new_err(format!(
-                "recipe['syn']['channel_weights'] has {} weights for {channels} channel(s)",
-                self.syn.channel_weights.len()
-            )));
-        }
-        Ok(())
-    }
-
-    /// The recipe as the dict [`Recipe::from_dict`] reads (every field present).
-    pub fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let d = PyDict::new(py);
-        d.set_item("rigid", linear_dict(py, &self.linear.rigid)?)?;
-        d.set_item("affine", linear_dict(py, &self.linear.affine)?)?;
-        let s = PyDict::new(py);
-        let r = &self.syn;
-        s.set_item("gradient_step", r.gradient_step)?;
-        s.set_item("update_field_variance", r.update_field_variance)?;
-        s.set_item("total_field_variance", r.total_field_variance)?;
-        s.set_item("cc_radius", r.cc_radius)?;
-        s.set_item("channel_weights", r.channel_weights.clone())?;
-        s.set_item("iterations", r.iterations.clone())?;
-        s.set_item("convergence_threshold", r.convergence_threshold)?;
-        s.set_item("convergence_window", r.convergence_window)?;
-        s.set_item("shrink_factors", r.shrink_factors.clone())?;
-        s.set_item("smoothing_sigmas", r.smoothing_sigmas.clone())?;
-        s.set_item("sigma_units", units_name(r.sigma_units))?;
-        d.set_item("syn", s)?;
-        Ok(d)
-    }
+/// The recipe as the dict [`from_dict`] reads (every field present).
+pub fn to_dict<'py>(py: Python<'py>, r: &Recipe) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("rigid", linear_dict(py, &r.linear.rigid)?)?;
+    d.set_item("affine", linear_dict(py, &r.linear.affine)?)?;
+    let s = PyDict::new(py);
+    let r = &r.syn;
+    s.set_item("gradient_step", r.gradient_step)?;
+    s.set_item("update_field_variance", r.update_field_variance)?;
+    s.set_item("total_field_variance", r.total_field_variance)?;
+    s.set_item("cc_radius", r.cc_radius)?;
+    s.set_item("channel_weights", r.channel_weights.clone())?;
+    s.set_item("iterations", r.iterations.clone())?;
+    s.set_item("convergence_threshold", r.convergence_threshold)?;
+    s.set_item("convergence_window", r.convergence_window)?;
+    s.set_item("shrink_factors", r.shrink_factors.clone())?;
+    s.set_item("smoothing_sigmas", r.smoothing_sigmas.clone())?;
+    s.set_item("sigma_units", units_name(r.sigma_units))?;
+    d.set_item("syn", s)?;
+    Ok(d)
 }
 
 /// One `Rigid` (`transform = "rigid"`) or `Affine` (`"affine"`) stage: the cohort's, with the
 /// fields `d` names replaced, checked like a recipe.
 pub fn linear_stage(d: Option<&Bound<'_, PyDict>>, transform: &str) -> PyResult<LinearRecipe> {
-    let mut stage = match transform {
-        "rigid" => LinearRecipe::cohort_rigid(),
-        "affine" => LinearRecipe::cohort_affine(),
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "transform must be 'rigid' or 'affine', not {other:?}"
-            )))
-        }
-    };
+    let mut stage = cohort_linear(transform).map_err(value_err)?;
     if let Some(d) = d {
         linear_from(d, &mut stage, "stage")?;
     }
-    check_linear("stage", &stage)?;
+    check_linear("stage", &stage).map_err(value_err)?;
     Ok(stage)
 }
 
@@ -154,18 +80,6 @@ pub fn linear_stage_dict<'py>(
     stage: &LinearRecipe,
 ) -> PyResult<Bound<'py, PyDict>> {
     linear_dict(py, stage)
-}
-
-fn check_linear(what: &str, l: &LinearRecipe) -> PyResult<()> {
-    l.validate()
-        .map_err(|e| PyValueError::new_err(format!("{what}: {e}")))?;
-    if l.bins != GPU_MI_BINS {
-        return Err(PyValueError::new_err(format!(
-            "{what}['bins']: the GPU MI kernels support {GPU_MI_BINS} bins, not {}",
-            l.bins
-        )));
-    }
-    Ok(())
 }
 
 fn linear_dict<'py>(py: Python<'py>, l: &LinearRecipe) -> PyResult<Bound<'py, PyDict>> {
@@ -181,13 +95,6 @@ fn linear_dict<'py>(py: Python<'py>, l: &LinearRecipe) -> PyResult<Bound<'py, Py
     d.set_item("sampling_percentage", f64::from(l.sampling_percentage))?;
     d.set_item("seed", l.seed)?;
     Ok(d)
-}
-
-fn units_name(u: SigmaUnits) -> &'static str {
-    match u {
-        SigmaUnits::Voxels => "vox",
-        SigmaUnits::Millimetres => "mm",
-    }
 }
 
 fn check_keys(d: &Bound<'_, PyDict>, allowed: &[&str], what: &str) -> PyResult<()> {
@@ -242,15 +149,7 @@ fn set<'py, T: FromPyObjectOwned<'py>>(
 fn units(d: &Bound<'_, PyDict>, what: &str, slot: &mut SigmaUnits) -> PyResult<()> {
     let mut name = units_name(*slot).to_string();
     set(d, "sigma_units", what, &mut name)?;
-    *slot = match name.as_str() {
-        "vox" => SigmaUnits::Voxels,
-        "mm" => SigmaUnits::Millimetres,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "{what}['sigma_units']: 'vox' or 'mm', not '{other}'"
-            )))
-        }
-    };
+    *slot = parse_units(&name, what).map_err(value_err)?;
     Ok(())
 }
 

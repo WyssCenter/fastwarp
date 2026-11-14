@@ -7,27 +7,23 @@
 //! Images arrive as flat `float32` or `float64` arrays in ITK voxel order (x fastest) with ITK
 //! (LPS) geometry, i.e. exactly what an `ANTsImage` holds; the Python wrapper does the flattening
 //! (a view, no copy, for an `ANTsImage`). They are converted to the engine's `f64` once, here.
+//! The engine calls themselves are those of the `fastwarp` command line (`fastwarp_cli::engine`),
+//! which `cli_main` runs.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::{Path, PathBuf};
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-mod post;
 mod recipe;
-mod session;
 
-use fastwarp_gpu::{plan_capacity_pair, BackendSelect, CapacityCaps, WgpuBackend};
-use fastwarp_reg::init::{initial_transform, InitFeature};
+use fastwarp_cli::engine::{self, Failure, SynOutputs};
+use fastwarp_cli::session;
 use fastwarp_reg::mask::MaskVolume;
-use fastwarp_reg::preprocess::preprocess_volume;
-use fastwarp_reg::register::{register_full, write_linear_output, write_outputs, RegisterTimings};
-use fastwarp_reg::syn::SynOptions;
-use fastwarp_reg::transform::ants_io::{with_suffix, COMPOSITE_SUFFIX};
+use fastwarp_reg::register::write_linear_output;
 use fastwarp_reg::transform::AffineTransform;
-use fastwarp_reg::transform::{read_transform_file, write_composite_pair, TransformChain};
-use fastwarp_reg::{Grid, Mat3, RegError, Vec3, Volume};
+use fastwarp_reg::{Grid, Mat3, Vec3, Volume};
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
@@ -58,6 +54,20 @@ create_exception!(
     PyException,
     "The registration was cancelled through its CancelToken."
 );
+
+/// An engine failure as the Python exception the API documents.
+fn py_err(f: Failure) -> PyErr {
+    let msg = f.to_string();
+    match f {
+        Failure::Invalid(_) => PyValueError::new_err(msg),
+        Failure::GpuUnavailable(_) => GpuUnavailableError::new_err(msg),
+        Failure::GpuCapacity(_) => GpuCapacityError::new_err(msg),
+        Failure::Cancelled => RegistrationCancelled::new_err(msg),
+        Failure::Registration(_) | Failure::Read(_) | Failure::Write(_) => {
+            RegistrationError::new_err(msg)
+        }
+    }
+}
 
 /// A flag another thread sets to stop a running registration at its next iteration.
 #[pyclass(module = "fastwarp", frozen)]
@@ -114,80 +124,6 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
     Volume::from_vec(grid, values).map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
 }
 
-/// Runs engine code, turning a panic (a bug, never expected) into `RegistrationError`, so a
-/// caller's `except Exception` can still fall back to another engine.
-fn guarded<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
-    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|payload| {
-        let msg = payload
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "unknown panic".to_string());
-        Err(RegistrationError::new_err(format!(
-            "internal engine error (panic): {msg}"
-        )))
-    })
-}
-
-/// Voxels per axis of the registration grid: `resample_isotropic`'s rule on the first fixed image.
-fn iso_dims(grid: &Grid, mm: f64) -> [usize; 3] {
-    let (size, spacing) = (grid.size(), grid.spacing());
-    let mut out = [1usize; 3];
-    for a in 0..3 {
-        if (spacing[a] - mm).abs() < 1e-6 {
-            out[a] = size[a];
-        } else {
-            let last = size[a].saturating_sub(1) as f64;
-            out[a] = (((last * spacing[a] / mm) + 1e-9).floor() as usize + 1).max(1);
-        }
-    }
-    out
-}
-
-fn open_gpu(adapter_substring: Option<String>) -> PyResult<WgpuBackend> {
-    let mut sel =
-        BackendSelect::from_env().map_err(|e| GpuUnavailableError::new_err(e.to_string()))?;
-    if adapter_substring.is_some() {
-        sel.adapter_substring = adapter_substring;
-    }
-    WgpuBackend::new(&sel).map_err(|e| GpuUnavailableError::new_err(e.to_string()))
-}
-
-fn check_out_folder(out_prefix: &Path) -> PyResult<()> {
-    match with_suffix(out_prefix, COMPOSITE_SUFFIX).parent() {
-        Some(dir) if !dir.as_os_str().is_empty() && !dir.is_dir() => Err(PyValueError::new_err(
-            format!("output folder {} does not exist", dir.display()),
-        )),
-        _ => Ok(()),
-    }
-}
-
-fn reg_err(e: RegError) -> PyErr {
-    match e {
-        RegError::Cancelled => RegistrationCancelled::new_err("registration cancelled"),
-        other => RegistrationError::new_err(other.to_string()),
-    }
-}
-
-struct Run {
-    recipe: recipe::Recipe,
-    adapter: String,
-    grid: [usize; 3],
-    total_s: f64,
-    write_s: f64,
-    timings: RegisterTimings,
-    levels: Vec<(usize, [usize; 3], usize, bool, f64)>,
-    affine_parameters: Option<[f64; 12]>,
-    affine_center: Option<[f64; 3]>,
-    peak_gpu_bytes: u64,
-    memory_budget_bytes: u64,
-}
-
-fn adapter_name(g: &WgpuBackend) -> String {
-    let i = &g.context().info;
-    format!("{} ({}, {})", i.name, i.backend, i.device_type)
-}
-
 /// Registers `moving` to `fixed` (1 or 2 channels each) with the dbs-localizer cohort recipe on
 /// the GPU and writes `<out_prefix>Composite.h5`, `<out_prefix>InverseComposite.h5` and
 /// `<out_prefix>0GenericAffine.mat` (and, with `write_warped`, `<out_prefix>_Warped.nii.gz`).
@@ -206,86 +142,28 @@ fn register_syn<'py>(
     cancel: Option<PyRef<'py, CancelToken>>,
     recipe: Option<Bound<'py, PyDict>>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    if fixed.is_empty() || fixed.len() > 2 || fixed.len() != moving.len() {
-        return Err(PyValueError::new_err(
-            "give 1 or 2 fixed images and as many moving images",
-        ));
-    }
+    engine::check_channels(fixed.len(), moving.len()).map_err(py_err)?;
     // Checked before any work, like everything a caller can get wrong.
-    let recipe = recipe::Recipe::from_dict(recipe.as_ref(), fixed.len())?;
-    if !(iso_mm.is_finite() && iso_mm > 0.0) {
-        return Err(PyValueError::new_err("iso_mm must be a positive number"));
-    }
+    let recipe = recipe::from_dict(recipe.as_ref(), fixed.len())?;
+    engine::check_iso_mm(iso_mm).map_err(py_err)?;
     // Checked up front: otherwise a missing folder only shows when the outputs are written.
-    check_out_folder(&out_prefix)?;
+    engine::check_out_folder(&out_prefix).map_err(py_err)?;
     let fixed: Vec<Volume<f64>> = fixed.iter().map(to_volume).collect::<PyResult<_>>()?;
     let moving: Vec<Volume<f64>> = moving.iter().map(to_volume).collect::<PyResult<_>>()?;
     let flag = cancel.map(|c| Arc::clone(&c.flag));
+    let outputs = SynOutputs {
+        prefix: out_prefix,
+        write_warped,
+    };
 
-    let run = py.detach(move || {
-        guarded(move || -> PyResult<Run> {
-            let t_all = Instant::now();
-            let g = open_gpu(adapter)?;
-            let caps = CapacityCaps::from_context(g.context());
-            let dims = iso_dims(fixed[0].grid(), iso_mm);
-            let moving_dims = moving
-                .iter()
-                .map(|m| iso_dims(m.grid(), iso_mm))
-                .max_by_key(|d| d.iter().map(|n| *n as u128).product::<u128>())
-                .unwrap_or(dims);
-            plan_capacity_pair(dims, moving_dims, fixed.len(), &caps)
-                .map_err(|e| GpuCapacityError::new_err(format!("{e} (at {iso_mm} mm)")))?;
-            let options = SynOptions {
-                cancel: flag.as_deref(),
-            };
-            let out = register_full(
-                &g,
-                &g,
-                &recipe.linear,
-                &recipe.syn,
-                &fixed,
-                &moving,
-                Some(iso_mm),
-                &options,
-            )
-            .map_err(reg_err)?;
-            drop((fixed, moving));
-            let t = Instant::now();
-            let io = |e: RegError| RegistrationError::new_err(format!("writing outputs: {e}"));
-            if write_warped {
-                write_outputs(&out_prefix, &out).map_err(io)?;
-            } else {
-                write_composite_pair(&out_prefix, &out.pair).map_err(io)?;
-            }
-            if let Some(chain) = &out.linear {
-                write_linear_output(&out_prefix, &chain.total).map_err(io)?;
-            }
-            let write_s = t.elapsed().as_secs_f64();
-            Ok(Run {
-                recipe,
-                adapter: adapter_name(&g),
-                grid: out.grid.size(),
-                total_s: t_all.elapsed().as_secs_f64(),
-                write_s,
-                timings: out.timings,
-                levels: out
-                    .levels
-                    .iter()
-                    .map(|l| {
-                        let e = l.iterations.last().map(|i| i.energy).unwrap_or(0.0);
-                        (l.level, l.grid_size, l.iterations.len(), l.converged, e)
-                    })
-                    .collect(),
-                affine_parameters: out.linear.as_ref().map(|c| c.total.parameters()),
-                affine_center: out.linear.as_ref().map(|c| c.total.center),
-                peak_gpu_bytes: g.peak_allocated_bytes(),
-                memory_budget_bytes: caps.memory_budget,
-            })
+    let run = py
+        .detach(move || {
+            engine::register_syn(fixed, moving, Some(outputs), iso_mm, adapter, flag, recipe)
         })
-    })?;
+        .map_err(py_err)?;
 
     let d = PyDict::new(py);
-    d.set_item("adapter", run.adapter)?;
+    d.set_item("adapter", &run.adapter)?;
     d.set_item("grid", run.grid)?;
     d.set_item("total_s", run.total_s)?;
     d.set_item("resample_s", run.timings.resample_s)?;
@@ -294,12 +172,18 @@ fn register_syn<'py>(
     d.set_item("syn_s", run.timings.syn_s)?;
     d.set_item("warp_s", run.timings.warp_s)?;
     d.set_item("write_s", run.write_s)?;
-    d.set_item("levels", run.levels)?;
+    d.set_item(
+        "levels",
+        run.levels
+            .iter()
+            .map(|l| (l.level, l.grid_size, l.iterations, l.converged, l.energy))
+            .collect::<Vec<_>>(),
+    )?;
     d.set_item("affine_parameters", run.affine_parameters)?;
     d.set_item("affine_center", run.affine_center)?;
     d.set_item("peak_gpu_bytes", run.peak_gpu_bytes)?;
     d.set_item("memory_budget_bytes", run.memory_budget_bytes)?;
-    d.set_item("recipe", run.recipe.to_dict(py)?)?;
+    d.set_item("recipe", recipe::to_dict(py, &run.recipe)?)?;
     Ok(d)
 }
 
@@ -308,25 +192,15 @@ fn register_syn<'py>(
 #[pyfunction]
 #[pyo3(signature = (adapter=None))]
 fn gpu_info<'py>(py: Python<'py>, adapter: Option<String>) -> PyResult<Bound<'py, PyDict>> {
-    let (name, backend, device_type, driver, budget) = py.detach(move || {
-        open_gpu(adapter).map(|g| {
-            let i = &g.context().info;
-            let caps = CapacityCaps::from_context(g.context());
-            (
-                i.name.clone(),
-                i.backend.clone(),
-                i.device_type.clone(),
-                i.driver.clone(),
-                caps.memory_budget,
-            )
-        })
-    })?;
+    let info = py
+        .detach(move || engine::gpu_info(adapter))
+        .map_err(py_err)?;
     let d = PyDict::new(py);
-    d.set_item("name", name)?;
-    d.set_item("backend", backend)?;
-    d.set_item("device_type", device_type)?;
-    d.set_item("driver", driver)?;
-    d.set_item("memory_budget_bytes", budget)?;
+    d.set_item("name", info.name)?;
+    d.set_item("backend", info.backend)?;
+    d.set_item("device_type", info.device_type)?;
+    d.set_item("driver", info.driver)?;
+    d.set_item("memory_budget_bytes", info.memory_budget_bytes)?;
     Ok(d)
 }
 
@@ -341,11 +215,8 @@ fn fits_gpu(
     adapter: Option<String>,
     moving_dims: Option<[usize; 3]>,
 ) -> PyResult<bool> {
-    py.detach(move || {
-        let g = open_gpu(adapter)?;
-        let caps = CapacityCaps::from_context(g.context());
-        Ok(plan_capacity_pair(dims, moving_dims.unwrap_or(dims), channels, &caps).is_ok())
-    })
+    py.detach(move || engine::fits(dims, moving_dims, channels, adapter))
+        .map_err(py_err)
 }
 
 /// A reference grid from Python: size, spacing, origin, direction (ITK / LPS).
@@ -356,25 +227,10 @@ fn to_grid(g: &GridArgs) -> PyResult<Grid> {
         .map_err(|e| PyValueError::new_err(format!("bad reference geometry: {e}")))
 }
 
-/// The chain `ants.apply_transforms(transformlist=transforms)` applies: a reference point goes
-/// through `transforms[0]` first (measured against ANTsPy, see `tests/test_post.py`). The queue
-/// applies its last element first, so the files are pushed in reverse.
-fn read_chain(transforms: &[PathBuf]) -> PyResult<TransformChain> {
-    if transforms.is_empty() {
-        return Err(PyValueError::new_err("give at least one transform file"));
-    }
-    let mut chain = TransformChain::new();
-    for path in transforms.iter().rev() {
-        let part = read_transform_file(path)
-            .map_err(|e| RegistrationError::new_err(format!("reading {}: {e}", path.display())))?;
-        chain.extend(part);
-    }
-    Ok(chain)
-}
-
 /// Writes the transforms as one displacement field on `reference` (`antsApplyTransforms
 /// --compose`: `float32` vectors, intent `NIFTI_INTENT_VECTOR`, parallel gzip for `.nii.gz` at
-/// `compression_level`, 0 to 9).
+/// `compression_level`, 0 to 9). A reference point goes through `transforms[0]` first, as in
+/// `ants.apply_transforms(transformlist=transforms)`.
 #[pyfunction]
 #[pyo3(signature = (transforms, reference, out_path, compression_level=None))]
 fn compose_field(
@@ -384,19 +240,10 @@ fn compose_field(
     out_path: PathBuf,
     compression_level: Option<u32>,
 ) -> PyResult<()> {
-    if compression_level.is_some_and(|l| l > 9) {
-        return Err(PyValueError::new_err("compression_level must be 0 to 9"));
-    }
+    engine::check_compression_level(compression_level).map_err(py_err)?;
     let grid = to_grid(&reference)?;
-    py.detach(move || {
-        guarded(move || {
-            let chain = read_chain(&transforms)?;
-            let field = post::compose_field(&chain, &grid).map_err(reg_err)?;
-            post::write_field(&out_path, &field, compression_level).map_err(|e| {
-                RegistrationError::new_err(format!("writing {}: {e}", out_path.display()))
-            })
-        })
-    })
+    py.detach(move || engine::compose(&transforms, &grid, &out_path, compression_level))
+        .map_err(py_err)
 }
 
 /// Resamples `moving` onto `reference` through the transforms (`antsApplyTransforms`), with the
@@ -412,20 +259,12 @@ fn apply_transforms<'py>(
     interpolation: &str,
     default_value: f64,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-    let interp = post::Interp::from_ants_name(interpolation).ok_or_else(|| {
-        PyValueError::new_err(format!(
-            "interpolation {interpolation:?} is not supported (linear, nearestNeighbor, \
-             lanczosWindowedSinc)"
-        ))
-    })?;
+    let interp = engine::interpolator(interpolation).map_err(py_err)?;
     let grid = to_grid(&reference)?;
     let image = to_volume(&moving)?;
-    let out = py.detach(move || {
-        guarded(move || {
-            let chain = read_chain(&transforms)?;
-            post::resample(&image, &grid, &chain, interp, default_value).map_err(reg_err)
-        })
-    })?;
+    let out = py
+        .detach(move || engine::apply(&image, &grid, &transforms, interp, default_value))
+        .map_err(py_err)?;
     Ok(PyArray1::from_vec(py, out))
 }
 
@@ -458,46 +297,19 @@ impl LinearSession {
         winsorize: Option<(f32, f32)>,
         adapter: Option<String>,
     ) -> PyResult<Self> {
-        if let Some((lo, hi)) = winsorize {
-            if !(0.0 <= lo && lo < hi && hi <= 1.0) {
-                return Err(PyValueError::new_err(
-                    "winsorize must be (lower, upper) quantiles with 0 <= lower < upper <= 1",
-                ));
-            }
-        }
+        engine::check_winsorize(winsorize).map_err(py_err)?;
         let fixed = to_volume(&fixed)?;
         let moving = to_volume(&moving)?;
         let mask = fixed_mask
             .map(|m| to_volume(&m).map(MaskVolume::from_volume))
             .transpose()?;
-        let (session, com, name) = py.detach(move || {
-            guarded(move || {
-                let gpu = open_gpu(adapter)?;
-                // ANTs initialises on the images as given, before winsorizing.
-                let com = initial_transform(&fixed, &moving, InitFeature::CentreOfMass)
-                    .map_err(reg_err)?;
-                let (fixed, moving) = match winsorize {
-                    Some((lo, hi)) => (
-                        preprocess_volume(&fixed, lo, hi, 0.0, 1.0).map_err(reg_err)?,
-                        preprocess_volume(&moving, lo, hi, 0.0, 1.0).map_err(reg_err)?,
-                    ),
-                    None => (fixed, moving),
-                };
-                let name = adapter_name(&gpu);
-                let session = session::Session {
-                    gpu,
-                    fixed,
-                    moving,
-                    mask,
-                    cache: Default::default(),
-                };
-                Ok((session, com, name))
-            })
-        })?;
+        let start = py
+            .detach(move || engine::open_linear(fixed, moving, mask, winsorize, adapter))
+            .map_err(py_err)?;
         Ok(Self {
-            inner: Mutex::new(Some(session)),
-            com,
-            adapter: name,
+            inner: Mutex::new(Some(start.session)),
+            com: start.com,
+            adapter: start.adapter,
         })
     }
 
@@ -553,7 +365,7 @@ impl LinearSession {
             None => self.com,
         };
         if let Some(prefix) = &out_prefix {
-            check_out_folder(prefix)?;
+            engine::check_out_folder(prefix).map_err(py_err)?;
         }
         let flag = cancel.map(|c| Arc::clone(&c.flag));
         // Taken out for the fit (it runs without the GIL) and put back after, so a second
@@ -566,7 +378,7 @@ impl LinearSession {
             .ok_or_else(|| PyValueError::new_err("the session is closed or busy"))?;
         let t = Instant::now();
         let (session, fit) = py.detach(move || {
-            let fit = guarded(|| {
+            let fit = engine::guarded(|| {
                 let mask = match (use_mask, call_mask) {
                     (false, _) => None,
                     (true, Some(m)) => Some(m),
@@ -574,12 +386,12 @@ impl LinearSession {
                 };
                 session
                     .fit(&recipe, start, mask, flag.as_deref())
-                    .map_err(reg_err)
+                    .map_err(engine::reg_err)
             });
             (session, fit)
         });
         *self.inner.lock().map_err(|_| closed())? = Some(session);
-        let fit = fit?;
+        let fit = fit.map_err(py_err)?;
         if let Some(prefix) = &out_prefix {
             write_linear_output(prefix, &fit.total)
                 .map_err(|e| RegistrationError::new_err(format!("writing outputs: {e}")))?;
@@ -640,7 +452,19 @@ fn cohort_recipe(py: Python<'_>, channels: usize) -> PyResult<Bound<'_, PyDict>>
     if !(1..=2).contains(&channels) {
         return Err(PyValueError::new_err("channels must be 1 or 2"));
     }
-    recipe::Recipe::cohort(channels).to_dict(py)
+    recipe::to_dict(py, &fastwarp_cli::recipe::Recipe::cohort(channels))
+}
+
+/// Runs the `fastwarp` command line on `argv` (the arguments after the program name) and returns
+/// its exit status; output goes to the process's standard output and error. The GIL is released
+/// while it runs.
+#[pyfunction]
+fn cli_main(py: Python<'_>, argv: Vec<OsString>) -> i32 {
+    py.detach(move || {
+        let mut args = vec![OsString::from("fastwarp")];
+        args.extend(argv);
+        fastwarp_cli::run(args, &mut std::io::stdout(), &mut std::io::stderr())
+    })
 }
 
 #[pymodule]
@@ -654,6 +478,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;
     m.add_class::<LinearSession>()?;
     m.add_function(wrap_pyfunction!(check_linear_stage, m)?)?;
+    m.add_function(wrap_pyfunction!(cli_main, m)?)?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;

@@ -128,6 +128,24 @@ else:
 - Errors: `GpuUnavailableError` and `GpuCapacityError` (checked before any work: fall back to
   ANTs), `RegistrationError`, `RegistrationCancelled`.
 
+### Command line
+
+The package also installs the command `fastwarp` (the same as `python -m fastwarp`), which works
+on NIfTI files and runs the same code as the functions above:
+
+```bash
+fastwarp register tpl_t1.nii sub_T1w.nii.gz -o out/sub_ --fixed2 tpl_t2.nii \
+    --moving2 sub_T2w_in_T1w.nii.gz
+fastwarp apply -r tpl_t1.nii -i sub_T1w.nii.gz -o out/sub_in_tpl.nii.gz -t out/sub_Composite.h5
+fastwarp bench    # timings on built-in synthetic volumes
+```
+
+Unlike `register_syn`, which registers on a 1.0 mm grid unless told otherwise, `fastwarp register`
+uses the smallest voxel spacing of the fixed image; `--iso-mm` sets it. Other commands: `linear`,
+`compose`, `recipe`, `gpu-info`, `fits`. The exit status tells a script what happened: 0 success,
+1 registration failed, 2 invalid arguments, 3 file error, 4 no usable GPU, 5 the grid does not
+fit the GPU, 6 cancelled. Reference: [docs/cli.md](docs/cli.md).
+
 ### Environment
 
 The former `DBSLOC_` names (for example `DBSLOC_GPU_BACKEND` for `FASTWARP_GPU_BACKEND`) are still
@@ -235,5 +253,5 @@ Release: bump `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes 
 `crates/fastwarp-{core,niftiio,matfile,reg,gpu}` are copies of the registration engine of
 Wyss DBS Localizer, the project in which the code was first developed, taken at revision `90c1df3`
 (2026-11-10) of an earlier standalone copy of that engine, which this repository replaces
-(`ENGINE_SOURCE` names that revision); later changes are in `CHANGELOG.md`. `crates/fastwarp-py` is the Python binding (PyO3). Please
+(`ENGINE_SOURCE` names that revision); later changes are in `CHANGELOG.md`. `crates/fastwarp-py` is the Python binding (PyO3); `crates/fastwarp-cli` is the command line and the engine calls it shares with the binding. Please
 cite the engine as in `CITATION.cff`.
