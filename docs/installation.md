@@ -124,17 +124,17 @@ uvx fastwarp --help
 
 ::::
 
-The command line is new since version 0.1.0 (see the [changelog](changelog.md)); 0.1.0 on PyPI
-does not have it, so `uvx fastwarp` and `uv tool install fastwarp` give it only once a release
-includes it. Until then, install FastWarp [from source](#from-source), or run the command from
-source without installing it:
+Release 0.1.0 on PyPI does not have the command line; it comes with release 0.2.0 (see the
+[changelog](changelog.md)), and until then `uvx fastwarp` and `uv tool install fastwarp` do not
+give it. Install FastWarp [from source](#from-source), or run the command from source without
+installing it:
 
 ```bash
 uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help
 ```
 
- Other ways to install the
-command are described under [Command line](cli.md).
+From release 0.2.0 the command line also comes as a standalone program that needs no Python, with
+installer scripts for Linux, macOS and Windows; see [Command line: install](cli.md#install).
 
 ## From a GitHub release
 

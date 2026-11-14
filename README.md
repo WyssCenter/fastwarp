@@ -30,21 +30,20 @@ uv add fastwarp
 ```
 
 The first line is for pip, the second for a uv project (`uv pip install fastwarp` installs into
-an existing environment). For the command line alone, `uv tool install fastwarp` installs it and
-`uvx fastwarp --help` runs it without installing.
-The same wheels are attached to each [GitHub release](https://github.com/WyssCenter/fastwarp/releases).
-The command line `fastwarp` also comes as a standalone program without Python, with installer
-scripts for Linux, macOS and Windows: see [docs/cli.md](docs/cli.md#install).
+an existing environment). Wheels are published on PyPI and attached to each
+[GitHub release](https://github.com/WyssCenter/fastwarp/releases) for Linux (x86_64, aarch64),
+macOS (Apple silicon, Intel) and Windows (x86_64), for Python 3.11 and later. FastWarp needs
+NumPy 2.0 or later and a GPU; [ANTsPy](https://github.com/ANTsX/ANTsPy) (`pip install antspyx` or
+`uv add antspyx`; wheels for Python 3.11 to 3.13 on Linux x86_64, macOS and Windows) is optional.
 
-Wheels are published for Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows
-(x86_64), for Python 3.11 and later. FastWarp needs NumPy 2.0 or later and a GPU;
-[ANTsPy](https://github.com/ANTsX/ANTsPy) (`pip install antspyx` or `uv add antspyx`; wheels for
-Python 3.11 to 3.13 on Linux x86_64, macOS and Windows) is optional. The command line is new since
-0.1.0, which does not have it: until a release includes it, `uvx fastwarp` and
-`uv tool install fastwarp` from PyPI do not give it, but
-`uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help` runs it from source. See
-[Installation](https://fastwarp.readthedocs.io/latest/installation.html) for the
-requirements and for building from source.
+The command line `fastwarp` comes with the Python package. `uv tool install fastwarp` installs
+only the command and `uvx fastwarp --help` runs it without installing. From release 0.2.0 it
+also comes as a standalone program without Python, with installer scripts for Linux, macOS and
+Windows ([Command line: install](https://fastwarp.readthedocs.io/latest/cli.html#install)).
+Release 0.1.0 does not have the command line; until 0.2.0 is out,
+`uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help` runs it from source.
+[Installation](https://fastwarp.readthedocs.io/latest/installation.html) has the requirements
+and the build from source.
 
 ## Example
 

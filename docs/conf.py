@@ -23,7 +23,7 @@ extensions = [
 ]
 
 exclude_patterns = ["_build", "requirements.txt"]
-myst_heading_anchors = 3
+myst_heading_anchors = 4
 myst_enable_extensions = ["colon_fence", "deflist"]
 
 autoapi_dirs = ["../python/fastwarp"]
@@ -54,6 +54,8 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable", None),
     "ants": ("https://antspyx.readthedocs.io/en/latest", None),
 }
+
+linkcheck_ignore = [r"https://github\.com/WyssCenter/fastwarp/releases/download/v0\.2\.0/.*"]
 
 copybutton_exclude = ".linenos, .gp, .go"
 copybutton_selector = "div:not(.fw-output) > div.highlight > pre"

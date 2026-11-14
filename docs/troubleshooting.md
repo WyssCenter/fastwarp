@@ -85,6 +85,31 @@ FastWarp uses Metal, which every Mac supported by the wheels (macOS 11 or later)
 machine may offer no GPU, or a virtual one, to the guest system; FastWarp has not been tested in
 virtual machines. Run it on the host.
 
+## The standalone program does not start
+
+These apply to the standalone `fastwarp` program from release 0.2.0
+([Command line: install](cli.md#install)).
+
+`fastwarp: command not found` right after installing
+: The installer added its folder to PATH, but a terminal that was already open does not see the
+  change. Open a new terminal (on Linux and macOS, `. ~/.profile` also works). With
+  `--no-modify-path` (`-NoModifyPath`) the installer printed how to add the folder yourself.
+
+macOS: "cannot be opened" or "cannot be verified"
+: The program is not code-signed, and macOS blocks a program from an archive downloaded with a web
+  browser. Remove the quarantine flag with `xattr -d com.apple.quarantine fastwarp`, or download
+  with `curl`, `gh` or the installer, which are not flagged.
+
+Windows: SmartScreen warns about `fastwarp.exe`
+: The same reason: the program is not code-signed, and SmartScreen may warn about a file
+  downloaded with a web browser. Downloads made with the installer, `curl` or `gh` are not
+  flagged.
+
+The installer refuses to replace `fastwarp`
+: It does not replace a `fastwarp` it did not install itself, such as the one of
+  `uv tool install fastwarp`. Remove that one first, or install elsewhere with `--dir`
+  (`-Dir`); see [What the installer does](cli.md#what-the-installer-does).
+
 ## The registration does not fit
 
 {func}`~fastwarp.register_syn` raises {class}`~fastwarp.GpuCapacityError`. For example, two

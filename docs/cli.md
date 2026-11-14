@@ -2,11 +2,11 @@
 
 The `fastwarp` command runs the registration on NIfTI files without writing Python. It comes
 with the Python package (after `pip install fastwarp`, both `fastwarp ...` and
-`python -m fastwarp ...` work) and as a standalone program that needs no Python (see
-[Install](#install)). All of them run the same code as the Python functions, so options, results
-and exit status are the same as described here.
-Each command below names the Python function it runs; the [user guide](user-guide.md) explains
-those functions in more detail.
+`python -m fastwarp ...` work) and, from release 0.2.0, as a standalone program that needs no
+Python (see [Install](#install)). All of them run the same code as the Python functions, so
+options, results and exit status are the same as described here. Each command below names the
+Python function it runs; the [user guide](user-guide.md) explains those functions in more
+detail.
 
 ```bash
 fastwarp register template.nii.gz sub_T1w.nii.gz -o out/sub_
@@ -21,14 +21,49 @@ command. `fastwarp --version` prints the version.
 
 ### With the Python package
 
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
+
+Into the current Python environment:
+
 ```bash
-pip install fastwarp          # into the current Python environment
-uv tool install fastwarp      # into an environment of its own, with fastwarp on PATH
-uvx fastwarp --help           # run it without installing
+pip install fastwarp
+fastwarp --help
 ```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+Into an environment of its own, with `fastwarp` on PATH:
+
+```bash
+uv tool install fastwarp
+fastwarp --help
+```
+
+Without installing:
+
+```bash
+uvx fastwarp --help
+```
+:::
+
+::::
 
 These need Python 3.11 or later. `uv tool install` puts `fastwarp` in uv's tool folder
 (`~/.local/bin`, on Windows `%USERPROFILE%\.local\bin`); `uv tool uninstall fastwarp` removes it.
+
+Release 0.1.0 on PyPI does not have the command line; it comes with release 0.2.0. Until then,
+install FastWarp [from source](installation.md#from-source), or run the command from source
+without installing it:
+
+```bash
+uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help
+```
 
 ### The standalone program
 
@@ -57,6 +92,12 @@ Download the installer, read it, check that the release workflow of this reposit
 then run it. The check needs the [GitHub CLI](https://cli.github.com/), signed in;
 `--signer-workflow` makes it accept only files signed by the release workflow `wheels.yml`.
 
+::::{tab-set}
+:sync-group: os
+
+:::{tab-item} Linux, macOS
+:sync: unix
+
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSfO https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.sh
 gh attestation verify fastwarp-installer.sh --repo WyssCenter/fastwarp \
@@ -64,6 +105,10 @@ gh attestation verify fastwarp-installer.sh --repo WyssCenter/fastwarp \
 less fastwarp-installer.sh
 sh fastwarp-installer.sh
 ```
+:::
+
+:::{tab-item} Windows
+:sync: windows
 
 ```powershell
 Invoke-WebRequest -UseBasicParsing https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.ps1 -OutFile fastwarp-installer.ps1
@@ -72,19 +117,39 @@ gh attestation verify fastwarp-installer.ps1 --repo WyssCenter/fastwarp `
 notepad fastwarp-installer.ps1
 powershell -ExecutionPolicy ByPass -File fastwarp-installer.ps1
 ```
+:::
+
+::::
 
 #### One line
 
-The same installers, piped straight into the shell. This trusts the download without reading or
-checking it first:
+The same installers, piped straight into the shell:
+
+:::{caution}
+The one-line form trusts the download without reading or checking it first. Prefer
+[Inspect, then run](#inspect-then-run-recommended).
+:::
+
+::::{tab-set}
+:sync-group: os
+
+:::{tab-item} Linux, macOS
+:sync: unix
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.sh | sh
 ```
+:::
+
+:::{tab-item} Windows
+:sync: windows
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://github.com/WyssCenter/fastwarp/releases/download/v0.2.0/fastwarp-installer.ps1 | iex"
 ```
+:::
+
+::::
 
 For another release, change the version in the address. Options go after `sh -s --`
 in the piped form (`... | sh -s -- --no-modify-path`); in PowerShell, use the script-block form
@@ -150,13 +215,28 @@ the folder yourself.
 
 #### Uninstall
 
+::::{tab-set}
+:sync-group: os
+
+:::{tab-item} Linux, macOS
+:sync: unix
+
 ```bash
-sh fastwarp-installer.sh --uninstall          # add --dir DIR if you installed elsewhere
+sh fastwarp-installer.sh --uninstall
 ```
+
+Add `--dir DIR` if you installed elsewhere.
+:::
+
+:::{tab-item} Windows
+:sync: windows
 
 ```powershell
 powershell -ExecutionPolicy ByPass -File fastwarp-installer.ps1 -Uninstall
 ```
+:::
+
+::::
 
 This removes the program, the receipt and exactly the PATH lines (on Windows: the user PATH
 entry) that the receipt says the installer added, and then the folder if it is empty. PATH
@@ -171,18 +251,23 @@ or the folder `%LOCALAPPDATA%\Programs\fastwarp` and its user PATH entry (Window
 
 ```bash
 gh release download v0.2.0 -R WyssCenter/fastwarp -p "fastwarp-x86_64-unknown-linux-gnu.tar.gz*"
-sha256sum -c fastwarp-x86_64-unknown-linux-gnu.tar.gz.sha256      # shasum -a 256 -c on macOS
+sha256sum -c fastwarp-x86_64-unknown-linux-gnu.tar.gz.sha256
 gh attestation verify fastwarp-x86_64-unknown-linux-gnu.tar.gz --repo WyssCenter/fastwarp \
     --signer-workflow WyssCenter/fastwarp/.github/workflows/wheels.yml
 tar -xzf fastwarp-x86_64-unknown-linux-gnu.tar.gz
 cp fastwarp-x86_64-unknown-linux-gnu/fastwarp ~/.local/bin/
 ```
 
-`SHA256SUMS` in the release lists the SHA-256 of every file of the release. The programs are not
-code-signed: macOS refuses to open a program from an archive downloaded with a web browser
-until you remove the quarantine flag (`xattr -d com.apple.quarantine fastwarp`), and Windows
-SmartScreen may warn about `fastwarp.exe` downloaded with a browser. Downloads made with `curl`,
-`gh` or the installers are not flagged.
+On macOS, check the checksum with `shasum -a 256 -c` instead of `sha256sum -c`. `SHA256SUMS` in
+the release lists the SHA-256 of every file of the release.
+
+:::{note}
+The programs are not code-signed. macOS refuses to open a program from an archive downloaded
+with a web browser until you remove the quarantine flag
+(`xattr -d com.apple.quarantine fastwarp`), and Windows SmartScreen may warn about
+`fastwarp.exe` downloaded with a browser. Downloads made with `curl`, `gh` or the installers are
+not flagged.
+:::
 
 ## Images
 
