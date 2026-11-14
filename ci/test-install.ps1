@@ -62,13 +62,18 @@ function Invoke-Child([string[]]$arguments, [hashtable]$environment) {
         $env:FASTWARP_INSTALLER_PATH_KEY = $key
         foreach ($k in $environment.Keys) { [Environment]::SetEnvironmentVariable($k, $environment[$k]) }
         $ErrorActionPreference = 'Continue'
-        $out = & $Shell -NoProfile -NonInteractive -ExecutionPolicy Bypass @arguments 2>&1 | Out-String -Width 8192
+        $lines = & $Shell -NoProfile -NonInteractive -ExecutionPolicy Bypass @arguments 2>&1 | ForEach-Object { "$_" }
         $code = $LASTEXITCODE
+        $out = $lines -join "`n"
     } finally {
         $ErrorActionPreference = 'Stop'
         foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
     }
     return [pscustomobject]@{ Code = $code; Out = $out }
+}
+
+function Test-Output([object]$result, [string]$text) {
+    return ($result.Out -replace '\s', '').IndexOf(($text -replace '\s', ''), [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
 function Invoke-Installer([string[]]$arguments, [hashtable]$environment = @{}) {
@@ -114,7 +119,7 @@ try {
     $script:dl = ([Uri]$bad).AbsoluteUri
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
     if ($r.Code -eq 0) { Fail "a wrong checksum was accepted: $($r.Out)" }
-    if ($r.Out -notmatch 'checksum mismatch') { Fail "no checksum message: $($r.Out)" }
+    if (-not (Test-Output $r 'checksum mismatch')) { Fail "no checksum message: $($r.Out)" }
     if (Test-Path -LiteralPath $bin) { Fail 'the binary was installed despite the wrong checksum' }
     if ((Get-TestPath) -ne $before) { Fail 'the user PATH changed despite the wrong checksum' }
     Pass 'wrong checksum refused, nothing installed'
@@ -122,13 +127,13 @@ try {
     $script:dl = ([Uri]$brokenRelease).AbsoluteUri
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
     if ($r.Code -eq 0) { Fail "a program that does not run was installed: $($r.Out)" }
-    if ($r.Out -notmatch 'does not run') { Fail "no does-not-run message: $($r.Out)" }
+    if (-not (Test-Output $r 'does not run')) { Fail "no does-not-run message: $($r.Out)" }
     if (Test-Path -LiteralPath $bin) { Fail 'the broken binary was installed' }
     Pass 'a program that does not run is not installed'
 
     $script:dl = $goodUrl
     $r = Invoke-Installer @('-Dir', $dir)
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'not from a release') { Fail "the repository copy installed without a version: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'not from a release')) { Fail "the repository copy installed without a version: $($r.Out)" }
     Pass 'unstamped installer needs a version'
 
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
@@ -137,7 +142,7 @@ try {
     if ((Get-FileHash $bin).Hash -ne (Get-FileHash $dummy).Hash) { Fail "$bin is not the release binary" }
     if ((Get-TestPath) -ne "$dir;$before") { Fail "unexpected user PATH after install: $(Get-TestPath)" }
     if ((Get-TestPathKind) -ne 'ExpandString') { Fail 'the user PATH lost its REG_EXPAND_SZ type' }
-    if ($r.Out -notmatch [regex]::Escape("Added $dir")) { Fail "the PATH change was not reported: $($r.Out)" }
+    if (-not (Test-Output $r "Added $dir")) { Fail "the PATH change was not reported: $($r.Out)" }
     $receipt = Join-Path $dir '.fastwarp-installer'
     $receiptText = [IO.File]::ReadAllText($receipt)
     if ($receiptText -notmatch ('sha256 ' + (Get-FileHash $dummy).Hash.ToLowerInvariant())) { Fail "the receipt does not hold the SHA-256: $receiptText" }
@@ -174,7 +179,7 @@ try {
     if ($r.Code -ne 0) { Fail "install over HTTP failed: $($r.Out)" }
     if (-not (Test-Path -LiteralPath (Join-Path $custom 'fastwarp.exe'))) { Fail '-Dir was not used' }
     if ((Get-TestPath) -ne $before) { Fail '-NoModifyPath changed the user PATH' }
-    if ($r.Out -notmatch 'Environment Variables') { Fail "-NoModifyPath printed no PATH instructions: $($r.Out)" }
+    if (-not (Test-Output $r 'Environment Variables')) { Fail "-NoModifyPath printed no PATH instructions: $($r.Out)" }
     Pass 'install over http:// into -Dir with -NoModifyPath'
 
     $script:dl = $goodUrl
@@ -195,13 +200,13 @@ try {
     if (Test-Path -LiteralPath (Join-Path $custom '.fastwarp-installer')) { Fail 'uninstall left the receipt' }
     if (-not (Test-Path -LiteralPath (Join-Path $custom 'other.txt'))) { Fail 'uninstall removed another file' }
     if ((Get-TestPath) -ne $before) { Fail "uninstall kept the PATH entry it added: $(Get-TestPath)" }
-    if ($r.Out -notmatch 'still holds other files') { Fail "no note about the other files: $($r.Out)" }
+    if (-not (Test-Output $r 'still holds other files')) { Fail "no note about the other files: $($r.Out)" }
     Remove-Item -LiteralPath $custom -Recurse -Force
     Pass 'uninstall removes the PATH entry it added, also when the folder holds other files'
 
     New-ItemProperty -LiteralPath $key -Name 'Path' -Value "$custom;$before" -PropertyType ExpandString -Force | Out-Null
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $custom)
-    if ($r.Code -ne 0 -or $r.Out -notmatch 'already on PATH') { Fail "install with the folder already on PATH failed: $($r.Out)" }
+    if ($r.Code -ne 0 -or -not (Test-Output $r 'already on PATH')) { Fail "install with the folder already on PATH failed: $($r.Out)" }
     if ([IO.File]::ReadAllText((Join-Path $custom '.fastwarp-installer')) -match 'path-entry') { Fail 'the receipt claims a PATH entry that was there before' }
     $r = Invoke-Installer @('-Uninstall', '-Dir', $custom)
     if ($r.Code -ne 0 -or (Get-TestPath) -ne "$custom;$before") { Fail "uninstall removed a PATH entry the installer did not add: $(Get-TestPath)" }
@@ -211,13 +216,13 @@ try {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     Copy-Item -LiteralPath $broken -Destination $bin
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'not installed by this installer') { Fail "a fastwarp.exe without a receipt was replaced: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'not installed by this installer')) { Fail "a fastwarp.exe without a receipt was replaced: $($r.Out)" }
     $r = Invoke-Installer @('-Uninstall', '-Dir', $dir)
     if ($r.Code -eq 0 -or -not (Test-Path -LiteralPath $bin)) { Fail "uninstall removed a fastwarp.exe without a receipt: $($r.Out)" }
     Remove-Item -LiteralPath $bin
     New-Item -ItemType Directory -Path $bin | Out-Null
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'is a folder') { Fail "a folder named fastwarp.exe was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'is a folder')) { Fail "a folder named fastwarp.exe was accepted: $($r.Out)" }
     Remove-Item -LiteralPath $bin
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
     if ($r.Code -ne 0) { Fail "install failed: $($r.Out)" }
@@ -237,7 +242,7 @@ try {
     New-Item -ItemType Directory -Path $copy | Out-Null
     Copy-Item -LiteralPath (Join-Path $dir '.fastwarp-installer') -Destination $copy
     $r = Invoke-Installer @('-Uninstall', '-Dir', $copy)
-    if ($r.Code -ne 0 -or $r.Out -notmatch 'was written for') { Fail "no warning about a copied receipt: $($r.Out)" }
+    if ($r.Code -ne 0 -or -not (Test-Output $r 'was written for')) { Fail "no warning about a copied receipt: $($r.Out)" }
     if ((Get-TestPath) -ne "$dir;$before") { Fail "a copied receipt removed the PATH entry of the original folder: $(Get-TestPath)" }
     if (Test-Path -LiteralPath (Join-Path $copy '.fastwarp-installer')) { Fail 'the copied receipt was kept' }
     Pass 'R2: a receipt copied into another folder does not touch the original PATH entry'
@@ -245,7 +250,7 @@ try {
     Remove-Item -LiteralPath $bin
     Copy-Item -LiteralPath $broken -Destination $bin
     $r = Invoke-Installer @('-Uninstall', '-Dir', $dir)
-    if ($r.Code -ne 0 -or $r.Out -notmatch 'was replaced since the install') { Fail "uninstall after the program was replaced failed: $($r.Out)" }
+    if ($r.Code -ne 0 -or -not (Test-Output $r 'was replaced since the install')) { Fail "uninstall after the program was replaced failed: $($r.Out)" }
     if (-not (Test-Path -LiteralPath $bin)) { Fail 'uninstall removed the program that replaced fastwarp.exe' }
     if (Test-Path -LiteralPath (Join-Path $dir '.fastwarp-installer')) { Fail 'uninstall kept the receipt' }
     if ((Get-TestPath) -ne $before) { Fail "uninstall kept the recorded PATH entry: $(Get-TestPath)" }
@@ -269,25 +274,25 @@ try {
     Pass 'misspelled option refused'
 
     $r = Invoke-Installer @('-Version', '0.0.0;rm', '-Dir', $dir)
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'invalid version') { Fail "an invalid version was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'invalid version')) { Fail "an invalid version was accepted: $($r.Out)" }
     Pass 'invalid version refused'
 
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir) @{ FASTWARP_INSTALLER_PATH_KEY = 'HKCU:\Environment2' }
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'must name a key') { Fail "a PATH key outside the test key was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'must name a key')) { Fail "a PATH key outside the test key was accepted: $($r.Out)" }
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir) @{ FASTWARP_INSTALLER_PATH_KEY = 'HKCU:\Software\Other' }
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'must name a key') { Fail "a PATH key outside the test key was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'must name a key')) { Fail "a PATH key outside the test key was accepted: $($r.Out)" }
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir) @{ FASTWARP_INSTALLER_PATH_KEY = 'HKCU:\Software\fastwarp-installer-test\..\..\Environment' }
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'must name a key') { Fail "a PATH key outside the test key was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'must name a key')) { Fail "a PATH key outside the test key was accepted: $($r.Out)" }
     Remove-Item -LiteralPath (Split-Path -Parent $dir) -Recurse -Force -ErrorAction SilentlyContinue
     Pass 'test PATH key restricted to HKCU:\Software\fastwarp-installer-test'
 
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', (Join-Path $work 'a;b'))
-    if ($r.Code -eq 0 -or $r.Out -notmatch "must not contain ';'") { Fail "a folder with ';' was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r "must not contain ';'")) { Fail "a folder with ';' was accepted: $($r.Out)" }
     Pass "install folder with ';' refused"
 
     $script:dl = 'http://192.0.2.1/fastwarp'
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'refusing to download over plain HTTP') { Fail "plain HTTP without a held checksum was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'refusing to download over plain HTTP')) { Fail "plain HTTP without a held checksum was accepted: $($r.Out)" }
     Pass 'plain HTTP refused unless the checksum is held in the installer'
 
     $goodSum = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $good $archive)).Hash.ToLowerInvariant()
@@ -297,23 +302,23 @@ try {
     [IO.File]::WriteAllText($stamped, $text)
     $script:dl = ([Uri]$bad).AbsoluteUri
     $r = Invoke-Child @('-File', $stamped, '-Dir', $dir) @{}
-    if ($r.Code -ne 0 -or $r.Out -notmatch 'held in this installer') { Fail "the stamped installer did not use its own checksum: $($r.Out)" }
+    if ($r.Code -ne 0 -or -not (Test-Output $r 'held in this installer')) { Fail "the stamped installer did not use its own checksum: $($r.Out)" }
     if ((Get-FileHash $bin).Hash -ne (Get-FileHash $dummy).Hash) { Fail 'the stamped installer installed something else' }
     $r = Invoke-Child @('-File', $stamped, '-Uninstall', '-Dir', $dir) @{}
     if ($r.Code -ne 0 -or (Test-Path -LiteralPath $bin)) { Fail "uninstall failed: $($r.Out)" }
     $script:dl = ([Uri]$brokenRelease).AbsoluteUri
     $r = Invoke-Child @('-File', $stamped, '-Dir', $dir) @{}
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'checksum mismatch') { Fail "a replaced archive with a matching .sha256 was accepted: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'checksum mismatch')) { Fail "a replaced archive with a matching .sha256 was accepted: $($r.Out)" }
     if (Test-Path -LiteralPath $bin) { Fail 'the replaced archive was installed' }
     $script:dl = $goodUrl
     Pass "the stamped installer checks against its own checksum, not the release's .sha256"
 
     $r = Invoke-Installer @('-Help')
-    if ($r.Code -ne 0 -or $r.Out -notmatch 'NoModifyPath') { Fail "-Help failed: $($r.Out)" }
+    if ($r.Code -ne 0 -or -not (Test-Output $r 'NoModifyPath')) { Fail "-Help failed: $($r.Out)" }
     Pass '-Help'
 
     $r = Invoke-Command-Text "`$env:PROCESSOR_ARCHITECTURE = 'ARM64'; Remove-Item Env:\PROCESSOR_ARCHITEW6432 -ErrorAction SilentlyContinue; & '$quoted' -Version 0.0.0 -Dir '$quotedDir'"
-    if ($r.Code -eq 0 -or $r.Out -notmatch 'ARM64 is not supported') { Fail "ARM64 was not refused: $($r.Out)" }
+    if ($r.Code -eq 0 -or -not (Test-Output $r 'ARM64 is not supported')) { Fail "ARM64 was not refused: $($r.Out)" }
     if (Test-Path -LiteralPath $bin) { Fail 'installed on ARM64' }
     Pass 'unsupported architecture refused'
 

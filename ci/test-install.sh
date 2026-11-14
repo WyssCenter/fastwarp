@@ -284,7 +284,7 @@ pass "R4: the receipt records only PATH lines that were written"
 mkdir -p "$work/nocurl"
 for tool in /usr/bin/* /bin/*; do
     name=${tool##*/}
-    [ "$name" = curl ] || [ -e "$work/nocurl/$name" ] || ln -s "$tool" "$work/nocurl/$name"
+    [ "$name" = curl ] || [ -e "$work/nocurl/$name" ] || [ -L "$work/nocurl/$name" ] || ln -s "$tool" "$work/nocurl/$name"
 done
 rm -f "$work/nocurl/wget"
 printf '#!/bin/sh\nexit 1\n' >"$work/nocurl/wget"
