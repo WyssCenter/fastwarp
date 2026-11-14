@@ -77,3 +77,44 @@ jobs:
         run: |
           uv run --no-sync python -c "import fastwarp as g; print(g.gpu_info())"
           uv run --no-sync pytest tests -v -rs
+
+  installers:
+    name: Installer scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      PSSA_VERSION: 1.25.0
+      PSSA_SHA512: e7fb573262e604bab29914ae62921d24b97c2f88b519b41277b403ef6ce163f14b7d1b36dc73449a68e5ae5a8d9502891b10c264131fd1813adf29bf131c1663
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck
+        run: |
+          f="shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/$f"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" scripts/install.sh ci/test-install.sh
+      - name: End-to-end test of install.sh (dash)
+        run: sh ci/test-install.sh
+      - name: Download PSScriptAnalyzer
+        run: |
+          f="$RUNNER_TEMP/psscriptanalyzer.$PSSA_VERSION.nupkg"
+          curl -fsSL --retry 3 -o "$f" "https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/$PSSA_VERSION"
+          echo "$PSSA_SHA512  $f" | sha512sum -c -
+          unzip -q "$f" -d "$RUNNER_TEMP/PSScriptAnalyzer"
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Import-Module (Join-Path $env:RUNNER_TEMP 'PSScriptAnalyzer/PSScriptAnalyzer.psd1')
+          $found = foreach ($file in 'scripts/install.ps1', 'ci/test-install.ps1') {
+            Invoke-ScriptAnalyzer -Path $file -Severity Warning, Error
+          }
+          if ($found) {
+            $found | Format-Table ScriptName, Line, RuleName, Message -AutoSize -Wrap
+            exit 1
+          }
+          Write-Output "PSScriptAnalyzer $($env:PSSA_VERSION): no findings"

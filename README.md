@@ -67,6 +67,8 @@ pip install fastwarp
 ```
 
 The same wheels are attached to each [GitHub release](https://github.com/WyssCenter/fastwarp/releases).
+The command line `fastwarp` also comes as a standalone program without Python, with installer
+scripts for Linux, macOS and Windows: see [docs/cli.md](docs/cli.md#install).
 
 From source (needs a Rust toolchain; `rust-toolchain.toml` pins the version):
 
