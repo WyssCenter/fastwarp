@@ -57,29 +57,31 @@ measured in the subject's scan into template space.
 Points and images go in opposite directions:
 
 ```{raw} html
-<svg class="fw-diagram" viewBox="0 0 560 250" role="img" aria-labelledby="fw-dir-title fw-dir-desc">
+<svg class="fw-diagram" viewBox="0 0 480 290" role="img" aria-labelledby="fw-dir-title fw-dir-desc">
   <title id="fw-dir-title">Which direction each composite maps</title>
   <desc id="fw-dir-desc">Composite.h5 maps points from fixed space to moving space and warps images from moving space to fixed space. InverseComposite.h5 maps points from moving space to fixed space and warps images from fixed space to moving space.</desc>
   <defs>
-    <marker id="fw-arrow-p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fw-head-points" d="M0,0 L10,5 L0,10 z"/></marker>
-    <marker id="fw-arrow-i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="fw-head-images" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="fw-arrow-p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="fw-head-points" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="fw-arrow-i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="fw-head-images" d="M0,0 L10,5 L0,10 z"/></marker>
   </defs>
-  <rect class="fw-box" x="4" y="20" width="132" height="200" rx="10"/>
-  <text class="fw-title" x="70" y="112" text-anchor="middle">Fixed space</text>
-  <text class="fw-sub" x="70" y="132" text-anchor="middle">e.g. template</text>
-  <rect class="fw-box" x="424" y="20" width="132" height="200" rx="10"/>
-  <text class="fw-title" x="490" y="112" text-anchor="middle">Moving space</text>
-  <text class="fw-sub" x="490" y="132" text-anchor="middle">e.g. subject scan</text>
-  <text class="fw-label" x="280" y="40" text-anchor="middle">Composite.h5</text>
-  <line class="fw-points" x1="146" y1="56" x2="412" y2="56" marker-end="url(#fw-arrow-p)"/>
-  <line class="fw-images" x1="412" y1="84" x2="146" y2="84" marker-end="url(#fw-arrow-i)"/>
-  <text class="fw-label" x="280" y="150" text-anchor="middle">InverseComposite.h5</text>
-  <line class="fw-points" x1="412" y1="166" x2="146" y2="166" marker-end="url(#fw-arrow-p)"/>
-  <line class="fw-images" x1="146" y1="194" x2="412" y2="194" marker-end="url(#fw-arrow-i)"/>
-  <line class="fw-points" x1="150" y1="240" x2="190" y2="240"/>
-  <text class="fw-sub" x="196" y="244">points</text>
-  <line class="fw-images" x1="300" y1="240" x2="340" y2="240"/>
-  <text class="fw-sub" x="346" y="244">images</text>
+  <rect class="fw-box" x="2" y="10" width="104" height="230" rx="10"/>
+  <text class="fw-title" x="54" y="112" text-anchor="middle">Fixed</text>
+  <text class="fw-title" x="54" y="136" text-anchor="middle">space</text>
+  <text class="fw-sub" x="54" y="162" text-anchor="middle">template</text>
+  <rect class="fw-box" x="374" y="10" width="104" height="230" rx="10"/>
+  <text class="fw-title" x="426" y="112" text-anchor="middle">Moving</text>
+  <text class="fw-title" x="426" y="136" text-anchor="middle">space</text>
+  <text class="fw-sub" x="426" y="162" text-anchor="middle">subject</text>
+  <text class="fw-label" x="240" y="36" text-anchor="middle">Composite.h5</text>
+  <line class="fw-points" x1="114" y1="56" x2="364" y2="56" marker-end="url(#fw-arrow-p)"/>
+  <line class="fw-images" x1="364" y1="88" x2="114" y2="88" marker-end="url(#fw-arrow-i)"/>
+  <text class="fw-label" x="240" y="152" text-anchor="middle">InverseComposite.h5</text>
+  <line class="fw-points" x1="364" y1="172" x2="114" y2="172" marker-end="url(#fw-arrow-p)"/>
+  <line class="fw-images" x1="114" y1="204" x2="364" y2="204" marker-end="url(#fw-arrow-i)"/>
+  <line class="fw-points" x1="110" y1="274" x2="160" y2="274"/>
+  <text class="fw-sub" x="168" y="280">points</text>
+  <line class="fw-images" x1="262" y1="274" x2="312" y2="274"/>
+  <text class="fw-sub" x="320" y="280">images</text>
 </svg>
 ```
 

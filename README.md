@@ -15,6 +15,7 @@ or run neuroimaging pipelines, for example to normalize brain MRI onto a templat
   channels such as T1w + T2w.
 - Rigid and affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like `antsApplyTransforms`, on the CPU.
+- A command line, `fastwarp`, for the same steps on NIfTI files.
 - Runs on Vulkan (Linux, Windows), Metal (macOS) and DirectX 12 (Windows) through
   [wgpu](https://wgpu.rs). Before a normalization starts, it checks that a GPU is present and
   has enough memory, so a pipeline can fall back to ANTs.
@@ -57,6 +58,23 @@ else:
 as they read ANTs' own files.
 [Output files](https://fastwarp.readthedocs.io/latest/guide/outputs.html) says which file maps
 points or images in which direction.
+
+## Command line
+
+The package also installs the command `fastwarp` (the same as `python -m fastwarp`), which works
+on NIfTI files and runs the same code as the Python functions:
+
+```bash
+fastwarp register tpl.nii.gz sub.nii.gz -o out/sub_
+fastwarp apply -r tpl.nii.gz -i sub.nii.gz -o out/sub_in_tpl.nii.gz -t out/sub_Composite.h5
+fastwarp bench
+```
+
+`fastwarp bench` times FastWarp on built-in synthetic volumes. Unlike `register_syn`, which
+registers on a 1.0 mm grid unless told otherwise, `fastwarp register` uses the smallest voxel
+spacing of the fixed image; `--iso-mm` sets it. The exit status tells a script what happened, for
+example 4 for no usable GPU and 5 for a grid too large for the GPU. Reference:
+[Command line](https://fastwarp.readthedocs.io/latest/cli.html).
 
 ## Learn more
 

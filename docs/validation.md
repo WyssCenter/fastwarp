@@ -50,8 +50,8 @@ suite enforces. All are on synthetic images, not on brain scans.
 The tests against the ANTs programs run in the `full` workflow; see [Testing](testing.md). No
 test in CI compares FastWarp's SyN with ANTs' SyN on real images. The ignored A/B tests in
 `crates/fastwarp-gpu/tests/ab_real_subject.rs` do, on one non-public subject that only the
-developers have (`FASTWARP_REG_AB_DIR`), with a mean difference of the electrode contact
-positions to ANTs below 2 mm. The comparison on public data is the purpose of the
+developers have (`FASTWARP_REG_AB_DIR`): points marked in the subject's scan, carried through
+FastWarp's and through ANTs' transforms, must land less than 2 mm apart on average. The comparison on public data is the purpose of the
 [accuracy benchmark](benchmarks.md).
 
 ```{toctree}

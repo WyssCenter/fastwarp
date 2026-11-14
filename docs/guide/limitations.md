@@ -5,9 +5,10 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
 
 ## Images
 
-- **No image input from files.** Pass images in memory (see [Images](images.md)), for example
-  read with ANTsPy. FastWarp reads and writes transform files and displacement fields; the only
-  image it writes is the optional `_Warped.nii.gz` of {func}`~fastwarp.register_syn`.
+- **Images in memory, or NIfTI-1 files.** The Python functions take images in memory (see
+  [Images](images.md)), for example read with ANTsPy. The [command line](../cli.md) reads and
+  writes NIfTI-1 files (`.nii`, `.nii.gz`) only; other formats (`.mha`, `.nrrd`, Analyze,
+  NIfTI-2) must be converted first.
 - **3-D only.** 2-D images, time series and vector or multi-component images are not supported.
 - **One or two channels.** {func}`~fastwarp.register_syn` registers one image, or two images of
   the same subject, per side.

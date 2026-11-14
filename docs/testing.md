@@ -41,6 +41,7 @@ uv run --no-sync pytest -rs
 | `test_rigid.py`, `test_linear.py` | Rigid and affine fits, masks, and agreement with ANTs fits. |
 | `test_post.py` | {func}`~fastwarp.compose_field` and {func}`~fastwarp.apply_transforms` against ANTsPy. |
 | `test_namespace.py` | The public names of the package. |
+| `test_cli.py` | The [command line](cli.md): every command, its exit status, and that it gives the same results as the Python functions. |
 | `test_benchmark_metrics.py`, `test_benchmark_fetch.py`, `test_benchmark_recipes.py` | The [accuracy benchmark](benchmarks.md): its metrics, hash-pinned downloads, safe extraction, recipes and pair selection, on tiny synthetic data (no GPU, no network). |
 | `test_benchmark_smoke.py` | The accuracy benchmark end to end on a synthetic phantom with FastWarp and ANTs. Needs a GPU and ANTsPy; about 30 s on a laptop GPU. |
 

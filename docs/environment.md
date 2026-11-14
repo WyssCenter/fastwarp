@@ -20,6 +20,7 @@ Switches such as `FASTWARP_GPU_ALLOW_SOFTWARE` are on when their value is `1`, `
 | `FASTWARP_GPU_ALLOW_SOFTWARE` | off | Accept a software adapter (Mesa lavapipe, Microsoft WARP). Slow; meant for tests on machines without a GPU. |
 | `FASTWARP_GPU_MEMORY_BUDGET_MB` | unset | The memory budget of the {term}`capacity check`, in mebibytes (MiB, 1024 × 1024 bytes), in place of the figure the graphics API reports; nothing is subtracted from it. A value that is not a whole number is ignored. See [GPU and memory](guide/gpu.md#the-memory-budget). |
 | `FASTWARP_GPU_WAIT_TIMEOUT_S` | `300` | Seconds to wait for submitted GPU work before failing with {class}`~fastwarp.RegistrationError`. A value that is not a positive number is ignored. |
+| `RAYON_NUM_THREADS` | all logical cores | CPU threads for the work FastWarp does on the CPU (resampling, preparing images, composing fields, {func}`~fastwarp.apply_transforms`). It is read once, when the thread pool starts, which opening the GPU also does; set it before the first FastWarp call. The GPU work is not affected. |
 | `WGPU_FORCE_FALLBACK_ADAPTER` | off | Use software adapters only, and accept them. Read by FastWarp in the same way as the switches above. |
 
 ## Tests and development

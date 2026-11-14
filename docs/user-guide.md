@@ -11,6 +11,9 @@ FastWarp has three groups of functions:
   {func}`~fastwarp.fits_gpu` tell, before any work, whether a registration can run on this
   machine.
 
+The same functions are available as the [command line](cli.md) `fastwarp`, which works on NIfTI
+files.
+
 The pages use the words of ANTs: the {term}`fixed image` is the reference (for example a
 template), and the {term}`moving image` is the one that is aligned to it (for example a
 subject's scan). The [glossary](glossary.md) explains the other terms.
@@ -67,6 +70,13 @@ The registration schedule: every field, its type, unit, default and limits.
 Which GPU is used, the memory budget, what fits, and falling back to ANTs.
 :::
 
+:::{grid-item-card} Command line
+:link: cli
+:link-type: doc
+
+The `fastwarp` command for NIfTI files: register, fit, apply, compose, benchmark.
+:::
+
 :::{grid-item-card} What FastWarp does not do
 :link: guide/limitations
 :link-type: doc
@@ -116,5 +126,6 @@ guide/recipes
 guide/linear
 guide/resampling
 guide/gpu
+cli
 guide/limitations
 ```

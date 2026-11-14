@@ -3,7 +3,8 @@
 The `fastwarp` command runs the registration on NIfTI files without writing Python. It comes
 with the Python package: after `pip install fastwarp`, both `fastwarp ...` and
 `python -m fastwarp ...` work. Both run the same code as the Python functions, so options,
-results and exit status are the same as described here.
+results and exit status are the same as described here. Each command below names the Python
+function it runs; the [user guide](user-guide.md) explains those functions in more detail.
 
 ```bash
 fastwarp register template.nii.gz sub_T1w.nii.gz -o out/sub_
@@ -48,8 +49,9 @@ fastwarp register FIXED MOVING -o PREFIX [--fixed2 F2 --moving2 M2] [--iso-mm MM
                   [--recipe FILE] [--write-warped] [--adapter NAME] [--json]
 ```
 
-Registers MOVING to FIXED: centre of mass, Rigid and Affine (Mattes mutual information, first
-channel), then SyN (cross-correlation, every channel). This is `fastwarp.register_syn`.
+Registers MOVING to FIXED: {term}`centre of mass`, Rigid and Affine ({term}`Mattes mutual information`, first
+channel), then {term}`SyN` ({term}`cross-correlation`, every channel). This is {func}`fastwarp.register_syn`; see
+[Normalization](guide/normalization.md) and [Output files](guide/outputs.md).
 
 - `-o, --output PREFIX`: writes `<PREFIX>Composite.h5` (`[Affine, Warp]`),
   `<PREFIX>InverseComposite.h5` (`[InverseWarp, Affine^-1]`) and `<PREFIX>0GenericAffine.mat`.
@@ -84,7 +86,8 @@ fastwarp linear FIXED MOVING [-o PREFIX] [--transform rigid|affine] [--mask MASK
 ```
 
 One rigid or affine fit of MOVING to FIXED (Mattes mutual information, regular sampling). This
-is `fastwarp.linear_session(...).register(...)` for a single fit.
+is {func}`fastwarp.linear_session` with one {meth}`~fastwarp.LinearSession.register` call; see
+[Linear fits](guide/linear.md).
 
 - `-o, --output PREFIX`: writes `<PREFIX>0GenericAffine.mat`. Without it nothing is written and
   the result is only printed.
@@ -108,7 +111,7 @@ fastwarp apply -r REFERENCE -i INPUT -o OUTPUT -t T1 [-t T2 ...]
 ```
 
 Resamples INPUT onto the grid of REFERENCE through the transforms, as `antsApplyTransforms`
-does. This is `fastwarp.apply_transforms`; it runs on the CPU and needs no GPU.
+does. This is {func}`fastwarp.apply_transforms`; it runs on the CPU and needs no GPU.
 
 - `-t, --transform FILE`: a transform file: `.h5` composite, `.mat` or `.txt` affine, or a
   `.nii`/`.nii.gz` displacement field. Repeat it for several. The order is that of
@@ -130,7 +133,7 @@ fastwarp compose -r REFERENCE -o FIELD -t T1 [-t T2 ...] [--compression-level N]
 
 Writes the transforms as one displacement field on the grid of REFERENCE, the file
 `antsApplyTransforms --compose` writes (`float32` vectors in LPS millimetres). This is
-`fastwarp.compose_field`; it needs no GPU. The order of `-t` is as for `apply`.
+{func}`fastwarp.compose_field`; it needs no GPU. The order of `-t` is as for `apply`.
 `--compression-level` (0 to 9) sets the gzip level of a `.nii.gz` output; 0 stores the data
 without compressing it, which suits displacement fields.
 
@@ -140,8 +143,8 @@ without compressing it, which suits displacement fields.
 fastwarp recipe [--channels 1|2]
 ```
 
-Prints the default recipe (the dbs-localizer cohort recipe) as JSON, the same dictionary as
-`fastwarp.cohort_recipe(channels)`. Edit a copy and pass it with `--recipe`.
+Prints the default [recipe](guide/recipes.md) as JSON, the same dictionary as
+{func}`fastwarp.cohort_recipe`. Edit a copy and pass it with `--recipe`.
 
 ### gpu-info
 
@@ -150,7 +153,7 @@ fastwarp gpu-info [--adapter NAME] [--json]
 ```
 
 Prints the GPU FastWarp would use as JSON (`name`, `backend`, `device_type`, `driver`,
-`memory_budget_bytes`), the same as `fastwarp.gpu_info()`. Exit status 4 when no usable GPU is
+`memory_budget_bytes`), the same as {func}`fastwarp.gpu_info`. Exit status 4 when no usable GPU is
 found.
 
 ### fits
@@ -163,7 +166,8 @@ Checks whether a registration of FIXED (and MOVING) at `--iso-mm` fits the GPU, 
 `register` runs first. `--iso-mm` defaults to the smallest voxel spacing of FIXED, as for
 `register` (the Python function `fits_gpu` defaults to 1.0 mm). Only the image headers are
 read. Exit status 0 when it fits, 5 when it does not, 4 when there is no usable GPU. Without
-MOVING, the moving grid is taken to be the fixed grid. This is `fastwarp.fits_gpu`.
+MOVING, the moving grid is taken to be the fixed grid. This is {func}`fastwarp.fits_gpu`; see
+[GPU and memory](guide/gpu.md#what-fits).
 
 ### bench
 
@@ -201,7 +205,7 @@ spacing of FIXED, as for `register`).
 - `--threads N`: CPU threads for the host-side work. The default is all logical cores, or
   `RAYON_NUM_THREADS` when it is set. It must be set before anything in the process has started
   the thread pool, so with `python -m fastwarp` use it in a fresh process.
-- `--recipe FILE`: a recipe as for `register` (default: the cohort recipe).
+- `--recipe FILE`: a recipe as for `register` (default: the default recipe).
 - `--json`: print the report as JSON.
 
 Each run reports four times in seconds:
@@ -228,7 +232,8 @@ threads used, the operating system and the FastWarp version.
 | 5 | The grid does not fit the GPU (`GpuCapacityError` in Python); for `bench`, every size. |
 | 6 | The run was cancelled (`RegistrationCancelled` in Python). |
 
-Status 4 and 5 mean "use another engine", for example ANTs. Errors are printed as one line on
+Status 4 and 5 mean that the GPU cannot run this registration, so a script can run ANTs instead
+([Fall back to ANTs](guide/gpu.md#fall-back-to-ants)). Errors are printed as one line on
 standard error, starting with `fastwarp: error:`. Results go to standard output.
 
 Ctrl-C stops the program at once, as for any other program; files that were being written may be
@@ -237,8 +242,8 @@ run.
 
 ## Environment
 
-The command line reads the same environment variables as the Python package, at the moment the
-GPU is opened:
+The command line reads the same [environment variables](environment.md) as the Python package,
+at the moment the GPU is opened:
 
 | Variable | Effect |
 | --- | --- |
