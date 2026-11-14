@@ -198,7 +198,7 @@ def test_rotated_starts_turn_about_the_centre():
 
 
 def test_itk_affine_files_and_distances(tmp_path):
-    from scipy.io import savemat
+    savemat = pytest.importorskip("scipy.io").savemat
 
     params = np.array([1.0, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0])
     savemat(
@@ -218,6 +218,7 @@ def test_itk_affine_files_and_distances(tmp_path):
 
 
 def _fake_ants(tmp_path_factory=None):
+    savemat = pytest.importorskip("scipy.io").savemat
     calls = []
 
     def fake(cmd, log, env, timeout_s):
@@ -228,8 +229,6 @@ def _fake_ants(tmp_path_factory=None):
             f"*** Running {transform} registration ***\n  Elapsed time (stage 0): 1.5\n"
             "Total elapsed time: 1.6\n"
         )
-        from scipy.io import savemat
-
         savemat(
             f"{out}0GenericAffine.mat",
             {
