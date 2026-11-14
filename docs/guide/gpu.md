@@ -100,7 +100,12 @@ voxels of the registration grid ({func}`~fastwarp.iso_grid_dims`) and on the num
 | 2 | 188 |
 
 These figures come from the engine's {term}`capacity check` (`crates/fastwarp-gpu/src/capacity.rs`),
-which bounds the measured peak allocation of a SyN run. 1 GiB is 1024³ bytes. If a moving image has more voxels than
+which bounds the measured peak allocation of a SyN run. The check adds what the coarser SyN
+levels leave allocated: the buffers of a level that are each under 1 MiB (the whole level on a
+small grid, otherwise its images or only its reduction partials), all of a level that runs after
+a larger one, and the last displacement field resampled from the previous level. It also adds
+0.6 MB that the GPU's start-up check keeps. That adds about 16 % on a 56 × 64 × 48 grid and
+under 2 % on a 1 mm head. 1 GiB is 1024³ bytes. If a moving image has more voxels than
 the fixed image at the same spacing, each extra voxel adds 4 bytes per channel. In addition, the
 largest single buffer, the displacement field at 12 bytes per voxel, must fit the device's limit
 on one storage buffer.
@@ -118,9 +123,9 @@ For the 1 mm MNI template that ANTsPy ships (182 × 218 × 182 voxels), at three
 
 | `iso_mm` | Grid | Voxels | 1 channel | 2 channels |
 | --- | --- | --- | --- | --- |
-| 2.0 | 91 × 109 × 91 | 0.9 million | 0.14 GiB | 0.16 GiB |
-| 1.0 | 182 × 218 × 182 | 7.2 million | 1.13 GiB | 1.26 GiB |
-| 0.5 | 363 × 435 × 363 | 57.3 million | 8.97 GiB | 10.04 GiB |
+| 2.0 | 91 × 109 × 91 | 0.9 million | 0.15 GiB | 0.17 GiB |
+| 1.0 | 182 × 218 × 182 | 7.2 million | 1.15 GiB | 1.29 GiB |
+| 0.5 | 363 × 435 × 363 | 57.3 million | 9.06 GiB | 10.12 GiB |
 
 The `mni-0.5mm` size of [`fastwarp bench`](../cli.md#bench), 364 × 436 × 364 voxels, is a
 synthetic volume with the MNI field of view, not this template's grid, so its memory need is
@@ -130,7 +135,7 @@ With the 1 GiB reserve, a 1 mm registration of one channel on this template need
 GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
 [Performance](../performance.md#earlier-measurements-on-non-public-data) page used a different
 template, MNI 2009b, on a 1 mm grid of 197 × 233 × 189 voxels (8.7 million): there, one channel
-needs 1.36 GiB and two channels 1.52 GiB. On a 2 GB NVIDIA Quadro K620, the two-channel
+needs 1.38 GiB and two channels 1.54 GiB. On a 2 GB NVIDIA Quadro K620, the two-channel
 registration was refused, and the one-channel one ran only with
 `FASTWARP_GPU_MEMORY_BUDGET_MB=1900` (1.86 GiB).
 

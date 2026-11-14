@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use fastwarp_gpu::{
-    plan_capacity_linear, plan_capacity_pair, BackendSelect, CapacityCaps, CapacityError,
+    plan_capacity_linear, plan_capacity_syn, BackendSelect, CapacityCaps, CapacityError,
     WgpuBackend,
 };
 use fastwarp_reg::init::{initial_transform, InitFeature};
@@ -252,8 +252,8 @@ pub fn check_plan_capacity(
     if !plan.linear.is_empty() {
         plan_capacity_linear(dims, moving_dims, &plan.linear, caps)?;
     }
-    if plan.syn.is_some() {
-        plan_capacity_pair(dims, moving_dims, channels, caps)?;
+    if let Some(syn) = &plan.syn {
+        plan_capacity_syn(dims, moving_dims, channels, &syn.shrink_factors, caps)?;
     }
     Ok(())
 }
