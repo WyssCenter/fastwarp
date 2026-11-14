@@ -1,8 +1,10 @@
 # Output files
 
-{func}`~fastwarp.register_syn` writes the two {term}`composite <composite transform>` files that
-`antsRegistration --write-composite-transform 1` writes, plus the affine part as
-`0GenericAffine.mat`. Tools that read ANTs transforms read them: `antsApplyTransforms`,
+By default ({func}`~fastwarp.register_syn` with `outputs="composite"`) FastWarp writes the two
+{term}`composite <composite transform>` files that `antsRegistration --write-composite-transform 1`
+writes, plus the affine part as `0GenericAffine.mat`. With `outputs="split"` it writes ANTs'
+separate files instead, and with `"both"` all of them (see [Split files](#split-files)). Tools
+that read ANTs transforms read them: `antsApplyTransforms`,
 `antsApplyTransformsToPoints`, [ANTsPy](https://github.com/ANTsX/ANTsPy), and FastWarp's own
 [resampling functions](resampling.md). A {class}`~fastwarp.LinearSession` fit writes only the
 affine file.
@@ -40,7 +42,7 @@ measured in the subject's scan into template space.
 :class-card: sd-shadow-none
 
 **Use it to** apply only the linear part, in either direction (`[file,1]` inverts it in
-`antsApplyTransforms`).
+`antsApplyTransforms`, `invert=[True]` in FastWarp).
 
 - The affine part of `Composite.h5`, in the same direction.
 :::
@@ -182,8 +184,50 @@ sub_in_template = fastwarp.apply_transforms(sub, template, ["out/sub_Composite.h
 template_in_sub = fastwarp.apply_transforms(template, sub, ["out/sub_InverseComposite.h5"])
 ```
 
-FastWarp's functions take file paths only. They cannot invert a file the way `[file,1]` does;
-use `InverseComposite.h5` for the inverse direction.
+`invert`, one flag per file, uses the inverse of an affine file in its place, as `[file,1]` does
+in `antsApplyTransforms` and `whichtoinvert` in ANTsPy. Only linear transforms can be inverted;
+for a displacement field, pass the matching inverse file (see
+[Resampling](resampling.md#transform-lists)).
+
+## Split files
+
+`outputs="split"` writes what `antsRegistration` writes without `--write-composite-transform`:
+
+| File | Content |
+| --- | --- |
+| `out/sub_0GenericAffine.mat` | The affine part. |
+| `out/sub_1Warp.nii.gz` | The SyN displacement field, forward; only when a SyN stage ran. |
+| `out/sub_1InverseWarp.nii.gz` | The SyN displacement field, inverse; only when a SyN stage ran. |
+
+`outputs="both"` writes these and the composites: five files after a SyN stage, three without
+one. The names are those of `--collapse-output-transforms 1`, ANTs' default; ANTs' per-stage
+files (`-z 0`) are not written. The fields are stored as `float32`, where ANTs writes `float64`.
+
+With split files the warp and the affine are listed separately, as ANTs users know them. A
+subject's scan in template space, and the template in the subject's space:
+
+```python
+import ants
+import fastwarp
+
+template = ants.image_read("tpl.nii.gz")
+sub = ants.image_read("sub.nii.gz")
+
+sub_in_template = fastwarp.apply_transforms(
+    sub, template, ["out/sub_1Warp.nii.gz", "out/sub_0GenericAffine.mat"]
+)
+template_in_sub = fastwarp.apply_transforms(
+    template, sub, ["out/sub_0GenericAffine.mat", "out/sub_1InverseWarp.nii.gz"],
+    invert=[True, False],
+)
+```
+
+The same with `antsApplyTransforms`:
+
+```bash
+antsApplyTransforms -d 3   -i sub.nii.gz -r tpl.nii.gz   -t out/sub_1Warp.nii.gz   -t out/sub_0GenericAffine.mat   -o sub_in_tpl_split.nii.gz
+antsApplyTransforms -d 3   -i tpl.nii.gz -r sub.nii.gz   -t "[out/sub_0GenericAffine.mat,1]"   -t out/sub_1InverseWarp.nii.gz   -o tpl_in_sub_split.nii.gz
+```
 
 ## What the files contain
 
@@ -197,10 +241,19 @@ use `InverseComposite.h5` for the inverse direction.
 `InverseComposite.h5`
 : The inverse, `[InverseWarp, Affine⁻¹]` in ANTs' notation.
 
+Without a SyN stage, `Composite.h5` holds only `[Affine]` and `InverseComposite.h5` only
+`[Affine⁻¹]`, as ANTs 2.6.5 writes them for a linear-only run.
+
 `0GenericAffine.mat`
 : An ITK MATLAB transform file with one `AffineTransform_double_3_3`: the rigid and affine stages
   combined into one affine, as ANTs writes it with `--collapse-output-transforms 1`. Its 12
-  parameters and centre are also in the result as `affine_parameters` and `affine_center`.
+  parameters and centre are also in the result as `affine_parameters` and `affine_center`. A
+  SyN-only run from `"identity"` writes the identity here, as `antsRegistration -r Identity`
+  does.
+
+`1Warp.nii.gz`, `1InverseWarp.nii.gz`
+: The SyN displacement fields of the split layout, as NIfTI vector images of `float32`
+  displacements in LPS millimetres, on the registration grid.
 
 `_Warped.nii.gz`
 : The first moving image warped with linear interpolation onto the registration grid, as

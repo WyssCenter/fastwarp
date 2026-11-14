@@ -91,8 +91,8 @@ is the device's largest buffer size, at most 4 GiB, minus 1 GiB, and FastWarp pr
 
 ## What fits
 
-The memory a {func}`~fastwarp.register_syn` run needs depends on the number of voxels of the
-registration grid ({func}`~fastwarp.iso_grid_dims`) and on the number of channels:
+The memory a {func}`~fastwarp.register_syn` run with a SyN stage needs depends on the number of
+voxels of the registration grid ({func}`~fastwarp.iso_grid_dims`) and on the number of channels:
 
 | Channels | Bytes per voxel of the registration grid |
 | --- | --- |
@@ -104,6 +104,15 @@ which bounds the measured peak allocation of a SyN run. 1 GiB is 1024³ bytes. I
 the fixed image at the same spacing, each extra voxel adds 4 bytes per channel. In addition, the
 largest single buffer, the displacement field at 12 bytes per voxel, must fit the device's limit
 on one storage buffer.
+
+The rigid and affine stages are checked on their own. They need the moving image (4 bytes per
+voxel) and, for every level of every linear stage, the sample buffers of the
+{term}`Mattes mutual information` metric, which grow with the voxels sampled at that level (25 %
+by default), summed over the whole chain. That is much less than a SyN stage needs. A recipe
+with both is checked phase by phase, because the linear buffers are freed before the SyN stage
+starts, and is refused when the larger phase does not fit. So a
+[stage-list recipe](recipes.md#stage-lists) without a SyN stage fits grids that the default
+recipe does not.
 
 For the 1 mm MNI template that ANTsPy ships (182 × 218 × 182 voxels), at three grid spacings:
 
@@ -128,8 +137,9 @@ registration was refused, and the one-channel one ran only with
 ## Check before you run
 
 {func}`~fastwarp.fits_gpu` runs the capacity check of {func}`~fastwarp.register_syn` without
-registering. Pass it the same `fixed` and `moving` images and the same `iso_mm`; the number of
-channels follows from the number of fixed images. It returns `False` when there is no usable GPU.
+registering. Pass it the same `fixed` and `moving` images, the same `iso_mm` and the same
+`recipe` (by default the default recipe); the number of channels follows from the number of
+fixed images. It returns `False` when there is no usable GPU.
 
 ```python
 import ants
@@ -150,12 +160,15 @@ On the laptop of the other examples (Intel Arc 140V, memory budget 7.5 GiB) this
 0.5 False
 ```
 
+With `recipe={"stages": [{"transform": "rigid"}, {"transform": "affine"}]}`, the same call
+returned `True` at 0.5 mm as well (see [Stage lists](recipes.md#stage-lists)).
+
 Without `moving`, {func}`~fastwarp.fits_gpu` assumes that the moving image has the fixed image's
 grid, which undercounts when the moving image is larger; pass it for the exact answer. Arguments
 that {func}`~fastwarp.register_syn` would refuse, such as three fixed images or a non-positive
 `iso_mm`, raise `ValueError`.
 
-The [linear fits](linear.md) have no capacity check: a session that does not fit fails with
+A {class}`~fastwarp.LinearSession` has no capacity check: a session that does not fit fails with
 {class}`~fastwarp.RegistrationError` when the GPU runs out of memory.
 
 ## Fall back to ANTs

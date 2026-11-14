@@ -17,16 +17,23 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
 
 - **A GPU is required.** The registration functions do not run on the CPU. Without a usable GPU
   they raise {class}`~fastwarp.GpuUnavailableError` (see [Falling back to ANTs](gpu.md#fall-back-to-ants)).
-- **Three transforms.** {term}`Rigid`, {term}`affine` and {term}`SyN`. ANTs' other transforms,
-  such as `Similarity`, `Translation`, `BSplineSyN` or `TimeVaryingVelocityField`, are not
+- **Three transforms, in a fixed order.** {term}`Rigid`, {term}`affine` and {term}`SyN`: any
+  number of rigid and affine stages, then at most one SyN stage (see
+  [Stage lists](recipes.md#stage-lists)). ANTs' other transforms, such as `Similarity`,
+  `Translation`, `BSplineSyN` or `TimeVaryingVelocityField`, and a linear stage after SyN are not
   available.
 - **Two metrics, with limited settings.** {term}`Mattes mutual information` with exactly 32
   histogram bins and regularly spaced samples for the linear stages, and
   {term}`cross-correlation` with a window radius from 1 to 8 voxels for SyN. ANTs' other metrics (`MeanSquares`, `GC`, `Demons`,
   random sampling) are not available.
 - **Fixed preparation.** {func}`~fastwarp.register_syn` always works on an isotropic
-  {term}`registration grid`, always {term}`winsorizes <winsorize>` the intensities to the 0.005
-  and 0.995 quantiles, and never matches histograms.
+  {term}`registration grid` and never matches histograms. It either
+  {term}`winsorizes <winsorize>` the intensities to the quantiles the recipe gives, or only
+  rescales them to [0, 1].
+- **Collapsed outputs only.** FastWarp writes the combined files of ANTs'
+  `--collapse-output-transforms 1`, not the per-stage files of `-z 0`. A SyN-only run without
+  a start (ANTs' `0Warp.nii.gz` layout) is not produced: FastWarp always writes a
+  `0GenericAffine.mat`.
 - **No moving-image mask.** A mask limits where the fixed image is sampled, as ANTs'
   `--masks [fixed,NULL]` does; there is no mask for the moving image. {func}`~fastwarp.register_syn`
   takes no mask at all; only the [linear fits](linear.md#masks) do.
@@ -41,9 +48,9 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
 
 - **Three interpolators.** Linear, nearest neighbour and Lanczos windowed sinc. ANTs' `BSpline`,
   `Gaussian` and `GenericLabel` interpolators are not available.
-- **No inversion inside a transform list.** {func}`~fastwarp.apply_transforms` and
-  {func}`~fastwarp.compose_field` take file paths only; use the inverse file, such as
-  `InverseComposite.h5`, instead of ANTs' `[file,1]`. FastWarp writes no inverse of
-  `0GenericAffine.mat`, so applying the inverse affine alone needs ANTs.
+- **Only linear transforms can be inverted.** `invert` (and `[file,1]` on the command line)
+  inverts affine files and composites of affines. A displacement field cannot be inverted inside
+  a transform list; use the inverse file FastWarp writes, such as `InverseComposite.h5` or
+  `1InverseWarp.nii.gz`.
 - **No point transforms.** To move points, use `antsApplyTransformsToPoints` or
   `ants.apply_transforms_to_points` with the [right file](outputs.md).

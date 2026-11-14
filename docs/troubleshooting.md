@@ -101,6 +101,9 @@ The message gives the grid, the bytes it needs and the memory budget. Choose one
   by about eight. `fastwarp.fits_gpu(fixed, moving, iso_mm=...)` tells which `iso_mm` fits;
   [What fits](guide/gpu.md#what-fits) gives the bytes per voxel.
 - **One channel instead of two**, if a second channel is not needed.
+- **No SyN stage**, if an affine result is enough: a
+  [stage-list recipe](guide/recipes.md#stage-lists) with only rigid and affine stages needs much
+  less GPU memory.
 - **Another GPU,** with `adapter=`, when the machine has a larger one.
 - **ANTs,** as in [Fall back to ANTs](guide/gpu.md#fall-back-to-ants).
 

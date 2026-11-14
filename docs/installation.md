@@ -134,7 +134,7 @@ uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help
 ```
 
  Other ways to install the
-command are described under [Command line: install](cli.md#install).
+command are described under [Command line](cli.md).
 
 ## From a GitHub release
 

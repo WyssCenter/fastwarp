@@ -18,6 +18,10 @@ Full normalization and linear fits on the GPU. Guides: [Normalization](guide/nor
 ```
 
 ```{eval-rst}
+.. autoapidata:: fastwarp.OUTPUT_LAYOUTS
+```
+
+```{eval-rst}
 .. autoapifunction:: fastwarp.linear_session
 ```
 

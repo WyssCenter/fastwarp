@@ -2,8 +2,9 @@
 
 {func}`~fastwarp.register_syn` aligns a {term}`moving image` to a {term}`fixed image` with a
 {term}`rigid`, an {term}`affine` and a deformable {term}`SyN` stage, in one call, and writes the
-result as ANTs transform files. All parameters: {func}`fastwarp.register_syn` in the API
-reference.
+result as ANTs transform files. A [stage-list recipe](recipes.md#stage-lists) can choose
+another start and other stages, for example only the linear ones. All parameters:
+{func}`fastwarp.register_syn` in the API reference.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -14,6 +15,7 @@ reference.
 | `adapter` | `None` | Use the GPU whose name contains this text (case-insensitive). `None` uses `FASTWARP_GPU_ADAPTER` if it is set, and otherwise lets FastWarp choose. |
 | `cancel` | `None` | A {class}`~fastwarp.CancelToken` to stop the run from another thread. |
 | `recipe` | `None` | The registration schedule; `None` uses the default. See [Recipes](recipes.md). |
+| `outputs` | `"composite"` | Which transform files to write: `"composite"`, `"split"` or `"both"`, one of {data}`~fastwarp.OUTPUT_LAYOUTS`. See [Output files](outputs.md). |
 
 ## What happens in a run
 
@@ -37,13 +39,15 @@ the CPU.
    {class}`~fastwarp.GpuCapacityError`. No transform has been computed or written at this
    point; only the output folder may have been created.
 2. **Prepare.** Every image is resampled to the spacing of the registration grid (see below).
-   Then its intensities are {term}`winsorized <winsorize>`: the darkest 0.5 % and the brightest
-   0.5 % of the voxels are clipped to the 0.005 and 0.995 quantiles, and the result is rescaled
-   to [0, 1]. There is no histogram matching.
-3. **Centre of mass.** The {term}`centres of mass <centre of mass>` of the first fixed and the
+   Then its intensities are {term}`winsorized <winsorize>`: by default the darkest 0.5 % and the
+   brightest 0.5 % of the voxels are clipped to the 0.005 and 0.995 quantiles, and the result is
+   rescaled to [0, 1]. The recipe key `"winsorize"` changes the quantiles, or with `None` only
+   rescales (see [Winsorizing](recipes.md#winsorizing)). There is no histogram matching.
+3. **Start.** By default the {term}`centres of mass <centre of mass>` of the first fixed and the
    first moving image give the starting translation, as
    `antsRegistration --initial-moving-transform [fixed,moving,1]` does. They are computed on the
-   resampled images before winsorizing.
+   resampled images before winsorizing. A stage-list recipe can start from the identity or from
+   a given affine instead.
 4. **Rigid, then Affine,** on the GPU: {term}`Mattes mutual information` on the first image of
    each side.
 5. **SyN,** on the GPU: {term}`cross-correlation` on every image, starting from the affine.
@@ -51,7 +55,9 @@ the CPU.
    and the files are written.
 
 The [recipe](recipes.md) sets the iterations, resolution levels and metric settings of steps 4
-and 5. Steps 2 and 3 are fixed.
+and 5, the start of step 3 and the winsorizing of step 2. A stage-list recipe can also leave
+out steps 4 or 5, or repeat step 4 with other settings; the capacity check of step 1 then
+covers exactly those stages.
 
 ## The registration grid
 
@@ -84,7 +90,9 @@ the memory a grid needs.
 `out_prefix` is joined to the file names as text, as in ANTs: the prefix `out/sub_` gives
 `out/sub_Composite.h5`, `out/sub_InverseComposite.h5`, `out/sub_0GenericAffine.mat` and, with
 `write_warped=True`, `out/sub__Warped.nii.gz` (two underscores, because the prefix ends in one).
-[Output files](outputs.md) explains what each file holds and which direction it maps.
+With `outputs="split"` or `"both"` the names are those of ANTs' separate files, such as
+`out/sub_1Warp.nii.gz`. [Output files](outputs.md) explains what each file holds and which
+direction it maps; the result's `files` lists the paths written.
 
 - A prefix that ends in a path separator names a folder: `out/sub/` gives `out/sub/Composite.h5`
   and so on. The separator is `/`, and on Windows also `\`.
@@ -109,9 +117,13 @@ the memory a grid needs.
 | `syn_s` | `float` | Seconds for the SyN stage. |
 | `warp_s` | `float` | Seconds to warp the first moving image onto the registration grid. |
 | `write_s` | `float` | Seconds to write the output files. |
-| `levels` | `list[tuple]` | One tuple per SyN level, coarsest first (see below). |
-| `affine_parameters` | `list[float]` | The 12 parameters of the affine (the 3 × 3 matrix row by row, then the translation in millimetres), as in `0GenericAffine.mat`. |
+| `levels` | `list[tuple]` | One tuple per SyN level, coarsest first (see below); empty without a SyN stage. |
+| `affine_parameters` | `list[float]` | The 12 parameters of the affine (the 3 × 3 matrix row by row, then the translation in millimetres): the start and every linear stage combined, as in `0GenericAffine.mat`. |
 | `affine_center` | `list[float]` | The centre of rotation of that affine, in LPS millimetres. |
+| `initial_parameters`, `initial_center` | `list[float]` | The start of the chain: the centre-of-mass translation, the identity, or the given affine. |
+| `linear_stages` | `list[dict]` | One dict per linear stage, in order: `transform` (`"rigid"` or `"affine"`), `iterations` per level, and `metric`, the final negative mutual information (`None` when the last level ran no iteration). |
+| `deformable` | `bool` | Whether a SyN stage ran. |
+| `files` | `list[str]` | The paths written, in the order composites, `0GenericAffine.mat`, warps, warped image. |
 | `peak_gpu_bytes` | `int` | The most GPU memory the engine's buffers held at one time during the run. |
 | `memory_budget_bytes` | `int` | The memory budget the capacity check used. |
 | `recipe` | `dict` | The full recipe that ran, every field present. |

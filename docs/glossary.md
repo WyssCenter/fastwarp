@@ -67,8 +67,12 @@ Moving image
   The image that is aligned to the {term}`fixed image`, for example a subject's scan.
 
 Recipe
-  The schedule of a registration: iterations, resolution levels, smoothing and metric settings
-  of each stage. See [Recipes](guide/recipes.md).
+  The schedule of a registration: the start, the stages, and the iterations, resolution levels,
+  smoothing and metric settings of each stage. See [Recipes](guide/recipes.md).
+
+Stage list
+  The form of a {term}`recipe` that names the start and the stages one by one, for example only a
+  rigid and an affine stage. See [Stage lists](guide/recipes.md#stage-lists).
 
 Registration grid
   The isotropic grid, with `iso_mm` spacing, on which {func}`~fastwarp.register_syn` registers.

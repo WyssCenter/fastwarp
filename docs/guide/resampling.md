@@ -22,9 +22,16 @@ These files can be read:
 | `.txt`, `.tfm` | An ITK text transform file with a linear transform. |
 | `.nii`, `.nii.gz` | A displacement field, for example `1Warp.nii.gz` or the output of {func}`~fastwarp.compose_field`. |
 
-A file cannot be inverted inside the list, as `[file,1]` does in `antsApplyTransforms`; use the
-inverse file instead, for example `InverseComposite.h5`. A missing file raises
-`FileNotFoundError` before any work.
+`invert` uses the inverse of a file in its place, as `antsApplyTransforms -t [file,1]` does and
+as ANTsPy's `whichtoinvert`: a list with one `bool` per file, `True` for the files to invert
+(a tuple or a 1-D boolean NumPy array works too; `0` and `1` are refused). `None`, the default,
+inverts nothing. Unlike ANTsPy, FastWarp never inverts a file on its own; ANTsPy inverts the
+first of two files when only that one is a `.mat`. Only linear transforms can be inverted: `.mat`
+and `.txt` files and composites that hold only affines. Inverting a displacement field, or a
+composite that holds one, raises `ValueError`; pass the matching inverse file instead, such as
+`InverseComposite.h5` or `1InverseWarp.nii.gz`.
+
+A missing file raises `FileNotFoundError` before any work.
 
 ## Resample an image
 
@@ -38,6 +45,7 @@ inverse file instead, for example `InverseComposite.h5`. A missing file raises
 | `transforms` | required | A file or a list of files (see [Transform lists](#transform-lists)). |
 | `interpolation` | `"linear"` | One of {data}`~fastwarp.INTERPOLATORS`: `"linear"`, `"nearestNeighbor"` (for label images) or `"lanczosWindowedSinc"`. |
 | `default_value` | `0.0` | The value of output voxels that map outside `moving`. |
+| `invert` | `None` | One `bool` per transform file, `True` to use that file's inverse (see above). |
 
 The result is an `ANTsImage` like `reference` when `reference` is an `ANTsImage`, and otherwise a
 `float32` NumPy array of the reference's shape.
@@ -78,10 +86,11 @@ parameters: {func}`fastwarp.compose_field` in the API reference.
 | `reference` | required | The output grid: an `ANTsImage` or a tuple `(shape, spacing, origin, direction)`. |
 | `out_path` | required | The output file. `.nii.gz` is written with gzip compression on several threads; `.nii` uncompressed. |
 | `compression_level` | `None` | The gzip level from 0 to 9; `None` uses level 1. Level 0 writes a valid gzip file without compressing the data, which suits displacement fields: they barely compress, and the file is written and read faster. |
+| `invert` | `None` | One `bool` per transform file, as for `apply_transforms`. |
 
-It returns the output path as a {class}`pathlib.Path`. The output folder is created when it is
-missing, before the transform files are checked, so a call that then raises
-`FileNotFoundError` can leave an empty folder behind.
+It returns the output path as a {class}`pathlib.Path`. The transform files are read and checked
+first; the output folder is created, when it is missing, only after the field has been
+computed.
 
 ```python
 import ants
