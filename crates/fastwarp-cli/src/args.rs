@@ -268,7 +268,9 @@ pub struct BenchArgs {
     /// Untimed warm-up runs before the timed ones. Default: 1 when --repeat is above 1, else 0.
     #[arg(long, value_name = "N")]
     pub warmup: Option<u32>,
-    /// CPU threads for the host-side work (default: all logical cores, or RAYON_NUM_THREADS).
+    /// Cap on the CPU threads FastWarp uses for its host-side work (image resampling, intensity
+    /// preprocessing, reading the input images); the GPU work is not limited. Default: all
+    /// logical cores, or RAYON_NUM_THREADS.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
     pub threads: Option<u32>,
     /// Recipe as a JSON file; fields left out keep the default.

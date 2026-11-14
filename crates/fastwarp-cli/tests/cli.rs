@@ -504,6 +504,21 @@ fn a_4d_image_is_refused() {
     assert!(text(&o.stderr).contains("expected a 3-D image"));
 }
 
+#[test]
+fn register_creates_no_output_folder_for_a_missing_input() {
+    let d = tmp("no_folder");
+    let input = d.join("in.nii.gz");
+    oblique_volume().save_nifti(&input).unwrap();
+    let missing = d.join("typo.nii.gz");
+    let out = d.join("results").join("sub_");
+    let o = run(&["register", s(&input), s(&missing), "-o", s(&out)]);
+    assert_eq!(code(&o), 3, "{}", text(&o.stderr));
+    assert!(!d.join("results").exists());
+    let o = run(&["register", s(&missing), s(&input), "-o", s(&out)]);
+    assert_eq!(code(&o), 3, "{}", text(&o.stderr));
+    assert!(!d.join("results").exists());
+}
+
 fn small_recipe() -> Value {
     let linear = json!({"iterations": [40, 20], "shrink_factors": [2, 1],
                         "smoothing_sigmas": [1, 0]});
