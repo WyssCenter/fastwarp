@@ -486,9 +486,11 @@ spacing of FIXED, as for `register`).
 - `--repeat N`: timed runs per size (default 1).
 - `--warmup N`: untimed runs before the timed ones. The default is 1 when `--repeat` is above 1,
   else 0.
-- `--threads N`: CPU threads for the host-side work. The default is all logical cores, or
-  `RAYON_NUM_THREADS` when it is set. It must be set before anything in the process has started
-  the thread pool, so with `python -m fastwarp` use it in a fresh process.
+- `--threads N`: a cap on the CPU threads FastWarp uses for its host-side work: resampling,
+  intensity preprocessing and reading the input images. The GPU work is not limited. The
+  default is all logical cores, or `RAYON_NUM_THREADS` when it is set. It must be set before
+  anything in the process has started the thread pool, so with `python -m fastwarp` use it in a
+  fresh process.
 - `--recipe FILE`: a recipe as for `register` (default: the default recipe).
 - `--json`: print the report as JSON.
 
@@ -509,8 +511,8 @@ threads used, the operating system and the FastWarp version.
 | Status | Meaning |
 | --- | --- |
 | 0 | Success. For `fits`: the registration fits. |
-| 1 | The registration, or another step of the engine, failed. |
-| 2 | Invalid arguments: an unknown option, a bad value, an unsupported file format, a bad recipe. |
+| 1 | The registration, or another step of the engine, failed. An internal error prints one line; set `RUST_BACKTRACE=1` to see Rust's panic message as well. |
+| 2 | Invalid arguments: an unknown option, a bad value, an unsupported image format, a bad recipe. |
 | 3 | A file could not be read or written (missing input, unreadable NIfTI or transform file). |
 | 4 | No usable GPU (`GpuUnavailableError` in Python). |
 | 5 | The grid does not fit the GPU (`GpuCapacityError` in Python); for `bench`, every size. |

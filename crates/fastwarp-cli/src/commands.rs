@@ -144,8 +144,6 @@ fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError
     for (i, p) in moving_paths.iter().enumerate() {
         image::check_nifti_name(p, if i == 0 { "moving image" } else { "--moving2" })?;
     }
-    prepare_prefix(&a.output)?;
-    engine::check_out_folder(&a.output)?;
     let fixed = fixed_paths
         .iter()
         .zip(["fixed image", "--fixed2"])
@@ -156,13 +154,16 @@ fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError
         .zip(["moving image", "--moving2"])
         .map(|(p, role)| image::load(p, role))
         .collect::<Result<Vec<_>, _>>()?;
+    let outputs_layout = engine::output_layout(a.outputs.name())?;
+    prepare_prefix(&a.output)?;
+    engine::check_out_folder(&a.output)?;
     let iso_mm = a
         .iso_mm
         .unwrap_or_else(|| engine::finest_spacing(fixed[0].grid()));
     let outputs = SynOutputs {
         prefix: a.output.clone(),
         write_warped: a.write_warped,
-        layout: engine::output_layout(a.outputs.name())?,
+        layout: outputs_layout,
     };
     let run = engine::register_syn(
         fixed,
@@ -243,9 +244,6 @@ fn linear(a: LinearArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         image::check_nifti_name(m, "--mask")?;
     }
     let initial = a.initial.as_deref().map(read_initial).transpose()?;
-    if let Some(prefix) = &a.output {
-        image::create_parent(&with_suffix(prefix, AFFINE_SUFFIX))?;
-    }
     let fixed = image::load(&a.fixed, "fixed image")?;
     let moving = image::load(&a.moving, "moving image")?;
     let mask = a
@@ -253,6 +251,9 @@ fn linear(a: LinearArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         .as_deref()
         .map(|p| image::load(p, "--mask").map(MaskVolume::from_volume))
         .transpose()?;
+    if let Some(prefix) = &a.output {
+        image::create_parent(&with_suffix(prefix, AFFINE_SUFFIX))?;
+    }
     let use_mask = mask.is_some();
     let mut prepared =
         engine::open_linear(fixed, moving, mask, a.winsorize, a.common.adapter.clone())?;

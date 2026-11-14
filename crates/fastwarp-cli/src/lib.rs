@@ -9,6 +9,8 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Once;
 
 use clap::Parser;
 
@@ -104,10 +106,12 @@ where
             return ExitStatus::Ok.code();
         }
     };
+    let quiet = QuietPanics::begin();
     let result = catch_unwind(AssertUnwindSafe(|| {
         commands::dispatch(cli.command, &mut *out, &mut *err)
-    }))
-    .unwrap_or_else(|payload| {
+    }));
+    drop(quiet);
+    let result = result.unwrap_or_else(|payload| {
         let msg = payload
             .downcast_ref::<&str>()
             .map(|s| (*s).to_string())
@@ -136,6 +140,34 @@ pub fn main_from_env() -> i32 {
         &mut std::io::stdout(),
         &mut std::io::stderr(),
     )
+}
+
+static ACTIVE_RUNS: AtomicUsize = AtomicUsize::new(0);
+static HOOK: Once = Once::new();
+
+struct QuietPanics;
+
+impl QuietPanics {
+    fn begin() -> Self {
+        HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let backtrace = std::env::var_os("RUST_BACKTRACE").is_some_and(|v| v != "0");
+                let silent = ACTIVE_RUNS.load(Ordering::SeqCst) > 0 && !backtrace;
+                if !silent {
+                    previous(info);
+                }
+            }));
+        });
+        ACTIVE_RUNS.fetch_add(1, Ordering::SeqCst);
+        QuietPanics
+    }
+}
+
+impl Drop for QuietPanics {
+    fn drop(&mut self) {
+        ACTIVE_RUNS.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn one_line(message: &str) -> String {
@@ -227,6 +259,41 @@ mod tests {
         let (_, out, _) = run_args(&["recipe", "--channels", "2"]);
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["syn"]["channel_weights"], serde_json::json!([0.5, 0.5]));
+    }
+
+    #[test]
+    fn panic_child_probe() {
+        if std::env::var_os("FASTWARP_PANIC_PROBE").is_none() {
+            return;
+        }
+        let quiet = QuietPanics::begin();
+        let caught = catch_unwind(|| panic!("probe boom"));
+        drop(quiet);
+        assert!(caught.is_err());
+    }
+
+    fn probe_stderr(backtrace: Option<&str>) -> String {
+        let exe = std::env::current_exe().unwrap();
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(["tests::panic_child_probe", "--exact", "--nocapture"])
+            .env("FASTWARP_PANIC_PROBE", "1")
+            .env_remove("RUST_BACKTRACE");
+        if let Some(v) = backtrace {
+            cmd.env("RUST_BACKTRACE", v);
+        }
+        let o = cmd.output().unwrap();
+        assert!(o.status.success(), "{o:?}");
+        String::from_utf8_lossy(&o.stderr).into_owned()
+    }
+
+    #[test]
+    fn a_panic_prints_nothing_unless_backtrace_is_set() {
+        let quiet = probe_stderr(None);
+        assert!(!quiet.contains("probe boom"), "{quiet}");
+        let zero = probe_stderr(Some("0"));
+        assert!(!zero.contains("probe boom"), "{zero}");
+        let loud = probe_stderr(Some("1"));
+        assert!(loud.contains("probe boom"), "{loud}");
     }
 
     #[test]

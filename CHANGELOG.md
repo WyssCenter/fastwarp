@@ -33,7 +33,9 @@
   on built-in synthetic volumes or on your images, with a description of the machine). Images are
   read as ITK and ANTsPy read them. Distinct exit status for invalid arguments (2), file errors (3),
   no usable GPU (4) and a grid too large for the GPU (5); `--json` for machine-readable output.
-  See `docs/cli.md`. The Python extension and the standalone program built from the new crate
+  An internal error prints one line and exits with status 1; Rust's panic message is shown only
+  when `RUST_BACKTRACE` is set to a value other than 0. `register` and `linear` read their input images before they create
+  the output folder. See `docs/cli.md`. The Python extension and the standalone program built from the new crate
   `fastwarp-cli` run the same code.
 - Each GitHub release carries the standalone `fastwarp` program, which needs no Python, for Linux
   x86_64 and aarch64 (glibc 2.28 or later), macOS arm64 and x86_64 (macOS 11 or later) and Windows
