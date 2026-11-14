@@ -35,6 +35,7 @@ Options:
   --dir DIR          install into DIR (default: \$XDG_BIN_HOME, else ~/.local/bin)
   --no-modify-path   do not add DIR to PATH in your shell profiles
   --uninstall        remove fastwarp from DIR and the PATH lines this installer added
+                     (it writes DIR/.fastwarp-installer to know what it added)
   -h, --help         show this help
 
 Environment:
@@ -129,7 +130,7 @@ download() {
             if have curl; then
                 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 -o "$out" "$url"
             elif have wget; then
-                wget --https-only --secure-protocol=TLSv1_2 -q -O "$out" "$url"
+                wget --secure-protocol=TLSv1_2 -q -O "$out" "$url"
             else
                 err "neither curl nor wget is installed"
             fi
@@ -161,11 +162,6 @@ sha256_of() {
     fi
 }
 
-is_foreign() {
-    [ -L "$1" ] && return 0
-    [ "$(dd if="$1" bs=2 count=1 2>/dev/null)" = "#!" ]
-}
-
 path_has() {
     case ":${PATH}:" in
         *":$1:"*) return 0 ;;
@@ -186,13 +182,10 @@ profile_files() {
     if [ -f "$HOME/.bash_profile" ]; then
         printf '%s\n' "$HOME/.bash_profile"
     fi
-    if [ "$shell_name" = zsh ] || [ -f "${ZDOTDIR:-$HOME}/.zshrc" ]; then
-        printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc"
+    zdot=${ZDOTDIR:-$HOME}
+    if { [ "$shell_name" = zsh ] && [ -d "$zdot" ]; } || [ -f "$zdot/.zshrc" ]; then
+        printf '%s\n' "$zdot/.zshrc"
     fi
-}
-
-all_profile_files() {
-    printf '%s\n' "$HOME/.profile" "$HOME/.bashrc" "$HOME/.bash_profile" "${ZDOTDIR:-$HOME}/.zshrc"
 }
 
 fish_file() {
@@ -219,6 +212,13 @@ has_line() {
     [ -f "$1" ] && grep -Fxq -- "$2" "$1"
 }
 
+append_line() {
+    if [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ]; then
+        printf '\n' >>"$1" 2>/dev/null || return 1
+    fi
+    printf '%s\n' "$2" >>"$1" 2>/dev/null
+}
+
 remove_line() {
     has_line "$1" "$2" || return 1
     kept="$1.fastwarp-installer.tmp"
@@ -235,38 +235,66 @@ remove_line() {
     rm -f "$kept"
 }
 
+receipt_sha256() {
+    [ -f "$receipt" ] || return 0
+    awk '$1 == "sha256" {print $2; exit}' "$receipt"
+}
+
+receipt_entries() {
+    [ -f "$receipt" ] || return 0
+    grep -E '^(posix|fish) ' "$receipt" || true
+}
+
+check_owned() {
+    if [ -d "$bin" ] && [ ! -L "$bin" ]; then
+        err "$bin is a folder, not a program; remove it or choose another folder with --dir"
+    fi
+    if [ -e "$bin" ] || [ -L "$bin" ]; then
+        owned=$(receipt_sha256)
+        if [ -L "$bin" ] || [ -z "$owned" ] || [ "$(sha256_of "$bin" | tr 'A-F' 'a-f')" != "$owned" ]; then
+            err "$bin was not installed by this installer (for example a link from 'uv tool install', a pip script or a program you built); $1"
+        fi
+    fi
+}
+
 modify_path() {
-    dir=$1
+    added=
+    if [ -z "${HOME:-}" ]; then
+        say "HOME is not set, so no shell profile was changed."
+        print_path_help
+        return
+    fi
     if path_has "$dir"; then
         say "$dir is already on PATH; no shell profile was changed."
         return
     fi
     line=$(posix_line "$dir")
-    changed=
     files=$(profile_files)
     old_ifs=$IFS
     IFS=$NL
     for f in $files; do
         has_line "$f" "$line" && continue
-        if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then
-            printf '\n' >>"$f"
+        if append_line "$f" "$line"; then
+            added="${added}posix $f$NL"
+        else
+            say "warning: could not write $f" >&2
         fi
-        printf '%s\n' "$line" >>"$f"
-        changed="$changed  $f$NL"
     done
     IFS=$old_ifs
     if wants_fish; then
         ff=$(fish_file)
         fl=$(fish_line "$dir")
         if ! has_line "$ff" "$fl"; then
-            mkdir -p "$(dirname "$ff")"
-            printf '%s\n' "$fl" >"$ff"
-            changed="$changed  $ff$NL"
+            if mkdir -p "$(dirname "$ff")" 2>/dev/null && append_line "$ff" "$fl"; then
+                added="${added}fish $ff$NL"
+            else
+                say "warning: could not write $ff" >&2
+            fi
         fi
     fi
-    if [ -n "$changed" ]; then
+    if [ -n "$added" ]; then
         say "Added $dir to PATH with a line ending in '$MARKER' in:"
-        printf '%s' "$changed"
+        printf '%s' "$added" | sed 's/^[a-z]* /  /'
         say "Open a new terminal to use fastwarp, or run: . \"$HOME/.profile\""
         say "To undo: run the installer with --uninstall, or delete those lines."
     else
@@ -275,52 +303,23 @@ modify_path() {
 }
 
 print_path_help() {
-    dir=$1
     path_has "$dir" && return
-    say "$dir is not on PATH, and the shell profiles were left unchanged (--no-modify-path)."
+    say "$dir is not on PATH, and the shell profiles were left unchanged."
     say "To use fastwarp, add it to PATH, for example:"
     say "  echo 'export PATH=\"$dir:\$PATH\"' >> ~/.bashrc   (bash; use ~/.zshrc for zsh)"
     say "  fish_add_path '$dir'   (fish)"
 }
 
-unmodify_path() {
-    dir=$1
-    line=$(posix_line "$dir")
-    removed=
-    files=$(all_profile_files)
-    old_ifs=$IFS
-    IFS=$NL
-    for f in $files; do
-        if remove_line "$f" "$line"; then
-            removed="$removed  $f$NL"
-        fi
-    done
-    IFS=$old_ifs
-    ff=$(fish_file)
-    if remove_line "$ff" "$(fish_line "$dir")"; then
-        [ -s "$ff" ] || rm -f "$ff"
-        removed="$removed  $ff$NL"
+write_receipt() {
+    new_receipt=$dir/.fastwarp-installer.new.$$
+    if ! {
+        printf '# Written by the fastwarp installer; --uninstall reads it.\n'
+        printf 'sha256 %s\n' "$1"
+        printf '%s' "$2" | awk 'NF && !seen[$0]++'
+    } >"$new_receipt" || ! mv -f "$new_receipt" "$receipt"; then
+        rm -f "$new_receipt"
+        err "could not write $receipt"
     fi
-    if [ -n "$removed" ]; then
-        say "Removed the PATH line for $dir from:"
-        printf '%s' "$removed"
-    fi
-}
-
-path_line_present() {
-    dir=$1
-    line=$(posix_line "$dir")
-    files=$(all_profile_files)
-    old_ifs=$IFS
-    IFS=$NL
-    for f in $files; do
-        if has_line "$f" "$line"; then
-            IFS=$old_ifs
-            return 0
-        fi
-    done
-    IFS=$old_ifs
-    has_line "$(fish_file)" "$(fish_line "$dir")"
 }
 
 resolve_dir() {
@@ -344,6 +343,8 @@ resolve_dir() {
     case "$dir" in
         *:* | *"$NL"* | *\\*) err "the install folder must not contain ':', '\\' or a line break: $dir" ;;
     esac
+    bin=$dir/fastwarp
+    receipt=$dir/.fastwarp-installer
 }
 
 expected_sha256() {
@@ -363,27 +364,44 @@ expected_sha256() {
 
 do_uninstall() {
     resolve_dir
-    bin=$dir/fastwarp
-    if [ -e "$bin" ] || [ -L "$bin" ]; then
-        if is_foreign "$bin"; then
-            err "$bin was not installed by this installer (a symbolic link or a script, for example from 'uv tool install' or pip); remove it with the tool that installed it"
-        fi
+    check_owned "remove it with the tool that installed it"
+    if [ -e "$bin" ]; then
         rm -f "$bin"
         say "Removed $bin"
-    else
-        say "No fastwarp in $dir"
+    elif [ ! -f "$receipt" ]; then
+        say "No fastwarp installed by this installer in $dir"
     fi
-    for staged in "$dir"/.fastwarp.new.*; do
+    removed=
+    entries=$(receipt_entries)
+    old_ifs=$IFS
+    IFS=$NL
+    for entry in $entries; do
+        f=${entry#* }
+        case "$entry" in
+            "fish "*) line=$(fish_line "$dir") ;;
+            *) line=$(posix_line "$dir") ;;
+        esac
+        if remove_line "$f" "$line"; then
+            removed="$removed  $f$NL"
+            case "$entry" in
+                "fish "*) [ -s "$f" ] || rm -f "$f" ;;
+            esac
+        fi
+    done
+    IFS=$old_ifs
+    rm -f "$receipt"
+    for staged in "$dir"/.fastwarp.new.* "$dir"/.fastwarp-installer.new.*; do
         [ -f "$staged" ] && rm -f "$staged"
     done
+    if [ -n "$removed" ]; then
+        say "Removed the PATH line for $dir from:"
+        printf '%s' "$removed"
+    fi
     if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
         rmdir "$dir" 2>/dev/null || true
     fi
-    if [ ! -d "$dir" ]; then
-        unmodify_path "$dir"
-    elif path_line_present "$dir"; then
-        say "Kept the PATH lines for $dir in your shell profiles, because the folder holds other programs."
-        say "Delete the lines ending in '$MARKER' by hand if you no longer need them."
+    if [ -n "$removed" ] && [ -d "$dir" ]; then
+        say "note: $dir still holds other files; the lines this installer wrote no longer put it on PATH."
     fi
 }
 
@@ -397,6 +415,7 @@ do_install() {
     esac
     printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$' || err "invalid version: $version"
     resolve_dir
+    check_owned "remove it first or choose another folder with --dir"
 
     archive=fastwarp-$target.tar.gz
     base=${FASTWARP_DOWNLOAD_URL:-$REPO_URL/releases/download/v$version}
@@ -412,6 +431,11 @@ do_install() {
             if [ "$local_http" = 0 ]; then
                 [ -n "$pinned" ] || err "refusing to download over plain HTTP without a checksum held in the installer: $base"
                 say "warning: downloading over plain HTTP from $base" >&2
+            fi
+            ;;
+        https://*)
+            if ! have curl && [ -z "$pinned" ]; then
+                err "curl is needed to install a version other than this installer's own: wget may follow a redirect from HTTPS to plain HTTP for the .sha256 file"
             fi
             ;;
     esac
@@ -444,10 +468,7 @@ do_install() {
     [ -f "$src" ] || err "$archive does not contain fastwarp-$target/fastwarp"
 
     mkdir -p "$dir" || err "could not create $dir"
-    bin=$dir/fastwarp
-    if { [ -e "$bin" ] || [ -L "$bin" ]; } && is_foreign "$bin"; then
-        err "$bin exists and was not installed by this installer (a symbolic link or a script, for example from 'uv tool install' or pip); remove it first or choose another folder with --dir"
-    fi
+    previous=$(receipt_entries)
     staged=$dir/.fastwarp.new.$$
     cp "$src" "$staged" || err "could not write to $dir"
     chmod 755 "$staged"
@@ -455,15 +476,19 @@ do_install() {
         rm -f "$staged"
         err "the downloaded fastwarp does not run on this system: $out"
     fi
+    installed_sha=$(sha256_of "$staged" | tr 'A-F' 'a-f')
     mv -f "$staged" "$bin" || err "could not replace $bin"
     staged=
+    write_receipt "$installed_sha" "$previous"
     say "Installed $out to $bin"
 
+    added=
     if [ "$opt_no_modify_path" = 1 ]; then
-        print_path_help "$dir"
+        print_path_help
     else
-        modify_path "$dir"
+        modify_path
     fi
+    write_receipt "$installed_sha" "$previous$NL$added"
 
     other=$(command -v fastwarp 2>/dev/null || true)
     if [ -n "$other" ] && [ "$other" != "$bin" ]; then

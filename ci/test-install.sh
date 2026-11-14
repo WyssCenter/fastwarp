@@ -131,15 +131,16 @@ run --version 0.0.0 >/dev/null 2>&1 || fail "install into FASTWARP_INSTALL_DIR f
 [ "$(markers "$home/.profile")" = 1 ] || fail "no PATH line for FASTWARP_INSTALL_DIR"
 found=$(env -i HOME="$home" PATH="$base_path" sh -c '. "$HOME/.profile"; command -v fastwarp')
 [ "$found" = "$custom/fastwarp" ] || fail "the PATH line for a folder with a space does not work: $found"
-run --uninstall >"$work/log" 2>&1 || fail "uninstall from FASTWARP_INSTALL_DIR failed"
+grep -q '^sha256 ' "$custom/.fastwarp-installer" || fail "no receipt next to the program"
+grep -qx "posix $home/.profile" "$custom/.fastwarp-installer" || fail "the receipt does not list .profile"
+run --uninstall >"$work/log" 2>&1 || fail "uninstall from FASTWARP_INSTALL_DIR failed: $(cat "$work/log")"
 [ ! -e "$custom/fastwarp" ] || fail "uninstall left $custom/fastwarp"
+[ ! -e "$custom/.fastwarp-installer" ] || fail "uninstall left the receipt"
 [ -e "$custom/other-program" ] || fail "uninstall removed another program"
-[ "$(markers "$home/.profile")" = 1 ] || fail "uninstall removed the PATH line of a folder that holds other programs"
-grep -q 'Kept the PATH lines' "$work/log" || fail "no note about the kept PATH line"
+[ "$(markers "$home/.profile")" = 0 ] || fail "uninstall kept the PATH line of a folder that holds other programs"
+grep -q 'still holds other files' "$work/log" || fail "no note about the other files"
 rm "$custom/other-program"
-run --uninstall >/dev/null 2>&1 || fail "second uninstall failed"
-[ "$(markers "$home/.profile")" = 0 ] || fail "uninstall of an empty folder kept the PATH line"
-pass "PATH line kept while the folder holds other programs"
+pass "uninstall removes the PATH lines it added, also when the folder holds other programs"
 
 test_env=FASTWARP_NO_MODIFY_PATH=1
 run --version 0.0.0 --dir "$custom" >/dev/null 2>&1 || fail "install with FASTWARP_NO_MODIFY_PATH failed"
@@ -166,10 +167,52 @@ if run --uninstall >/dev/null 2>&1; then fail "uninstall removed a symbolic link
 rm "$bin"
 printf '#!/bin/sh\necho pip\n' >"$bin"
 if run --version 0.0.0 >/dev/null 2>&1; then fail "a script (pip entry point) was overwritten"; fi
-rm -rf "$home/.local/bin"
-pass "foreign fastwarp (symbolic link, script) left alone"
+rm "$bin"
+cp "$pkg/fastwarp" "$bin"
+if run --version 0.0.0 >/dev/null 2>&1; then fail "a program without a receipt (built by hand) was overwritten"; fi
+if run --uninstall >/dev/null 2>&1; then fail "uninstall removed a program without a receipt"; fi
+[ -e "$bin" ] || fail "the program without a receipt was removed"
+rm "$bin"
+mkdir "$bin"
+if out=$(run --version 0.0.0 2>&1); then fail "a folder named fastwarp was accepted: $out"; fi
+printf '%s' "$out" | grep -q 'is a folder' || fail "no message about the folder: $out"
+rmdir "$bin"
+run --version 0.0.0 >/dev/null 2>&1 || fail "install failed"
+printf 'changed' >>"$bin"
+if run --uninstall >/dev/null 2>&1; then fail "uninstall removed a program that no longer matches the receipt"; fi
+if run --version 0.0.0 >/dev/null 2>&1; then fail "install replaced a program that no longer matches the receipt"; fi
+rm "$bin"
+run --uninstall >/dev/null 2>&1 || fail "uninstall with the program gone failed"
+[ ! -e "$home/.local/bin" ] || fail "uninstall left the folder"
+[ "$(markers "$home/.profile")" = 0 ] || fail "uninstall with the program gone left the PATH line"
+pass "foreign fastwarp (symbolic link, script, no receipt, changed, folder) left alone"
+
+cp "$home/.bashrc" "$work/bashrc.before"
+run --version 0.0.0 >/dev/null 2>&1 || fail "install failed"
+grep 'fastwarp-installer$' "$home/.profile" >"$work/own-line"
+run --uninstall >/dev/null 2>&1 || fail "uninstall failed"
+cat "$work/own-line" >>"$home/.bashrc"
+run --version 0.0.0 >/dev/null 2>&1 || fail "install with a PATH line already in .bashrc failed"
+grep -qx "posix $home/.bashrc" "$home/.local/bin/.fastwarp-installer" && fail "the receipt claims the line that was already in .bashrc"
+run --uninstall >/dev/null 2>&1 || fail "uninstall failed"
+[ "$(markers "$home/.bashrc")" = 1 ] || fail "uninstall removed a PATH line the installer did not add"
+[ "$(markers "$home/.profile")" = 0 ] || fail "uninstall left the .profile line"
+cp "$work/bashrc.before" "$home/.bashrc"
+pass "a PATH line that was there before the install is kept"
+
+env -i PATH="$base_path" TMPDIR="$work" FASTWARP_DOWNLOAD_URL="$dl" sh "$installer" --version 0.0.0 --dir "$work/nohome" >"$work/log" 2>&1 \
+    || fail "install without HOME failed: $(cat "$work/log")"
+grep -q 'HOME is not set' "$work/log" || fail "no note that HOME is not set"
+env -i PATH="$base_path" TMPDIR="$work" sh "$installer" --uninstall --dir "$work/nohome" >/dev/null 2>&1 || fail "uninstall without HOME failed"
+[ ! -e "$work/nohome" ] || fail "uninstall without HOME left the folder"
+pass "HOME not set: --dir works, profiles untouched"
 
 test_shell=/usr/bin/zsh
+test_env=ZDOTDIR=$work/missing-zdotdir
+run --version 0.0.0 >/dev/null 2>&1 || fail "install for zsh with a missing ZDOTDIR failed"
+[ ! -e "$work/missing-zdotdir" ] || fail "the installer created ZDOTDIR"
+run --uninstall >/dev/null 2>&1 || fail "uninstall failed"
+test_env=FASTWARP_TEST_UNUSED=1
 run --version 0.0.0 >/dev/null 2>&1 || fail "install for zsh failed"
 [ "$(markers "$home/.zshrc")" = 1 ] || fail "no PATH line in .zshrc"
 test_shell=/usr/bin/fish
@@ -178,10 +221,17 @@ test_shell=/bin/bash
 fish_conf=$home/.config/fish/conf.d/fastwarp-installer.fish
 [ "$(markers "$fish_conf")" = 1 ] || fail "no fish conf.d file"
 [ "$(markers "$home/.zshrc")" = 1 ] || fail "the second install duplicated the .zshrc line"
+test_shell=/usr/bin/fish
+run --version 0.0.0 --dir "$work/second" >/dev/null 2>&1 || fail "install of a second folder for fish failed"
+[ "$(markers "$fish_conf")" = 2 ] || fail "the second folder replaced the fish line of the first"
+test_shell=/bin/bash
 run --uninstall >/dev/null 2>&1 || fail "uninstall failed"
-[ "$(markers "$home/.zshrc")" = 0 ] || fail "uninstall left the .zshrc line"
+[ "$(markers "$home/.zshrc")" = 1 ] || fail "uninstall of one folder removed the .zshrc line of the other"
+[ "$(markers "$fish_conf")" = 1 ] || fail "uninstall of one folder removed the fish line of the other"
+run --uninstall --dir "$work/second" >/dev/null 2>&1 || fail "uninstall of the second folder failed"
+[ "$(markers "$home/.zshrc")" = 0 ] || fail "uninstall left a .zshrc line"
 [ ! -e "$fish_conf" ] || fail "uninstall left the fish conf.d file"
-pass "zsh and fish profiles"
+pass "zsh and fish profiles, two folders in fish"
 
 mkdir -p "$work/fake"
 printf '#!/bin/sh\necho SunOS\n' >"$work/fake/uname"

@@ -3,39 +3,30 @@
 #
 # Installs the fastwarp command line from a GitHub release (Windows). See -Help.
 
-param(
-    [string]$Version,
-    [Alias('InstallDir')][string]$Dir,
-    [switch]$NoModifyPath,
-    [switch]$Uninstall,
-    [switch]$Help
-)
-
-$FastwarpInstallerVersion = '@FASTWARP_VERSION@'
-$FastwarpInstallerSha256 = '@FASTWARP_SHA256_x86_64-pc-windows-msvc@'
-
-function Invoke-FastwarpInstaller {
+& {
     param(
         [string]$Version,
-        [string]$Dir,
+        [Alias('InstallDir')][string]$Dir,
         [switch]$NoModifyPath,
         [switch]$Uninstall,
-        [switch]$Help,
-        [string]$InstallerVersion,
-        [string]$InstallerSha256
+        [switch]$Help
     )
 
     Set-StrictMode -Version 3.0
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
 
+    $installerVersion = '@FASTWARP_VERSION@'
+    $installerSha256 = '@FASTWARP_SHA256_x86_64-pc-windows-msvc@'
     $repoUrl = 'https://github.com/WyssCenter/fastwarp'
     $target = 'x86_64-pc-windows-msvc'
     $defaultKey = 'HKCU:\Environment'
+    $testKeyRoot = 'HKCU:\Software\fastwarp-installer-test\'
+    $state = @{ AddedKey = '' }
 
     if ($Help) {
         Write-Output @"
-fastwarp installer $InstallerVersion
+fastwarp installer $installerVersion
 
 Downloads the fastwarp command line from $repoUrl/releases, checks its
 SHA-256 and installs it without administrator rights. The installer of a
@@ -46,10 +37,11 @@ Usage: fastwarp-installer.ps1 [options]
 
 Options:
   -Version VERSION  release to install, for example 0.2.0
-                    (default: $InstallerVersion, the release this script belongs to)
+                    (default: $installerVersion, the release this script belongs to)
   -Dir DIR          install into DIR (default: %LOCALAPPDATA%\Programs\fastwarp\bin)
   -NoModifyPath     do not add DIR to the user PATH
-  -Uninstall        remove fastwarp from DIR, and DIR from the user PATH
+  -Uninstall        remove fastwarp from DIR, and DIR from the user PATH if the
+                    installer added it (it writes DIR\.fastwarp-installer to know)
   -Help             show this help
 
 Environment:
@@ -61,8 +53,7 @@ Environment:
                            checksum held in the installer, or from localhost)
 
 Unless DIR is on PATH already or -NoModifyPath is given, the installer adds
-DIR to the user PATH (HKCU\Environment, not the machine PATH); -Uninstall
-removes it again once the folder is empty.
+DIR to the user PATH (HKCU\Environment, not the machine PATH).
 "@
         return
     }
@@ -88,11 +79,15 @@ removes it again once the folder is empty.
         return $full
     }
 
+    function Test-PathKey([string]$key) {
+        return ($key -eq $defaultKey) -or $key.StartsWith($testKeyRoot, [StringComparison]::OrdinalIgnoreCase)
+    }
+
     function Get-PathKey {
         $key = Get-Text 'FASTWARP_INSTALLER_PATH_KEY'
         if (-not $key) { return $defaultKey }
-        if ($key -notmatch '^HKCU:\\Software\\fastwarp-installer-test\\') {
-            throw 'FASTWARP_INSTALLER_PATH_KEY must name a key under HKCU:\Software\fastwarp-installer-test\ (tests only)'
+        if (-not $key.StartsWith($testKeyRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "FASTWARP_INSTALLER_PATH_KEY must name a key under $testKeyRoot (tests only)"
         }
         return $key
     }
@@ -143,14 +138,18 @@ removes it again once the folder is empty.
         }
         $entries = @($dir) + @(Split-PathList (Get-UserPath $key))
         Write-UserPath $key ($entries -join ';')
+        $state.AddedKey = $key
         if ($key -eq $defaultKey) { $env:Path = "$dir;$env:Path" }
         Write-Output "Added $dir to the start of the user PATH ($key, value Path)."
         Write-Output 'Open a new terminal to use fastwarp.'
         Write-Output 'To undo: run the installer with -Uninstall, or remove the entry under Settings > System > About > Advanced system settings > Environment Variables.'
     }
 
-    function Undo-UserPathEntry([string]$dir) {
-        $key = Get-PathKey
+    function Undo-UserPathEntry([string]$key, [string]$dir) {
+        if (-not (Test-PathKey $key)) {
+            Write-Warning "the receipt names an unexpected registry key, left unchanged: $key"
+            return
+        }
         $entries = @(Split-PathList (Get-UserPath $key))
         $kept = @($entries | Where-Object { -not (Test-SamePath $_ $dir) })
         if ($kept.Count -eq $entries.Count) { return }
@@ -158,27 +157,95 @@ removes it again once the folder is empty.
         Write-Output "Removed $dir from the user PATH ($key)."
     }
 
-    function Get-Download([string]$url, [string]$out) {
+    function Get-Sha256([string]$file) {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+    }
+
+    function Read-Receipt([string]$receipt) {
+        $result = @{ Sha256 = ''; PathKeys = @() }
+        if (-not (Test-Path -LiteralPath $receipt -PathType Leaf)) { return $result }
+        foreach ($line in [IO.File]::ReadAllLines($receipt)) {
+            if ($line.StartsWith('sha256 ')) { $result.Sha256 = $line.Substring(7).Trim().ToLowerInvariant() }
+            if ($line.StartsWith('path-key ')) { $result.PathKeys += $line.Substring(9) }
+        }
+        return $result
+    }
+
+    function Write-Receipt([string]$receipt, [string]$sha256, [string[]]$pathKeys) {
+        $lines = @('# Written by the fastwarp installer; -Uninstall reads it.', "sha256 $sha256")
+        $lines += @($pathKeys | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { "path-key $_" })
+        [IO.File]::WriteAllLines($receipt, [string[]]$lines)
+    }
+
+    function Assert-Owned([string]$bin, [string]$receipt, [string]$advice) {
+        if (Test-Path -LiteralPath $bin -PathType Container) {
+            throw "$bin is a folder, not a program; remove it or choose another folder with -Dir"
+        }
+        if (Test-Path -LiteralPath $bin) {
+            $owned = (Read-Receipt $receipt).Sha256
+            if (-not $owned -or (Get-Sha256 $bin) -ne $owned) {
+                throw "$bin was not installed by this installer (for example from 'uv tool install' or a program you built); $advice"
+            }
+        }
+    }
+
+    function Get-Download([string]$url, [string]$out, [bool]$allowHttp) {
         if ($url -match '^file://') {
             Copy-Item -LiteralPath ([Uri]$url).LocalPath -Destination $out
-        } elseif ($url -match '^https?://') {
-            Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
-        } else {
-            throw "unsupported download URL: $url"
+            return
         }
+        if ($url -notmatch '^https?://') { throw "unsupported download URL: $url" }
+        $uri = [Uri]$url
+        for ($hop = 0; $hop -lt 10; $hop++) {
+            if ($uri.Scheme -ne 'https' -and -not ($allowHttp -and $uri.Scheme -eq 'http')) {
+                throw "refusing to download from $uri (not HTTPS)"
+            }
+            $request = [Net.HttpWebRequest][Net.WebRequest]::Create($uri)
+            $request.AllowAutoRedirect = $false
+            $request.UserAgent = 'fastwarp-installer'
+            try {
+                $response = $request.GetResponse()
+            } catch [Net.WebException] {
+                if ($null -eq $_.Exception.Response) { throw }
+                $response = $_.Exception.Response
+            }
+            try {
+                $code = [int]$response.StatusCode
+                if ($code -ge 300 -and $code -lt 400) {
+                    $location = $response.Headers['Location']
+                    if (-not $location) { throw "HTTP $code without a Location from $uri" }
+                    $uri = New-Object Uri -ArgumentList $uri, $location
+                    continue
+                }
+                if ($code -ne 200) { throw "HTTP $code from $uri" }
+                $stream = $response.GetResponseStream()
+                $file = [IO.File]::Create($out)
+                try { $stream.CopyTo($file) } finally { $file.Dispose(); $stream.Dispose() }
+                return
+            } finally {
+                $response.Close()
+            }
+        }
+        throw "too many redirects from $url"
     }
 
     $dir = Resolve-InstallDir $Dir
     $bin = Join-Path $dir 'fastwarp.exe'
     $staged = Join-Path $dir 'fastwarp-new.exe'
+    $receipt = Join-Path $dir '.fastwarp-installer'
 
     if ($Uninstall) {
-        foreach ($f in @($bin, $staged)) {
-            if (Test-Path -LiteralPath $f) {
-                Remove-Item -LiteralPath $f -Force
-                Write-Output "Removed $f"
-            }
+        Assert-Owned $bin $receipt 'remove it with the tool that installed it'
+        $previous = Read-Receipt $receipt
+        if (Test-Path -LiteralPath $bin) {
+            Remove-Item -LiteralPath $bin -Force
+            Write-Output "Removed $bin"
+        } elseif (-not (Test-Path -LiteralPath $receipt)) {
+            Write-Output "No fastwarp installed by this installer in $dir"
         }
+        if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged -Force }
+        foreach ($key in $previous.PathKeys) { Undo-UserPathEntry $key $dir }
+        if (Test-Path -LiteralPath $receipt) { Remove-Item -LiteralPath $receipt -Force }
         if ((Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
             Remove-Item -LiteralPath $dir -Force
             $parent = Split-Path -Parent $dir
@@ -187,10 +254,8 @@ removes it again once the folder is empty.
                 Remove-Item -LiteralPath $parent -Force
             }
         }
-        if (-not (Test-Path -LiteralPath $dir)) {
-            Undo-UserPathEntry $dir
-        } elseif (Test-InUserPath $dir) {
-            Write-Output "Kept $dir on the user PATH, because the folder holds other programs."
+        if ($previous.PathKeys.Count -gt 0 -and (Test-Path -LiteralPath $dir)) {
+            Write-Output "note: $dir still holds other files; the installer no longer puts it on PATH."
         }
         return
     }
@@ -208,24 +273,32 @@ removes it again once the folder is empty.
 
     $ver = $Version
     if (-not $ver) { $ver = Get-Text 'FASTWARP_VERSION' }
-    if (-not $ver) { $ver = $InstallerVersion }
+    if (-not $ver) { $ver = $installerVersion }
     if ($ver.StartsWith('v')) { $ver = $ver.Substring(1) }
     if ($ver.Contains('@')) {
         throw 'no version given, and this copy of the installer is not from a release; pass -Version or set FASTWARP_VERSION'
     }
     if ($ver -notmatch '\A[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?\z') { throw "invalid version: $ver" }
     $pinned = ''
-    if ($ver -eq $InstallerVersion -and -not $InstallerSha256.Contains('@')) { $pinned = $InstallerSha256.ToLowerInvariant() }
+    if ($ver -eq $installerVersion -and -not $installerSha256.Contains('@')) { $pinned = $installerSha256.ToLowerInvariant() }
 
     $noModify = $NoModifyPath -or ((Get-Text 'FASTWARP_NO_MODIFY_PATH') -notin @('', '0'))
+    Assert-Owned $bin $receipt 'remove it first or choose another folder with -Dir'
 
     $archive = "fastwarp-$target.zip"
     $base = Get-Text 'FASTWARP_DOWNLOAD_URL'
     if (-not $base) { $base = "$repoUrl/releases/download/v$ver" }
     $base = $base.TrimEnd('/')
-    if ($base -match '^http://' -and $base -notmatch '^http://(127\.0\.0\.1|localhost)(:[0-9]+)?(/|$)') {
-        if (-not $pinned) { throw "refusing to download over plain HTTP without a checksum held in the installer: $base" }
-        Write-Warning "downloading over plain HTTP from $base"
+    $allowHttp = $false
+    if ($base -match '^http://') {
+        if ($base -match '^http://(127\.0\.0\.1|localhost)(:[0-9]+)?(/|$)') {
+            $allowHttp = $true
+        } elseif ($pinned) {
+            $allowHttp = $true
+            Write-Warning "downloading over plain HTTP from $base"
+        } else {
+            throw "refusing to download over plain HTTP without a checksum held in the installer: $base"
+        }
     }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -236,17 +309,17 @@ removes it again once the folder is empty.
         Write-Output "Downloading fastwarp $ver for $target from $base/$archive"
         $zip = Join-Path $tmp $archive
         $sumFile = "$zip.sha256"
-        try { Get-Download "$base/$archive" $zip } catch { throw "download failed: $base/$archive ($($_.Exception.Message))" }
+        try { Get-Download "$base/$archive" $zip $allowHttp } catch { throw "download failed: $base/$archive ($($_.Exception.Message))" }
         if ($pinned) {
             $expected = $pinned
             $sumSource = 'the checksum held in this installer'
         } else {
-            try { Get-Download "$base/$archive.sha256" $sumFile } catch { throw "download failed: $base/$archive.sha256 ($($_.Exception.Message))" }
+            try { Get-Download "$base/$archive.sha256" $sumFile $allowHttp } catch { throw "download failed: $base/$archive.sha256 ($($_.Exception.Message))" }
             $expected = ([IO.File]::ReadAllText($sumFile).Trim() -split '\s+')[0].ToLowerInvariant()
             $sumSource = "$archive.sha256"
         }
         if ($expected -notmatch '\A[0-9a-f]{64}\z') { throw "$sumSource is not a SHA-256 checksum" }
-        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+        $actual = Get-Sha256 $zip
         if ($actual -ne $expected) {
             throw "SHA-256 checksum mismatch for $archive (expected $expected from $sumSource, got $actual); nothing was installed"
         }
@@ -258,6 +331,7 @@ removes it again once the folder is empty.
         if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { throw "$archive does not contain fastwarp-$target\fastwarp.exe" }
 
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $previous = Read-Receipt $receipt
         Copy-Item -LiteralPath $src -Destination $staged -Force
         $out = $null
         $code = 1
@@ -271,12 +345,14 @@ removes it again once the folder is empty.
             Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
             throw 'the downloaded fastwarp.exe does not run on this system'
         }
+        $installedSha256 = Get-Sha256 $staged
         try {
             Move-Item -LiteralPath $staged -Destination $bin -Force
         } catch {
             Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
             throw "could not replace $bin; close any running fastwarp and try again"
         }
+        Write-Receipt $receipt $installedSha256 $previous.PathKeys
         Write-Output "Installed $(@($out)[0]) to $bin"
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -290,7 +366,20 @@ removes it again once the folder is empty.
         }
     } else {
         Add-ToUserPath $dir
+        if ($state.AddedKey) { Write-Receipt $receipt $installedSha256 (@($previous.PathKeys) + $state.AddedKey) }
     }
-}
 
-Invoke-FastwarpInstaller -Version $Version -Dir $Dir -NoModifyPath:$NoModifyPath -Uninstall:$Uninstall -Help:$Help -InstallerVersion $FastwarpInstallerVersion -InstallerSha256 $FastwarpInstallerSha256
+    foreach ($entry in Split-PathList ([Environment]::GetEnvironmentVariable('Path', 'Machine'))) {
+        if (Test-SamePath $entry $dir) { continue }
+        $candidate = ''
+        try { $candidate = Join-Path ([Environment]::ExpandEnvironmentVariables($entry)) 'fastwarp.exe' } catch { $candidate = '' }
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            Write-Warning "another fastwarp.exe is on the machine PATH, which Windows searches before the user PATH: $candidate"
+            break
+        }
+    }
+    $found = Get-Command fastwarp -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found -and -not [string]::Equals($found.Source, $bin, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Output "note: in this session, fastwarp runs $($found.Source)"
+    }
+} @args
