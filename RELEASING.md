@@ -103,7 +103,8 @@ The installer scripts are tested on every push (`ci.yml`, job `installers`: Shel
 PSScriptAnalyzer and an end-to-end test of `install.sh` against a fake release) and on ready pull
 requests and nightly (`full.yml`, job `installer-windows`: `install.ps1` on Windows PowerShell 5.1
 and PowerShell 7). The pinned tools (manylinux image, rustup-init, ShellCheck, PSScriptAnalyzer)
-are not updated by Dependabot; update their versions and checksums by hand.
+are not updated by Dependabot. Before each release, check them for newer versions and update the
+versions and checksums by hand.
 
 ## After the release
 
