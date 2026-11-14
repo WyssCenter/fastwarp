@@ -26,6 +26,11 @@ uv add fastwarp antspyx
 
 ::::
 
+ANTsPy 0.6.3, the version this repository tests with, has wheels for Python 3.11 to 3.13 on
+Linux x86_64, macOS (Apple silicon and Intel) and Windows. Elsewhere, for example on Linux
+aarch64 or with Python 3.14, pip builds it from its source distribution, which needs a C++
+compiler.
+
 ## Normalize a brain onto a template
 
 {func}`~fastwarp.register_syn` runs the whole registration: a {term}`centre-of-mass <centre of mass>`

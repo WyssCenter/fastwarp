@@ -26,9 +26,10 @@ uv run python -c "import fastwarp; print(fastwarp.gpu_info())"
 
 ::::
 
-ANTsPy (`antspyx`) publishes no wheels for Python 3.14 yet, on Windows or elsewhere: use Python
-3.11, 3.12 or 3.13 if you want it. FastWarp itself also runs on 3.14, and its command line reads
-NIfTI files without ANTsPy. If the second command raises `GpuUnavailableError`, see
+ANTsPy 0.6.3, the version this repository tests with, has wheels for Python 3.11 to 3.13 on
+Linux x86_64, macOS (Apple silicon and Intel) and Windows. Elsewhere, for example on Linux
+aarch64 or with Python 3.14, pip builds it from its source distribution, which needs a C++
+compiler. FastWarp's command line reads NIfTI files without ANTsPy. If the second command raises `GpuUnavailableError`, see
 [Troubleshooting](troubleshooting.md#no-gpu-is-found).
 
 ## A first registration

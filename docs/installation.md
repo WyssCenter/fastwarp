@@ -84,8 +84,10 @@ uv add antspyx
 
 ::::
 
-ANTsPy publishes no wheels for Python 3.14 yet, on Windows or elsewhere: use Python 3.11, 3.12 or
-3.13 if you want ANTsPy. FastWarp itself runs on all of them.
+ANTsPy 0.6.3, the version this repository tests with, has wheels for Python 3.11 to 3.13 on
+Linux x86_64, macOS (Apple silicon and Intel) and Windows. Elsewhere, for example on Linux
+aarch64 or with Python 3.14, pip builds it from its source distribution, which needs a C++
+compiler. FastWarp itself has wheels for every Python from 3.11 on.
 
 ## Command line
 
@@ -122,8 +124,16 @@ uvx fastwarp --help
 
 ::::
 
-The command line is new since version 0.1.0 (see the [changelog](changelog.md)); until a release
-includes it, install FastWarp [from source](#from-source) to get it. Other ways to install the
+The command line is new since version 0.1.0 (see the [changelog](changelog.md)); 0.1.0 on PyPI
+does not have it, so `uvx fastwarp` and `uv tool install fastwarp` give it only once a release
+includes it. Until then, install FastWarp [from source](#from-source), or run the command from
+source without installing it:
+
+```bash
+uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help
+```
+
+ Other ways to install the
 command are described under [Command line: install](cli.md#install).
 
 ## From a GitHub release
@@ -188,10 +198,11 @@ pip install "git+https://github.com/WyssCenter/fastwarp.git"
 uv pip install "git+https://github.com/WyssCenter/fastwarp.git"
 ```
 
-Only the command line:
+Only the command line, installed or run once:
 
 ```bash
 uv tool install "git+https://github.com/WyssCenter/fastwarp.git"
+uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help
 ```
 :::
 

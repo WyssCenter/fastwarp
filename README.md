@@ -35,9 +35,11 @@ an existing environment). For the command line alone, `uv tool install fastwarp`
 
 Wheels are published for Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows
 (x86_64), for Python 3.11 and later. FastWarp needs NumPy 2.0 or later and a GPU;
-[ANTsPy](https://github.com/ANTsX/ANTsPy) (`pip install antspyx` or `uv add antspyx`, Python
-3.11 to 3.13) is optional. The command line is new since 0.1.0; until a release includes it,
-install from source. See
+[ANTsPy](https://github.com/ANTsX/ANTsPy) (`pip install antspyx` or `uv add antspyx`; wheels for
+Python 3.11 to 3.13 on Linux x86_64, macOS and Windows) is optional. The command line is new since
+0.1.0, which does not have it: until a release includes it, `uvx fastwarp` and
+`uv tool install fastwarp` from PyPI do not give it, but
+`uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help` runs it from source. See
 [Installation](https://fastwarp.readthedocs.io/latest/installation.html) for the
 requirements and for building from source.
 
