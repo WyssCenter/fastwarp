@@ -119,9 +119,12 @@ def register_syn(
     read from the current folder); and ``stages``: a list
     of dicts with ``"transform"`` ``"rigid"``, ``"affine"`` or ``"syn"`` plus that stage's fields,
     any number of linear stages followed by at most one SyN stage (SyN alone is allowed; default:
-    the cohort's three). Both forms take ``"winsorize"``: ``[lower, upper]`` intensity quantiles
-    (default ``[0.005, 0.995]``) or ``None`` for ANTs' plain rescale to [0, 1] (what
-    ``antsRegistration`` does without ``--winsorize-image-intensities``). A stage or field left
+    the cohort's three). ``None`` for ``initial`` or ``stages`` means the default, as ANTsPy's
+    ``initial_transform=None``; a stage list without ``initial`` starts from the centres of mass
+    (``antsRegistration`` without ``-r`` starts from the identity). Both forms take
+    ``"winsorize"``: ``[lower, upper]`` intensity quantiles (default ``[0.005, 0.995]``) or
+    ``None`` for ANTs' plain rescale to [0, 1] (what ``antsRegistration`` does without
+    ``--winsorize-image-intensities``). A stage or field left
     out keeps the dbs-localizer cohort value; an unknown key or a value the GPU kernels do not
     support (MI bins other than 32, a CC radius above 8) raises ``ValueError`` before any work.
     The result's ``"recipe"`` is the full recipe that ran, in the form given.
@@ -329,7 +332,6 @@ def compose_field(
     paths = _transform_paths(transforms)
     flags = _invert_flags(invert, len(paths))
     out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
     _compose_field(
         paths,
         _grid_args(reference),

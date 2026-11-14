@@ -470,7 +470,26 @@ pub fn compose(
     check_compression_level(compression_level)?;
     guarded(|| {
         let chain = read_chain(transforms, invert)?;
-        let field = post::compose_field(&chain, grid).map_err(reg_err)?;
+        compose_chain(&chain, grid, out_path, compression_level)
+    })
+}
+
+/// [`compose`] of a chain already read: the field is computed, then the output's folder is
+/// created when missing and the field written.
+pub fn compose_chain(
+    chain: &TransformChain,
+    grid: &Grid,
+    out_path: &Path,
+    compression_level: Option<u32>,
+) -> Result<(), Failure> {
+    check_compression_level(compression_level)?;
+    guarded(|| {
+        let field = post::compose_field(chain, grid).map_err(reg_err)?;
+        if let Some(dir) = out_path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).map_err(|e| {
+                Failure::Write(format!("cannot create the folder {}: {e}", dir.display()))
+            })?;
+        }
         post::write_field(out_path, &field, compression_level)
             .map_err(|e| Failure::Write(format!("writing {}: {e}", out_path.display())))
     })
@@ -489,8 +508,20 @@ pub fn apply(
 ) -> Result<Vec<f32>, Failure> {
     guarded(|| {
         let chain = read_chain(transforms, invert)?;
-        post::resample(image, grid, &chain, interp, default_value).map_err(reg_err)
+        apply_chain(image, grid, &chain, interp, default_value)
     })
+}
+
+/// [`apply`] through a chain already read (so a caller can refuse the transforms before it loads
+/// the image).
+pub fn apply_chain(
+    image: &Volume<f64>,
+    grid: &Grid,
+    chain: &TransformChain,
+    interp: post::Interp,
+    default_value: f64,
+) -> Result<Vec<f32>, Failure> {
+    guarded(|| post::resample(image, grid, chain, interp, default_value).map_err(reg_err))
 }
 
 /// The interpolator of an ANTs name, or why the name is refused.

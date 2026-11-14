@@ -9,8 +9,9 @@
   affine, as ANTs writes them. The capacity check (in `register_syn`, `fits_gpu(recipe=...)` and
   `fastwarp fits --recipe`) covers every stage: a linear-only chain is checked against the memory
   its sample buffers need, not the SyN stage's, and a chain with both is refused when the larger
-of the two phases does not fit. A relative path of the start file is read from the current folder
-in Python and from the recipe file's folder in `fastwarp register --recipe`. The existing recipe form keeps working and gives
+  of the two phases does not fit. A relative path of the start file is read from the current
+  folder in Python and from the recipe file's folder in `fastwarp register --recipe`. `None` for
+  `initial` or `stages` means the default. The existing recipe form keeps working and gives
   bit-identical outputs. The result dict adds `initial_parameters`, `initial_center`,
   `linear_stages`, `deformable` and `files`.
 - The recipe key `"winsorize"`: `[lower, upper]` quantiles (default `[0.005, 0.995]`, as before) or
@@ -24,6 +25,8 @@ in Python and from the recipe file's folder in `fastwarp register --recipe`. The
   `whichtoinvert` (one flag per transform), and `fastwarp apply` / `compose -t [file,1]`, as
   `antsApplyTransforms -t [file,1]`: a linear transform is replaced by its inverse in place.
   Inverting a displacement field raises `ValueError` (exit status 2) instead of ANTs' silent exit 1.
+  `fastwarp apply` / `compose` and `compose_field` read and check the transforms before they load
+  an image or create the output folder.
 - A command line, `fastwarp` (also `python -m fastwarp`), for NIfTI files: `register`
   (`register_syn`), `linear` (one rigid or affine fit), `apply` (`apply_transforms`), `compose`
   (`compose_field`), `recipe` (the default recipe as JSON), `gpu-info`, `fits` and `bench` (timings

@@ -235,6 +235,16 @@ def test_a_bad_stage_list_is_refused_before_any_work(tmp_path, monkeypatch, reci
     assert not list(tmp_path.iterdir())
 
 
+def test_none_keeps_the_default_start_and_stages(tmp_path, monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_ADAPTER", "no such adapter")
+    for recipe in ({"initial": None, "stages": None}, {"initial": None}, {"stages": None}):
+        with pytest.raises(g.GpuUnavailableError):
+            g.register_syn(phantom(), phantom(), tmp_path / "x_", iso_mm=SPACING, recipe=recipe)
+    singular = {"initial": ((0.0,) * 9 + (0.0,) * 3, (0.0, 0.0, 0.0))}
+    with pytest.raises(ValueError, match=r"initial transform in recipe\['initial'\] is singular"):
+        g.register_syn(phantom(), phantom(), tmp_path / "x_", iso_mm=SPACING, recipe=singular)
+
+
 def test_a_bad_output_layout_is_refused_before_any_work(tmp_path, monkeypatch):
     monkeypatch.setenv("FASTWARP_GPU_ADAPTER", "no such adapter")
     with pytest.raises(ValueError, match="'composite', 'split' or 'both'"):

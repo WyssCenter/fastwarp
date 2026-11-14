@@ -232,6 +232,35 @@ pub enum CapacityError {
         /// Budget the device permits.
         budget: u64,
     },
+    /// The largest binding of the linear stages (the Mattes MI sample records of a level, or the
+    /// moving image) exceeds `max_storage_buffer_binding_size`.
+    #[error(
+        "the linear stages on the registration grid {dims:?} need a storage binding of {need} \
+         bytes (the Mattes MI sample records of one level, or the moving image when that is \
+         larger), but the device binds at most {limit} bytes per storage buffer"
+    )]
+    LinearBinding {
+        /// Grid dimensions of the registration grid.
+        dims: [usize; 3],
+        /// Bytes the binding needs.
+        need: u64,
+        /// Limit the device permits.
+        limit: u64,
+    },
+    /// The device allocation of the whole linear chain exceeds the memory budget.
+    #[error(
+        "the linear stages on the registration grid {dims:?} need {need} bytes of device memory \
+         in total (the moving image and the Mattes MI sample and reduction buffers of every level \
+         of every stage), but the budget is {budget} bytes"
+    )]
+    LinearMemory {
+        /// Grid dimensions of the registration grid.
+        dims: [usize; 3],
+        /// Bytes the chain needs.
+        need: u64,
+        /// Budget the device permits.
+        budget: u64,
+    },
 }
 
 /// Checks whether `grid_dims` at `channels` channels fits `caps`, for a moving image on a grid of
@@ -331,8 +360,8 @@ fn linear_level_bytes(samples: u64) -> u64 {
 /// equal size, as in stages with one schedule, are in fact reused), with the level's voxel count
 /// rounded up per axis and the sampling percentage applied to it. Two small read-back buffers
 /// per level (the merged histogram and the derivative partials) are outside the pool and the
-/// plan. The figure is the chain's total, not one level's, although an error names the grid as
-/// "the finest registration level". A SyN stage that follows is checked with
+/// plan. The figure is the chain's total, not one level's ([`CapacityError::LinearMemory`]). A
+/// SyN stage that follows is checked with
 /// [`plan_capacity_pair`]: `register_stages` frees the idle linear buffers before it, so the
 /// two checks are separate.
 pub fn plan_capacity_linear(
@@ -363,14 +392,14 @@ pub fn plan_capacity_linear(
         }
     }
     if largest_binding_bytes > caps.max_storage_buffer_binding_size {
-        return Err(CapacityError::Binding {
+        return Err(CapacityError::LinearBinding {
             dims: grid_dims,
             need: largest_binding_bytes,
             limit: caps.max_storage_buffer_binding_size,
         });
     }
     if level_total_bytes > caps.memory_budget {
-        return Err(CapacityError::Memory {
+        return Err(CapacityError::LinearMemory {
             dims: grid_dims,
             need: level_total_bytes,
             budget: caps.memory_budget,
@@ -822,15 +851,26 @@ mod tests {
         };
         assert!(matches!(
             plan_capacity_linear([128; 3], [128; 3], &stages, &caps),
-            Err(CapacityError::Memory { .. })
+            Err(CapacityError::LinearMemory { .. })
         ));
+        let text = plan_capacity_linear([128; 3], [128; 3], &stages, &caps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.contains("linear stages") && text.contains("in total"),
+            "{text}"
+        );
         let binding = CapacityCaps {
             max_storage_buffer_binding_size: 1 << 20,
             memory_budget: u64::MAX,
         };
         assert!(matches!(
             plan_capacity_linear([128; 3], [128; 3], &stages, &binding),
-            Err(CapacityError::Binding { .. })
+            Err(CapacityError::LinearBinding { .. })
         ));
+        let text = plan_capacity_linear([128; 3], [128; 3], &stages, &binding)
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("Mattes MI sample records"), "{text}");
     }
 }

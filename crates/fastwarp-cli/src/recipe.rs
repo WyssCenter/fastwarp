@@ -153,6 +153,24 @@ impl Recipe {
                 ));
             }
         }
+        if let InitialTransform::Affine(a) = &self.plan.initial {
+            let finite = a
+                .parameters()
+                .iter()
+                .chain(&a.center)
+                .all(|v| v.is_finite());
+            if !finite {
+                return Err(
+                    "the initial transform in recipe['initial'] has non-finite values".to_string(),
+                );
+            }
+            if a.inverse().is_err() {
+                return Err("the initial transform in recipe['initial'] is singular".to_string());
+            }
+        }
+        if fastwarp_reg::register::check_winsorize(self.plan.winsorize).is_err() {
+            return Err(winsorize_message());
+        }
         self.plan.validate().map_err(|e| format!("recipe: {e}"))
     }
 
@@ -165,7 +183,8 @@ impl Recipe {
             .as_object()
             .ok_or_else(|| "recipe: must be a dict (a JSON object)".to_string())?;
         check_json_keys(obj, RECIPE_KEYS, "recipe")?;
-        let first = |keys: &[&'static str]| keys.iter().find(|k| obj.contains_key(**k)).copied();
+        let given = |k: &str| obj.get(k).is_some_and(|v| !v.is_null());
+        let first = |keys: &[&'static str]| keys.iter().find(|k| given(k)).copied();
         if let (Some(old), Some(new)) = (first(STAGE_KEYS), first(STAGE_LIST_KEYS)) {
             return Err(format!(
                 "recipe: '{old}' cannot be combined with '{new}'; with 'initial' / 'stages' \
@@ -178,12 +197,12 @@ impl Recipe {
         }
         if first(STAGE_LIST_KEYS).is_some() {
             r.stage_list = true;
-            if let Some(v) = obj.get("initial") {
+            if let Some(v) = obj.get("initial").filter(|v| !v.is_null()) {
                 let (initial, spec) = initial_from_json(v)?;
                 r.plan.initial = initial;
                 r.initial = spec;
             }
-            if let Some(v) = obj.get("stages") {
+            if let Some(v) = obj.get("stages").filter(|v| !v.is_null()) {
                 let (linear, syn) = stages_from_json(v, channels)?;
                 r.plan.linear = linear;
                 r.plan.syn = syn;
@@ -941,6 +960,31 @@ mod tests {
         );
         let e = Recipe::from_json(&json!({"stages": [{"transform": "rigid"}]}), 2).unwrap_err();
         assert!(e.contains("no SyN stage"), "{e}");
+    }
+
+    #[test]
+    fn null_keys_keep_the_default_and_a_singular_start_is_named() {
+        let r = Recipe::from_json(
+            &json!({"initial": null, "stages": [{"transform": "rigid"}]}),
+            1,
+        )
+        .unwrap();
+        assert_eq!(r.plan.initial, InitialTransform::CentreOfMass);
+        assert_eq!(r.plan.linear.len(), 1);
+        let r = Recipe::from_json(&json!({"initial": "identity", "stages": null}), 1).unwrap();
+        assert_eq!(r.plan.linear.len(), 2);
+        assert!(r.plan.syn.is_some());
+        let r = Recipe::from_json(&json!({"rigid": {"seed": 3}, "initial": null}), 1).unwrap();
+        assert_eq!(r.plan.linear[0].seed, 3);
+        let e = Recipe::from_json(
+            &json!({"initial": {"parameters": [0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+                                "center": [0, 0, 0]}}),
+            1,
+        )
+        .unwrap_err();
+        assert_eq!(e, "the initial transform in recipe['initial'] is singular");
+        let e = Recipe::from_json(&json!({"winsorize": [0.99999999, 1.0]}), 1).unwrap_err();
+        assert!(e.starts_with("recipe['winsorize']"), "{e}");
     }
 
     #[test]

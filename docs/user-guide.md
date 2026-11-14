@@ -42,7 +42,7 @@ prefix `out/sub_` gives these files:
 That is `outputs="composite"`, the default. `outputs="split"` writes what `antsRegistration`
 writes without `--write-composite-transform` instead: `out/sub_0GenericAffine.mat` and, when a
 SyN stage ran, `out/sub_1Warp.nii.gz` and `out/sub_1InverseWarp.nii.gz` (`float32` displacement
-fields, intent 1007; ANTs writes `float64`). `outputs="both"` writes all five. Without a SyN stage
+fields, intent 1007; ANTs writes `float64`). `outputs="both"` writes all of them: five files after a SyN stage, three without one. Without a SyN stage
 `Composite.h5` holds `[Affine]` and `InverseComposite.h5` `[Affine^-1]`, as ANTs 2.6.5 writes
 them for a linear-only run; a SyN-only run from `"identity"` writes the identity as
 `0GenericAffine.mat`, as `antsRegistration -r Identity` does. The file names are those of
@@ -206,8 +206,10 @@ recipe = {
 }
 ```
 
-- `initial`: `"com"` (default; the translation between the centres of intensity mass, ANTs
-  `-r [fixed,moving,1]`), `"identity"` (ANTs `-r Identity`; a first linear stage then rotates
+- `initial`: `"com"` (default, also for `None`; the translation between the centres of
+  intensity mass, ANTs `-r [fixed,moving,1]`; note that `antsRegistration` without `-r` starts
+  from the identity instead, and a SyN-only ANTs run without `-r` writes `0Warp.nii.gz` /
+  `0InverseWarp.nii.gz`, a layout FastWarp does not produce), `"identity"` (ANTs `-r Identity`; a first linear stage then rotates
   about the origin), one affine transform file as `pathlib.Path` or `{"path": ..., "invert":
   bool}` (`.mat`, `.txt`, or an `.h5` holding one affine; `-r [file,1]` with `invert`), or
   `(parameters, center)` / `{"parameters": [12 values], "center": [3 values]}`. A relative path is
@@ -215,7 +217,8 @@ recipe = {
 - `stages`: any number of `{"transform": "rigid" | "affine", ...}` stages, in any order, then at
   most one `{"transform": "syn", ...}` stage; SyN alone is allowed. Each stage takes the fields
   of its kind above; a field left out keeps the cohort value. A stage after the SyN stage, a
-  second SyN stage, or an empty list is a `ValueError`. Without `stages` the cohort's three run.
+  second SyN stage, or an empty list is a `ValueError`. Without `stages` (or with `None`) the
+  cohort's three run.
 - Each linear stage starts as the identity centred where the previous linear transform is
   centred and is applied before everything earlier, as ANTs chains stages; the result is
   collapsed into one affine.

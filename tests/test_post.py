@@ -167,8 +167,10 @@ def test_inverting_a_displacement_field_is_refused(scene, tmp_path):
     with pytest.raises(ValueError, match="cannot invert the displacement field"):
         g.apply_transforms(moving, reference, [mat, field], invert=[False, True])
     with pytest.raises(ValueError, match="cannot invert the displacement field"):
-        g.compose_field([mat, field], reference, tmp_path / "y.nii.gz", invert=[False, True])
-    assert not (tmp_path / "y.nii.gz").exists()
+        g.compose_field(
+            [mat, field], reference, tmp_path / "new" / "y.nii.gz", invert=[False, True]
+        )
+    assert not (tmp_path / "new").exists()
 
 
 def test_stored_gzip_is_gzip_and_holds_the_same_field(scene):

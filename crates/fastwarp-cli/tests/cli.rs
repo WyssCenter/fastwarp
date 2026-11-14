@@ -305,6 +305,30 @@ fn an_inverted_affine_is_applied_in_place_and_a_field_is_not_inverted() {
         "-r",
         s(&reference),
         "-i",
+        s(&d.join("missing_input.nii")),
+        "-o",
+        s(&d.join("bad.nii")),
+        "-t",
+        &field_inv,
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    let nested = d.join("new").join("f.nii.gz");
+    let o = run(&[
+        "compose",
+        "-r",
+        s(&reference),
+        "-o",
+        s(&nested),
+        "-t",
+        &field_inv,
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(!d.join("new").exists());
+    let o = run(&[
+        "apply",
+        "-r",
+        s(&reference),
+        "-i",
         s(&ramp),
         "-o",
         s(&d.join("bad.nii")),
@@ -354,6 +378,8 @@ fn errors_have_distinct_exit_codes() {
     vol.save_nifti(&img).unwrap();
     let bad_tx = d.join("bad.txt");
     std::fs::write(&bad_tx, "not a transform").unwrap();
+    let id_tx = d.join("id.txt");
+    write_affine_txt(&id_tx, IDENTITY, [0.0; 3]);
     let cases: Vec<(Vec<&str>, i32, &str)> = vec![
         (
             vec!["register", "a.mha", "b.nii", "-o", "x_"],
@@ -370,7 +396,7 @@ fn errors_have_distinct_exit_codes() {
                 "-o",
                 "o.nii",
                 "-t",
-                s(&bad_tx),
+                s(&id_tx),
             ],
             3,
             "no such file",

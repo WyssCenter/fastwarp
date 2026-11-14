@@ -127,7 +127,8 @@ impl StagePlan {
                     "the initial transform has non-finite values",
                 ));
             }
-            a.inverse()?;
+            a.inverse()
+                .map_err(|_| invalid("stage plan", "the initial transform is singular"))?;
         }
         check_winsorize(self.winsorize)
     }

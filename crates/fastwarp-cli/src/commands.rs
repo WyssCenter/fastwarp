@@ -343,16 +343,10 @@ fn apply(a: ApplyArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
     image::check_nifti_name(&a.input, "input image")?;
     image::check_nifti_name(&a.output, "output image")?;
     let grid = image::grid(&a.reference, "reference image")?;
-    let input = image::load(&a.input, "input image")?;
     let (paths, invert) = transform_paths(&a.transforms);
-    let data = engine::apply(
-        &input,
-        &grid,
-        &paths,
-        invert.as_deref(),
-        interp,
-        a.default_value,
-    )?;
+    let chain = engine::guarded(|| engine::read_chain(&paths, invert.as_deref()))?;
+    let input = image::load(&a.input, "input image")?;
+    let data = engine::apply_chain(&input, &grid, &chain, interp, a.default_value)?;
     image::create_parent(&a.output)?;
     image::save(&a.output, grid, data)?;
     print(out, &format!("wrote {}\n", a.output.display()))?;
@@ -364,15 +358,9 @@ fn compose(a: ComposeArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> 
     image::check_nifti_name(&a.reference, "reference image")?;
     image::check_nifti_name(&a.output, "output field")?;
     let grid = image::grid(&a.reference, "reference image")?;
-    image::create_parent(&a.output)?;
     let (paths, invert) = transform_paths(&a.transforms);
-    engine::compose(
-        &paths,
-        invert.as_deref(),
-        &grid,
-        &a.output,
-        a.compression_level,
-    )?;
+    let chain = engine::guarded(|| engine::read_chain(&paths, invert.as_deref()))?;
+    engine::compose_chain(&chain, &grid, &a.output, a.compression_level)?;
     print(out, &format!("wrote {}\n", a.output.display()))?;
     Ok(ExitStatus::Ok)
 }

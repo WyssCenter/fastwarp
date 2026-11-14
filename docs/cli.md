@@ -77,7 +77,8 @@ recipe names. This is `fastwarp.register_syn`.
   {"initial": "identity", "stages": [{"transform": "syn", "cc_radius": 2}], "winsorize": null}
   ```
 
-  `initial` is `"com"`, `"identity"`, `{"path": "start.mat", "invert": false}` (a relative path
+  `initial` is `"com"` (the default, also for `null`; `antsRegistration` without `-r` starts from
+  the identity instead), `"identity"`, `{"path": "start.mat", "invert": false}` (a relative path
   is read from the folder of the recipe file) or `{"parameters": [...], "center": [...]}`;
   `stages` lists
   `rigid` / `affine` stages and at most one `syn` stage, last; `winsorize` is `[lower, upper]`
