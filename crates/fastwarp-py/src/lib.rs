@@ -35,25 +35,25 @@ create_exception!(
     fastwarp,
     GpuUnavailableError,
     PyRuntimeError,
-    "No usable hardware GPU adapter (software adapters are refused unless FASTWARP_GPU_ALLOW_SOFTWARE=1)."
+    "No usable GPU; raised before any work, so a caller can run ANTs instead (software adapters count only with FASTWARP_GPU_ALLOW_SOFTWARE=1)."
 );
 create_exception!(
     fastwarp,
     GpuCapacityError,
     PyRuntimeError,
-    "The registration grid does not fit the GPU's memory budget or binding limit."
+    "The registration does not fit the GPU's memory budget or buffer limit; raised by register_syn before any work."
 );
 create_exception!(
     fastwarp,
     RegistrationError,
     PyRuntimeError,
-    "The registration failed."
+    "The engine failed while it worked (for example NaN voxels, GPU out of memory, or a file that cannot be read or written)."
 );
 create_exception!(
     fastwarp,
     RegistrationCancelled,
     PyException,
-    "The registration was cancelled through its CancelToken."
+    "The run was stopped through its CancelToken; no files are written."
 );
 
 /// An engine failure as the Python exception the API documents.
@@ -70,7 +70,8 @@ fn py_err(f: Failure) -> PyErr {
     }
 }
 
-/// A flag another thread sets to stop a running registration at its next iteration.
+/// A flag that stops a running registration or fit from another thread: pass it as `cancel=`,
+/// then call `cancel()`; the run stops at its next iteration and raises `RegistrationCancelled`.
 #[pyclass(module = "fastwarp", frozen)]
 struct CancelToken {
     flag: Arc<AtomicBool>,
@@ -85,11 +86,12 @@ impl CancelToken {
         }
     }
 
-    /// Asks the registration using this token to stop; it raises `RegistrationCancelled`.
+    /// Ask the run that uses this token to stop at its next iteration.
     fn cancel(&self) {
         self.flag.store(true, Ordering::SeqCst);
     }
 
+    /// Whether `cancel()` has been called.
     #[getter]
     fn cancelled(&self) -> bool {
         self.flag.load(Ordering::SeqCst)
@@ -211,8 +213,9 @@ fn register_syn<'py>(
     Ok(d)
 }
 
-/// Opens the GPU the engine would use and describes it; raises `GpuUnavailableError` when there
-/// is none.
+/// Open the GPU that FastWarp would use and describe it: `name`, `backend` (graphics API),
+/// `device_type`, `driver` (driver name, not a version) and `memory_budget_bytes`. Raises
+/// `GpuUnavailableError` when there is no usable GPU.
 #[pyfunction]
 #[pyo3(signature = (adapter=None))]
 fn gpu_info<'py>(py: Python<'py>, adapter: Option<String>) -> PyResult<Bound<'py, PyDict>> {

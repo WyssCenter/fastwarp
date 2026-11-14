@@ -44,8 +44,9 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 | `snsx` | 32 anatomical fiducials (AFIDs) | 7 T MP2RAGE T1w, 0.7 mm | 32 | 1.09 GB | yes |
 | `lhscpd` | 32 anatomical fiducials (AFIDs) | 1.5 T contrast-enhanced T1w | 40 | 0.34 GB | optional |
 
-### Mindboggle-101, OASIS-TRT-20 (cortical and subcortical labels)
+Open a dataset below for its source, images, ground truth, licence and citation.
 
+:::{dropdown} Mindboggle-101, OASIS-TRT-20 (cortical and subcortical labels)
 - Source: the Mindboggle-101 project on OSF, <https://osf.io/nhtur/>. Images and cortical
   labels: `OASIS-TRT-20_volumes.tar.gz` (<https://osf.io/download/tyvhs/>, 408 MB; only
   `t1weighted_brain.nii.gz` of each subject is extracted). Whole-brain labels:
@@ -64,7 +65,10 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   labelling protocol of these files is not documented next to them. The archive's
   `labels.DKT31.manual+aseg.nii.gz` files, whose subcortical part is FreeSurfer's automatic
   `aseg`, are not used.
-- Licence. The project README: "All labeled data, including nifti volumes (nii), vtk surfaces
+- Cite: Klein A, Tourville J (2012), *Front Neurosci* 6:171, doi:10.3389/fnins.2012.00171;
+  Marcus DS et al. (2007), *J Cogn Neurosci* 19(9):1498–1507, doi:10.1162/jocn.2007.19.9.1498.
+
+- Licence: The project README: "All labeled data, including nifti volumes (nii), vtk surfaces
   (vtk), and FreeSurfer files (mgh, etc.) for each scanned "GROUP" … are licensed under a
   by-attribution Creative Commons License" (<http://creativecommons.org/licenses/by/4.0>), and
   "The manually labeled subcortical portions of the "WholeBrain" OASIS-TRT-20 labels are
@@ -77,11 +81,9 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   purposes only", <https://sites.wustl.edu/oasisbrains/>) ask for the acknowledgement "Data were
   provided [in part] by OASIS"; whether they still bind Mindboggle's CC BY redistribution is not
   stated, so treat the images as non-commercial research data as well.
-- Cite: Klein A, Tourville J (2012), *Front Neurosci* 6:171, doi:10.3389/fnins.2012.00171;
-  Marcus DS et al. (2007), *J Cogn Neurosci* 19(9):1498–1507, doi:10.1162/jocn.2007.19.9.1498.
+:::
 
-### 7 T deep nuclei (STN, SN, RN, GPe, GPi)
-
+:::{dropdown} 7 T deep nuclei (STN, SN, RN, GPe, GPi)
 - Source: the data of Isaacs et al. (2020) on OSF, <https://osf.io/4nrku/>, one archive
   `dataset/osf_dataset.tar.gz` (<https://osf.io/download/59kjv/>, 2.85 GB). Only the 7 T part is
   used: per subject the skull-stripped MP2RAGE image (`<id>_7T_WB_MP2RAGE_STD_BET.nii.gz`), its
@@ -95,16 +97,17 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 - Ground truth: subthalamic nucleus, substantia nigra, red nucleus, external and internal
   globus pallidus, left and right, delineated by hand by two raters (AA and BI); the `AA-BI_conj`
   files are the voxels both raters included (the conjunction masks of the article).
-- Licence: the article's data availability statement: "All anonymized data and analysis scripts
-  are available from https://osf.io/4nrku/, under the terms of the Creative Commons Attribution
-  License and complies with the rules of the General Data Protection Regulation (EU) 2016/679."
-  The OSF project itself shows no licence. The 3 T part of the archive is not used: its masks lie
-  on the grid of a separate T2\*-weighted scan, so a T1w registration would add the motion
-  between two scans to the error.
+- Not used: the 3 T part of the archive. Its masks lie on the grid of a separate T2\*-weighted
+  scan, so a T1w registration would add the motion between two scans to the error.
 - Cite: Isaacs BR et al. (2020), *PLoS One* 15:e0236208, doi:10.1371/journal.pone.0236208.
 
-### SNSX: AFIDs on 7 T images (landmarks)
+- Licence: The article's data availability statement: "All anonymized data and analysis scripts
+  are available from https://osf.io/4nrku/, under the terms of the Creative Commons Attribution
+  License and complies with the rules of the General Data Protection Regulation (EU) 2016/679."
+  The OSF project itself shows no licence.
+:::
 
+:::{dropdown} SNSX: AFIDs on 7 T images (landmarks)
 - Source: OpenNeuro ds004470 version 1.0.1, <https://openneuro.org/datasets/ds004470/versions/1.0.1>;
   the files are fetched through OpenNeuro's version 1.0.1 snapshot links.
 - Images: 32 healthy adults (20–70 years), 7 T MP2RAGE T1w, 224 × 342 × 342 voxels of
@@ -113,11 +116,12 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   `derivatives/afids_groundtruth` ("Placed each point within 3D Slicer, in subject space"), the
   mean of three placements according to the dataset README ("performed a total of 3 times on all
   subject scans"). Taha et al. (2023) report rater accuracy within 1–2 mm.
-- Licence: `LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
-  `"License": "CC0"`. No data-use agreement.
 - Template: MNI ICBM 2009c nonlinear asymmetric (`MNI152NLin2009cAsym`) at 1 mm from
-  TemplateFlow (`tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz` and `..._desc-brain_mask.nii.gz`,
-  <https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/>), with the AFIDs placed on it
+  TemplateFlow
+  ([`tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz`](https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz)
+  and
+  [`..._desc-brain_mask.nii.gz`](https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_desc-brain_mask.nii.gz)),
+  with the AFIDs placed on it
   (`tpl-MNI152NLin2009cAsym_res-01_desc-groundtruth_afids.fcsv` of
   <https://github.com/afids/tpl-MNI152NLin2009cAsym>, commit `a44e5a7`). The template image's
   MD5 equals the git-annex key of the image the AFIDs were placed on in that repository. Template
@@ -131,16 +135,19 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
   doi:10.1002/hbm.24695; Fonov V et al. (2011), *NeuroImage* 54:313–327,
   doi:10.1016/j.neuroimage.2010.07.033.
 
-### LHSCPD: AFIDs on 1.5 T images (optional)
+- Licence: `LICENSE` of the dataset is CC0 1.0 Universal, and `dataset_description.json` says
+  `"License": "CC0"`. No data-use agreement.
+:::
 
+:::{dropdown} LHSCPD: AFIDs on 1.5 T images (optional)
 OpenNeuro ds004471 version 1.0.1 (CC0, same AFIDs layout as SNSX): 40 patients with Parkinson's
 disease before deep brain stimulation surgery, gadolinium-enhanced 1.5 T T1w. It is not in the
 default run, because contrast enhancement makes the images unlike the template; run it with
 `--dataset lhscpd`. Cite Abbass M et al. (2022), *Brain Struct Funct* 227:393–405, and Taha
 et al. (2023).
+:::
 
-### Considered and not used
-
+:::{dropdown} Considered and not used
 | Dataset | Why not (or how to add it) |
 | --- | --- |
 | LPBA40 (40 subjects, 56 manually labelled structures; Shattuck et al. 2008) | Download from LONI after registering and accepting the LONI Research License; no anonymous download to pin. |
@@ -152,6 +159,7 @@ et al. (2023).
 | Mindboggle `labels.DKT31.manual+aseg` subcortical part | FreeSurfer's automatic `aseg`, not manual. |
 | The 3 T part of the Isaacs et al. (2020) archive | Masks on the grid of a separate T2\*-weighted scan, not of the T1w. |
 | AHEAD (Alkemade et al. 2020), MASSP training data (Bazin et al. 2020) | Not checked in depth; the 7 T set above covers the same structures with an anonymous download. |
+:::
 
 ## Protocol
 
@@ -188,17 +196,8 @@ et al. (2023).
 `--recipe cohort` (default) is FastWarp's default recipe (`fastwarp.cohort_recipe(1)`), the one
 the benchmark timings in [Performance](performance.md) use. ANTs gets the identical schedule:
 
-```text
-antsRegistration --dimensionality 3 --output [<out>/reg_]
-  --winsorize-image-intensities [0.005,0.995] --use-histogram-matching 0
-  --initial-moving-transform [<fixed>,<moving>,1]
-  --transform Rigid[0.1]  --metric MI[<fixed>,<moving>,1,32,Regular,0.25]
-    --convergence [1000x500x250x100,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --transform Affine[0.1] --metric MI[<fixed>,<moving>,1,32,Regular,0.25]
-    --convergence [1000x500x250x100,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --transform SyN[0.1,3,0] --metric CC[<fixed>,<moving>,1,4]
-    --convergence [100x70x50x20,1e-06,10] --shrink-factors 8x4x2x1 --smoothing-sigmas 3x2x1x0vox
-  --write-composite-transform 1 --random-seed 20260910 --verbose 1
+```{literalinclude} _includes/ants-cohort-command.txt
+:language: text
 ```
 
 `--recipe syn-sh` is what `antsRegistrationSyN.sh -t s` of ANTs 2.6.5 runs on an image below its
@@ -353,6 +352,10 @@ The benchmark needs Python 3.13 (ANTsPy has no 3.14 wheels yet), ANTsPy and a GP
 The `benchmark` dependency group adds `scipy` and `matplotlib` (both already pinned in `uv.lock`
 as ANTsPy dependencies) to the `ants` group.
 
+The benchmark is not part of the wheel. Run it from a clone of the repository, in the
+environment that `uv.lock` pins (`uv sync --locked`); for results that you report, check out a
+release tag first, so that others can run the same code.
+
 ```bash
 git clone https://github.com/WyssCenter/fastwarp && cd fastwarp
 export UV_PYTHON=3.13
@@ -431,7 +434,7 @@ already run, so run `--quick` first and check `plan` before starting the night.
 
 | Step | Assumption | Default run |
 | --- | --- | --- |
-| ANTs, one registration on a 1 mm grid, all cores of a desktop | about 400 s (a guess for one channel on the cropped, skull-stripped grids; the earlier 1000–1500 s on 16 threads in [Performance](performance.md) were for two channels on a whole-head grid, so it may be longer) | 50 registrations: about 5.6 h |
+| ANTs, one registration on a 1 mm grid, all cores of a desktop | about 400 s (a guess for one channel on the cropped, skull-stripped grids) | 50 registrations: about 5.6 h |
 | FastWarp, one registration | about 40 s or less on a desktop GPU | about 0.6 h |
 | Evaluation per pair | about 60 s | about 0.8 h |
 | `linear`, one pair: ANTs rigid and affine; FastWarp's fits | about 120 s and 20 s | 20 `snsx` pairs: about 0.8 h |

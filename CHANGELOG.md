@@ -35,6 +35,17 @@
   no usable GPU (4) and a grid too large for the GPU (5); `--json` for machine-readable output.
   See `docs/cli.md`. The Python extension and the standalone program built from the new crate
   `fastwarp-cli` run the same code.
+- Each GitHub release carries the standalone `fastwarp` program, which needs no Python, for Linux
+  x86_64 and aarch64 (glibc 2.28 or later), macOS arm64 and x86_64 (macOS 11 or later) and Windows
+  x86_64 (static C runtime), as `fastwarp-<target>.tar.gz` / `.zip` with a `.sha256` file each,
+  and the installer scripts `fastwarp-installer.sh` (Linux, macOS) and `fastwarp-installer.ps1`
+  (Windows). The installer of a release installs that release and holds the SHA-256 of its
+  archives, so it refuses a download that does not match. It installs without administrator
+  rights into `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\fastwarp\bin`), adds that folder
+  to PATH unless told not to (`--no-modify-path`, `-NoModifyPath`), and records what it did in a
+  receipt next to the program; `--uninstall` (`-Uninstall`) undoes exactly that and leaves alone a
+  `fastwarp` it did not install. Every release file has a GitHub build provenance attestation
+  (`gh attestation verify`). See `docs/cli.md`.
 - `fits_gpu` takes the moving image(s) as an optional second argument and checks the moving grid
   as `register_syn` does; without it a moving image larger than the fixed one could pass
   `fits_gpu` and still raise `GpuCapacityError`. `channels` defaults to the number of fixed
@@ -60,6 +71,15 @@
   against a pinned SHA-256. A `benchmark` dependency group adds SciPy and Matplotlib (already
   locked as ANTsPy dependencies). No results yet.
 - README badges: CI, PyPI version, Python versions, licence, documentation.
+- The documentation is reworked: the PyData Sphinx theme with light and dark modes, a user guide
+  in short pages (how it works, images, normalization, output files and the direction each one
+  maps, recipes with the type, unit and limits of every field, linear fits, resampling, GPU
+  memory, limitations), troubleshooting, a glossary, reference pages for the API, the
+  environment variables and the errors, and project pages for citing, security, the code of
+  conduct and related projects. The README is shorter and links into it. The API reference moved
+  from `api/index.html` to `api.html`.
+- The docstrings of the public API are rewritten in NumPy style, with parameters, defaults,
+  units, return values and the exceptions each function raises.
 - `dir(fastwarp)` lists only the public API (`__all__`); the implementation moved to the private
   module `fastwarp._api`, and the public Python functions report `fastwarp` as their module.
 - `LinearSession.register` creates the folder of `out_prefix`, as `register_syn` and
