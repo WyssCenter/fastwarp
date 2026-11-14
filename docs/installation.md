@@ -33,28 +33,98 @@ described under [Testing](testing.md#what-the-release-workflow-tests).
 ## From PyPI
 
 ::::{tab-set}
+:sync-group: installer
 
 :::{tab-item} pip
+:sync: pip
+
 ```bash
 pip install fastwarp
 ```
 :::
 
 :::{tab-item} uv
+:sync: uv
+
+In a uv project:
+
 ```bash
 uv add fastwarp
+```
+
+In an existing environment:
+
+```bash
+uv pip install fastwarp
 ```
 :::
 
 ::::
 
-To work with ANTsPy images, install ANTsPy as well (its package name is `antspyx`):
+To work with ANTsPy images, install ANTsPy as well; its package name is `antspyx`:
+
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
 
 ```bash
-pip install fastwarp antspyx
+pip install antspyx
+```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+```bash
+uv add antspyx
+```
+:::
+
+::::
+
+ANTsPy publishes no wheels for Python 3.14 yet, on Windows or elsewhere: use Python 3.11, 3.12 or
+3.13 if you want ANTsPy. FastWarp itself runs on all of them.
+
+## Command line
+
+The command `fastwarp` comes with the Python package: `pip install fastwarp` installs it next to
+the Python functions. With uv you can also install only the command, in an environment of its
+own, or run it without installing it:
+
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
+
+```bash
+pip install fastwarp
+fastwarp --help
+```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+```bash
+uv tool install fastwarp
+fastwarp --help
 ```
 
-ANTsPy publishes no wheels for Python 3.14 yet. If you want ANTsPy, use Python 3.11, 3.12 or 3.13.
+Without installing:
+
+```bash
+uvx fastwarp --help
+```
+:::
+
+::::
+
+The command line is new since version 0.1.0 (see the [changelog](changelog.md)); until a release
+includes it, install FastWarp [from source](#from-source) to get it. Other ways to install the
+command are described under [Command line: install](cli.md#install).
 
 ## From a GitHub release
 
@@ -66,12 +136,33 @@ the source distribution and a `SHA256SUMS` file. With the
 gh release download -R WyssCenter/fastwarp -D wheels
 cd wheels
 sha256sum --check --ignore-missing SHA256SUMS
-pip install --no-index --find-links . fastwarp
 ```
 
-The first command downloads every file of the latest release. `pip install --no-index` takes
-FastWarp from that folder; NumPy must already be installed, or drop `--no-index` to let `pip`
-fetch it from PyPI.
+Then install the wheel for your platform from that folder:
+
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
+
+```bash
+pip install --no-index --find-links . fastwarp
+```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+```bash
+uv pip install --no-index --find-links . fastwarp
+```
+:::
+
+::::
+
+The first command downloads every file of the latest release. `--no-index` takes FastWarp from
+that folder only; NumPy must already be installed, or drop `--no-index` to fetch it from PyPI.
 
 ## From source
 
@@ -79,9 +170,32 @@ Building needs the Rust toolchain that `rust-toolchain.toml` pins (version 1.99.
 [rustup](https://rustup.rs) installs it on first use. The build backend is
 [maturin](https://www.maturin.rs).
 
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
+
 ```bash
 pip install "git+https://github.com/WyssCenter/fastwarp.git"
 ```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+```bash
+uv pip install "git+https://github.com/WyssCenter/fastwarp.git"
+```
+
+Only the command line:
+
+```bash
+uv tool install "git+https://github.com/WyssCenter/fastwarp.git"
+```
+:::
+
+::::
 
 For a development checkout with the tests, see [Contributing](contributing.md) and
 [Testing](testing.md).

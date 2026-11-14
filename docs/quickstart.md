@@ -5,9 +5,26 @@ The examples on this page are complete scripts. The first three use
 into `~/.antspy` on first use: `mni`, the MNI152 template at 1 mm, and `ch2`, a single-subject
 brain at 1 mm. The last one needs only NumPy.
 
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
+
 ```bash
 pip install fastwarp antspyx
 ```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+```bash
+uv add fastwarp antspyx
+```
+:::
+
+::::
 
 ## Normalize a brain onto a template
 

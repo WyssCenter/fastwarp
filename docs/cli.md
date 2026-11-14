@@ -14,6 +14,44 @@ fastwarp apply -r template.nii.gz -i sub_T1w.nii.gz -o out/sub_in_template.nii.g
 `fastwarp --help` lists the commands; `fastwarp <command> --help` lists the options of one
 command. `fastwarp --version` prints the version.
 
+## Install
+
+The command comes with the Python package. With uv you can also install only the command, in an
+environment of its own, or run it without installing it:
+
+::::{tab-set}
+:sync-group: installer
+
+:::{tab-item} pip
+:sync: pip
+
+```bash
+pip install fastwarp
+fastwarp --help
+```
+:::
+
+:::{tab-item} uv
+:sync: uv
+
+```bash
+uv tool install fastwarp
+fastwarp --help
+```
+
+Without installing:
+
+```bash
+uvx fastwarp --help
+```
+:::
+
+::::
+
+The command line is new since version 0.1.0; until a release includes it, install FastWarp from
+source as described under [Installation](installation.md#from-source). To build the command as
+a program of its own, without Python, see [The standalone program](#the-standalone-program).
+
 ## Images
 
 The command line reads and writes NIfTI-1 images (`.nii` and `.nii.gz`, the `.gz` in lower

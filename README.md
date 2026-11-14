@@ -26,11 +26,18 @@ or run neuroimaging pipelines, for example to normalize brain MRI onto a templat
 
 ```bash
 pip install fastwarp
+uv add fastwarp
 ```
+
+The first line is for pip, the second for a uv project (`uv pip install fastwarp` installs into
+an existing environment). For the command line alone, `uv tool install fastwarp` installs it and
+`uvx fastwarp --help` runs it without installing.
 
 Wheels are published for Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows
 (x86_64), for Python 3.11 and later. FastWarp needs NumPy 2.0 or later and a GPU;
-[ANTsPy](https://github.com/ANTsX/ANTsPy) (`pip install antspyx`) is optional. See
+[ANTsPy](https://github.com/ANTsX/ANTsPy) (`pip install antspyx` or `uv add antspyx`, Python
+3.11 to 3.13) is optional. The command line is new since 0.1.0; until a release includes it,
+install from source. See
 [Installation](https://fastwarp.readthedocs.io/latest/installation.html) for the
 requirements and for building from source.
 
