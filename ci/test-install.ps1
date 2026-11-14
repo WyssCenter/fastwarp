@@ -141,7 +141,7 @@ try {
     $receipt = Join-Path $dir '.fastwarp-installer'
     $receiptText = [IO.File]::ReadAllText($receipt)
     if ($receiptText -notmatch ('sha256 ' + (Get-FileHash $dummy).Hash.ToLowerInvariant())) { Fail "the receipt does not hold the SHA-256: $receiptText" }
-    if ($receiptText -notmatch [regex]::Escape("path-key $key")) { Fail "the receipt does not record the PATH entry: $receiptText" }
+    if ($receiptText -notmatch [regex]::Escape("path-entry $key|$dir")) { Fail "the receipt does not record the PATH entry: $receiptText" }
     Pass 'install from file:// adds the folder to the user PATH, keeps the other entries, writes a receipt'
 
     $r = Invoke-Installer @('-Version', 'v0.0.0', '-Dir', $dir)
@@ -202,7 +202,7 @@ try {
     New-ItemProperty -LiteralPath $key -Name 'Path' -Value "$custom;$before" -PropertyType ExpandString -Force | Out-Null
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $custom)
     if ($r.Code -ne 0 -or $r.Out -notmatch 'already on PATH') { Fail "install with the folder already on PATH failed: $($r.Out)" }
-    if ([IO.File]::ReadAllText((Join-Path $custom '.fastwarp-installer')) -match 'path-key') { Fail 'the receipt claims a PATH entry that was there before' }
+    if ([IO.File]::ReadAllText((Join-Path $custom '.fastwarp-installer')) -match 'path-entry') { Fail 'the receipt claims a PATH entry that was there before' }
     $r = Invoke-Installer @('-Uninstall', '-Dir', $custom)
     if ($r.Code -ne 0 -or (Get-TestPath) -ne "$custom;$before") { Fail "uninstall removed a PATH entry the installer did not add: $(Get-TestPath)" }
     New-ItemProperty -LiteralPath $key -Name 'Path' -Value $before -PropertyType ExpandString -Force | Out-Null
@@ -222,8 +222,6 @@ try {
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
     if ($r.Code -ne 0) { Fail "install failed: $($r.Out)" }
     [IO.File]::AppendAllText($bin, 'changed')
-    $r = Invoke-Installer @('-Uninstall', '-Dir', $dir)
-    if ($r.Code -eq 0) { Fail 'uninstall removed a fastwarp.exe that no longer matches the receipt' }
     $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
     if ($r.Code -eq 0) { Fail 'install replaced a fastwarp.exe that no longer matches the receipt' }
     Remove-Item -LiteralPath $bin
@@ -232,6 +230,27 @@ try {
         Fail "uninstall with the program gone did not clean up: $($r.Out)"
     }
     Pass 'foreign fastwarp.exe (no receipt, changed, folder) left alone'
+
+    $r = Invoke-Installer @('-Version', '0.0.0', '-Dir', $dir)
+    if ($r.Code -ne 0) { Fail "install failed: $($r.Out)" }
+    $copy = Join-Path $work 'copy'
+    New-Item -ItemType Directory -Path $copy | Out-Null
+    Copy-Item -LiteralPath (Join-Path $dir '.fastwarp-installer') -Destination $copy
+    $r = Invoke-Installer @('-Uninstall', '-Dir', $copy)
+    if ($r.Code -ne 0 -or $r.Out -notmatch 'was written for') { Fail "no warning about a copied receipt: $($r.Out)" }
+    if ((Get-TestPath) -ne "$dir;$before") { Fail "a copied receipt removed the PATH entry of the original folder: $(Get-TestPath)" }
+    if (Test-Path -LiteralPath (Join-Path $copy '.fastwarp-installer')) { Fail 'the copied receipt was kept' }
+    Pass 'R2: a receipt copied into another folder does not touch the original PATH entry'
+
+    Remove-Item -LiteralPath $bin
+    Copy-Item -LiteralPath $broken -Destination $bin
+    $r = Invoke-Installer @('-Uninstall', '-Dir', $dir)
+    if ($r.Code -ne 0 -or $r.Out -notmatch 'was replaced since the install') { Fail "uninstall after the program was replaced failed: $($r.Out)" }
+    if (-not (Test-Path -LiteralPath $bin)) { Fail 'uninstall removed the program that replaced fastwarp.exe' }
+    if (Test-Path -LiteralPath (Join-Path $dir '.fastwarp-installer')) { Fail 'uninstall kept the receipt' }
+    if ((Get-TestPath) -ne $before) { Fail "uninstall kept the recorded PATH entry: $(Get-TestPath)" }
+    Remove-Item -LiteralPath (Split-Path -Parent $dir) -Recurse -Force
+    Pass 'R3: a program replaced since the install is kept; the recorded PATH entry and the receipt go'
 
     $quoted = $installer.Replace("'", "''")
     $r = Invoke-Command-Text "Get-Content -Raw -LiteralPath '$quoted' | Invoke-Expression" @{ FASTWARP_VERSION = '0.0.0'; FASTWARP_INSTALL_DIR = $dir }

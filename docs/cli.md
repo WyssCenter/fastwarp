@@ -240,7 +240,9 @@ powershell -ExecutionPolicy ByPass -File fastwarp-installer.ps1 -Uninstall
 
 This removes the program, the receipt and exactly the PATH lines (on Windows: the user PATH
 entry) that the receipt says the installer added, and then the folder if it is empty. PATH
-entries that were there before the install stay. When the folder still holds other programs
+entries that were there before the install stay. If another tool replaced the program since
+the install, that program stays and the installer warns, but its PATH changes are still undone.
+A receipt copied from another folder is ignored for PATH changes. When the folder still holds other programs
 (for example `~/.local/bin`), the installer removes its PATH lines anyway and says that the
 folder is no longer on PATH through them; open a new terminal before installing again, because
 the old one still has the folder on PATH. Removing the program by hand works too: delete

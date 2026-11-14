@@ -24,7 +24,7 @@ try {
     $target = 'x86_64-pc-windows-msvc'
     $defaultKey = 'HKCU:\Environment'
     $testKeyRoot = 'HKCU:\Software\fastwarp-installer-test\'
-    $state = @{ AddedKey = '' }
+    $state = @{ Sha256 = ''; Entries = @() }
 
     if ($Help) {
         Write-Output @"
@@ -144,8 +144,8 @@ DIR to the user PATH (HKCU\Environment, not the machine PATH).
             return
         }
         $entries = @($dir) + @(Split-PathList (Get-UserPath $key))
+        Write-Receipt $receipt $state.Sha256 (@($state.Entries) + "$key|$dir")
         Write-UserPath $key ($entries -join ';')
-        $state.AddedKey = $key
         if ($key -eq $defaultKey) { $env:Path = "$dir;$env:Path" }
         Write-Output "Added $dir to the start of the user PATH ($key, value Path)."
         Write-Output 'Open a new terminal to use fastwarp.'
@@ -172,31 +172,46 @@ DIR to the user PATH (HKCU\Environment, not the machine PATH).
     }
 
     function Read-Receipt([string]$receipt) {
-        $result = @{ Sha256 = @(); PathKeys = @() }
+        $result = @{ Dir = ''; Sha256 = @(); Entries = @() }
         if (-not (Test-Path -LiteralPath $receipt -PathType Leaf)) { return $result }
         foreach ($line in [IO.File]::ReadAllLines($receipt)) {
+            if ($line.StartsWith('dir ')) { $result.Dir = $line.Substring(4) }
             if ($line.StartsWith('sha256 ')) { $result.Sha256 += $line.Substring(7).Trim().ToLowerInvariant() }
-            if ($line.StartsWith('path-key ')) { $result.PathKeys += $line.Substring(9) }
+            if ($line.StartsWith('path-entry ') -and $line.Contains('|')) { $result.Entries += $line.Substring(11) }
         }
         return $result
     }
 
-    function Write-Receipt([string]$receipt, [string[]]$sha256, [string[]]$pathKeys) {
-        $lines = @('# Written by the fastwarp installer; -Uninstall reads it.')
+    function Write-Receipt([string]$receipt, [string[]]$sha256, [string[]]$entries) {
+        $lines = @('# Written by the fastwarp installer; -Uninstall reads it.', "dir $dir")
         $lines += @($sha256 | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { "sha256 $_" })
-        $lines += @($pathKeys | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { "path-key $_" })
+        $lines += @($entries | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { "path-entry $_" })
         [IO.File]::WriteAllLines($receipt, [string[]]$lines)
+    }
+
+    function Test-Owned([string]$bin, $record) {
+        if (Test-Path -LiteralPath $bin -PathType Container) { return $false }
+        $owned = @($record.Sha256)
+        return $owned.Count -gt 0 -and $owned -contains (Get-Sha256 $bin)
+    }
+
+    function Test-SameFolder([string]$a, [string]$b) {
+        if (-not $a -or -not $b) { return $false }
+        try {
+            $a = [IO.Path]::GetFullPath($a).TrimEnd('\', '/')
+            $b = [IO.Path]::GetFullPath($b).TrimEnd('\', '/')
+        } catch {
+            return $false
+        }
+        return [string]::Equals($a, $b, [StringComparison]::OrdinalIgnoreCase)
     }
 
     function Assert-Owned([string]$bin, [string]$receipt, [string]$advice) {
         if (Test-Path -LiteralPath $bin -PathType Container) {
             throw "$bin is a folder, not a program; remove it or choose another folder with -Dir"
         }
-        if (Test-Path -LiteralPath $bin) {
-            $owned = @((Read-Receipt $receipt).Sha256)
-            if ($owned.Count -eq 0 -or $owned -notcontains (Get-Sha256 $bin)) {
-                throw "$bin was not installed by this installer (for example from 'uv tool install' or a program you built); $advice"
-            }
+        if ((Test-Path -LiteralPath $bin) -and -not (Test-Owned $bin (Read-Receipt $receipt))) {
+            throw "$bin was not installed by this installer (for example from 'uv tool install' or a program you built); $advice"
         }
     }
 
@@ -246,20 +261,35 @@ DIR to the user PATH (HKCU\Environment, not the machine PATH).
     $receipt = Join-Path $dir '.fastwarp-installer'
 
     if ($Uninstall) {
-        Assert-Owned $bin $receipt 'remove it with the tool that installed it'
         $previous = Read-Receipt $receipt
-        $found = Test-Path -LiteralPath $receipt
+        $found = Test-Path -LiteralPath $receipt -PathType Leaf
+        $foreign = $false
         if (Test-Path -LiteralPath $bin) {
-            Remove-Item -LiteralPath $bin -Force
-            Write-Output "Removed $bin"
-            $found = $true
+            if (Test-Owned $bin $previous) {
+                Remove-Item -LiteralPath $bin -Force
+                Write-Output "Removed $bin"
+                $found = $true
+            } elseif ($found) {
+                $foreign = $true
+                Write-Warning "$bin was replaced since the install (for example by 'uv tool install'); it was left in place"
+            } else {
+                throw "$bin was not installed by this installer (for example from 'uv tool install' or a program you built); remove it with the tool that installed it"
+            }
         } elseif (-not $found) {
             Write-Output "No fastwarp installed by this installer in $dir"
         }
         if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged -Force }
-        foreach ($key in $previous.PathKeys) { Undo-UserPathEntry $key $dir }
+        $entries = @($previous.Entries)
+        if ($entries.Count -gt 0 -and -not (Test-SameFolder $previous.Dir $dir)) {
+            Write-Warning "the receipt in $dir was written for $($previous.Dir); its PATH entries were left alone"
+            $entries = @()
+        }
+        foreach ($entry in $entries) {
+            $parts = $entry.Split([char]'|', 2)
+            Undo-UserPathEntry $parts[0] $parts[1]
+        }
         if (Test-Path -LiteralPath $receipt) { Remove-Item -LiteralPath $receipt -Force }
-        if ($found -and (Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
+        if ($found -and -not $foreign -and (Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
             Remove-Item -LiteralPath $dir -Force
             $parent = Split-Path -Parent $dir
             if ((Split-Path -Leaf $dir) -eq 'bin' -and (Split-Path -Leaf $parent) -eq 'fastwarp' -and
@@ -267,7 +297,7 @@ DIR to the user PATH (HKCU\Environment, not the machine PATH).
                 Remove-Item -LiteralPath $parent -Force
             }
         }
-        if ($previous.PathKeys.Count -gt 0 -and (Test-Path -LiteralPath $dir)) {
+        if ($entries.Count -gt 0 -and (Test-Path -LiteralPath $dir) -and (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
             Write-Output "note: $dir still holds other files; the installer no longer puts it on PATH."
         }
         return
@@ -359,14 +389,16 @@ DIR to the user PATH (HKCU\Environment, not the machine PATH).
             throw 'the downloaded fastwarp.exe does not run on this system'
         }
         $installedSha256 = Get-Sha256 $staged
-        Write-Receipt $receipt (@($previous.Sha256) + $installedSha256) $previous.PathKeys
+        Write-Receipt $receipt (@($previous.Sha256) + $installedSha256) $previous.Entries
         try {
             Move-Item -LiteralPath $staged -Destination $bin -Force
         } catch {
             Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
             throw "could not replace $bin; close any running fastwarp and try again"
         }
-        Write-Receipt $receipt $installedSha256 $previous.PathKeys
+        Write-Receipt $receipt $installedSha256 $previous.Entries
+        $state.Sha256 = $installedSha256
+        $state.Entries = @($previous.Entries)
         Write-Output "Installed $(@($out)[0]) to $bin"
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -380,7 +412,6 @@ DIR to the user PATH (HKCU\Environment, not the machine PATH).
         }
     } else {
         Add-ToUserPath $dir
-        if ($state.AddedKey) { Write-Receipt $receipt $installedSha256 (@($previous.PathKeys) + $state.AddedKey) }
     }
 
     foreach ($entry in Split-PathList ([Environment]::GetEnvironmentVariable('Path', 'Machine'))) {

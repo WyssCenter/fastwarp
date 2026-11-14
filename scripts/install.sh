@@ -243,26 +243,34 @@ receipt_sha256s() {
 }
 
 receipt_dir() {
-    recorded=
-    [ -f "$receipt" ] && recorded=$(sed -n 's/^dir //p' "$receipt" | head -n 1)
-    printf '%s\n' "${recorded:-$dir}"
+    [ -f "$receipt" ] || return 0
+    sed -n 's/^dir //p' "$receipt" | head -n 1
 }
 
 receipt_entries() {
     [ -f "$receipt" ] || return 0
-    grep -E '^(posix|fish) ' "$receipt" || true
+    grep -E '^(posix|fish):' "$receipt" || true
+}
+
+canonical() {
+    (cd "$1" 2>/dev/null && pwd -P)
+}
+
+is_owned() {
+    [ -L "$bin" ] && return 1
+    [ -d "$bin" ] && return 1
+    owned=$(receipt_sha256s)
+    [ -n "$owned" ] || return 1
+    current=$(sha256_of "$bin" | tr 'A-F' 'a-f')
+    printf '%s\n' "$owned" | grep -Fxq -- "$current"
 }
 
 check_owned() {
     if [ -d "$bin" ] && [ ! -L "$bin" ]; then
         err "$bin is a folder, not a program; remove it or choose another folder with --dir"
     fi
-    if [ -e "$bin" ] || [ -L "$bin" ]; then
-        owned=$(receipt_sha256s)
-        current=$(sha256_of "$bin" | tr 'A-F' 'a-f')
-        if [ -L "$bin" ] || [ -z "$owned" ] || ! printf '%s\n' "$owned" | grep -Fxq -- "$current"; then
-            err "$bin was not installed by this installer (for example a link from 'uv tool install', a pip script or a program you built); $1"
-        fi
+    if { [ -e "$bin" ] || [ -L "$bin" ]; } && ! is_owned; then
+        err "$bin was not installed by this installer (for example a link from 'uv tool install', a pip script or a program you built); $1"
     fi
 }
 
@@ -284,8 +292,10 @@ modify_path() {
     set -f
     for f in $files; do
         has_line "$f" "$line" && continue
+        entry="posix:$dir:$f"
+        write_receipt "$installed_sha" "$previous$NL$added$NL$entry"
         if append_line "$f" "$line"; then
-            added="${added}posix $f$NL"
+            added="$added$entry$NL"
         else
             say "warning: could not write $f" >&2
         fi
@@ -296,8 +306,10 @@ modify_path() {
         ff=$(fish_file)
         fl=$(fish_line "$dir")
         if ! has_line "$ff" "$fl"; then
+            entry="fish:$dir:$ff"
+            write_receipt "$installed_sha" "$previous$NL$added$NL$entry"
             if mkdir -p "$(dirname "$ff")" 2>/dev/null && append_line "$ff" "$fl"; then
-                added="${added}fish $ff$NL"
+                added="$added$entry$NL"
             else
                 say "warning: could not write $ff" >&2
             fi
@@ -305,7 +317,7 @@ modify_path() {
     fi
     if [ -n "$added" ]; then
         say "Added $dir to PATH with a line ending in '$MARKER' in:"
-        printf '%s' "$added" | sed 's/^[a-z]* /  /'
+        printf '%s' "$added" | sed 's/^[a-z]*:[^:]*:/  /'
         say "Open a new terminal to use fastwarp, or run: . \"$HOME/.profile\""
         say "To undo: run the installer with --uninstall, or delete those lines."
     else
@@ -355,6 +367,7 @@ resolve_dir() {
     case "$dir" in
         *:* | *"$NL"* | *\\*) err "the install folder must not contain ':', '\\' or a line break: $dir" ;;
     esac
+    [ "$dir" != / ] || err "the install folder must not be /"
     bin=$dir/fastwarp
     receipt=$dir/.fastwarp-installer
 }
@@ -376,33 +389,48 @@ expected_sha256() {
 
 do_uninstall() {
     resolve_dir
-    check_owned "remove it with the tool that installed it"
     found=
     [ -f "$receipt" ] && found=1
-    if [ -e "$bin" ]; then
-        rm -f "$bin"
-        say "Removed $bin"
-        found=1
+    foreign=
+    if [ -e "$bin" ] || [ -L "$bin" ]; then
+        if is_owned; then
+            rm -f "$bin"
+            say "Removed $bin"
+            found=1
+        elif [ -n "$found" ]; then
+            foreign=1
+            say "warning: $bin was replaced since the install (for example by 'uv tool install'); it was left in place" >&2
+        else
+            err "$bin was not installed by this installer (for example a link from 'uv tool install', a pip script or a program you built); remove it with the tool that installed it"
+        fi
     elif [ -z "$found" ]; then
         say "No fastwarp installed by this installer in $dir"
     fi
     removed=
     entries=$(receipt_entries)
-    line_dir=$(receipt_dir)
+    recorded=$(receipt_dir)
+    if [ -n "$entries" ] && [ "$(canonical "$recorded")" != "$(canonical "$dir")" ]; then
+        say "warning: the receipt in $dir was written for ${recorded:-another folder}; its PATH lines were left alone" >&2
+        entries=
+    fi
     old_ifs=$IFS
     IFS=$NL
     set -f
     for entry in $entries; do
-        f=${entry#* }
-        case "$entry" in
-            "fish "*) line=$(fish_line "$line_dir") ;;
+        kind=${entry%%:*}
+        rest=${entry#*:}
+        line_dir=${rest%%:*}
+        f=${rest#*:}
+        case "$kind" in
+            fish) line=$(fish_line "$line_dir") ;;
             *) line=$(posix_line "$line_dir") ;;
         esac
         if remove_line "$f" "$line"; then
             removed="$removed  $f$NL"
-            case "$entry" in
-                "fish "*) [ -s "$f" ] || rm -f "$f" ;;
-            esac
+            [ "$kind" != fish ] || [ -s "$f" ] || rm -f "$f"
+            if path_has "$line_dir"; then
+                say "note: this terminal still has $line_dir on PATH; open a new terminal before installing again."
+            fi
         fi
     done
     set +f
@@ -412,17 +440,14 @@ do_uninstall() {
         [ -f "$staged" ] && rm -f "$staged"
     done
     if [ -n "$removed" ]; then
-        say "Removed the PATH line for $dir from:"
+        say "Removed the PATH lines for $dir from:"
         printf '%s' "$removed"
     fi
-    if [ -n "$found" ] && [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+    if [ -n "$found" ] && [ -z "$foreign" ] && [ -d "$dir" ] && [ ! -L "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
         rmdir "$dir" 2>/dev/null || true
     fi
-    if [ -n "$removed" ] && [ -d "$dir" ]; then
+    if [ -n "$removed" ] && [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
         say "note: $dir still holds other files; the lines this installer wrote no longer put it on PATH."
-    fi
-    if [ -n "$removed" ] && path_has "$line_dir"; then
-        say "note: this terminal still has $line_dir on PATH; open a new terminal before installing again."
     fi
 }
 
