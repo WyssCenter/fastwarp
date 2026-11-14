@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
-//! Python extension `fastwarp._core`: the dbs-localizer cohort registration (centre of mass,
-//! Rigid, Affine, SyN) on the GPU, with ANTs-compatible `Composite.h5` / `InverseComposite.h5`.
+//! Python extension `fastwarp._core`: registration on the GPU (by default the dbs-localizer
+//! cohort chain: centre of mass, Rigid, Affine, SyN; any start, linear stages and optional SyN
+//! stage with a stage-list recipe), with ANTs-compatible transform files.
 //!
 //! Images arrive as flat `float32` or `float64` arrays in ITK voxel order (x fastest) with ITK
 //! (LPS) geometry, i.e. exactly what an `ANTsImage` holds; the Python wrapper does the flattening
@@ -28,7 +29,7 @@ use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 create_exception!(
     fastwarp,
@@ -124,12 +125,14 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
     Volume::from_vec(grid, values).map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
 }
 
-/// Registers `moving` to `fixed` (1 or 2 channels each) with the dbs-localizer cohort recipe on
-/// the GPU and writes `<out_prefix>Composite.h5`, `<out_prefix>InverseComposite.h5` and
-/// `<out_prefix>0GenericAffine.mat` (and, with `write_warped`, `<out_prefix>_Warped.nii.gz`).
-/// Returns a dict of timings and diagnostics. The GIL is released while it runs.
+/// Registers `moving` to `fixed` (1 or 2 channels each) on the GPU with `recipe` (default: the
+/// dbs-localizer cohort chain) and writes the transforms under `out_prefix` in the `outputs`
+/// layout (`"composite"`: `Composite.h5`, `InverseComposite.h5`, `0GenericAffine.mat`;
+/// `"split"`: `0GenericAffine.mat` and, after a SyN stage, `1Warp.nii.gz` / `1InverseWarp.nii.gz`;
+/// `"both"`), and with `write_warped` `<out_prefix>_Warped.nii.gz`. Returns a dict of timings and
+/// diagnostics. The GIL is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None))]
+#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None, outputs="composite"))]
 #[allow(clippy::too_many_arguments)]
 fn register_syn<'py>(
     py: Python<'py>,
@@ -141,10 +144,12 @@ fn register_syn<'py>(
     adapter: Option<String>,
     cancel: Option<PyRef<'py, CancelToken>>,
     recipe: Option<Bound<'py, PyDict>>,
+    outputs: &str,
 ) -> PyResult<Bound<'py, PyDict>> {
     engine::check_channels(fixed.len(), moving.len()).map_err(py_err)?;
     // Checked before any work, like everything a caller can get wrong.
     let recipe = recipe::from_dict(recipe.as_ref(), fixed.len())?;
+    let layout = engine::output_layout(outputs).map_err(py_err)?;
     engine::check_iso_mm(iso_mm).map_err(py_err)?;
     // Checked up front: otherwise a missing folder only shows when the outputs are written.
     engine::check_out_folder(&out_prefix).map_err(py_err)?;
@@ -154,6 +159,7 @@ fn register_syn<'py>(
     let outputs = SynOutputs {
         prefix: out_prefix,
         write_warped,
+        layout,
     };
 
     let run = py
@@ -181,6 +187,24 @@ fn register_syn<'py>(
     )?;
     d.set_item("affine_parameters", run.affine_parameters)?;
     d.set_item("affine_center", run.affine_center)?;
+    d.set_item("initial_parameters", run.initial_parameters)?;
+    d.set_item("initial_center", run.initial_center)?;
+    let stages = PyList::empty(py);
+    for s in &run.linear_stages {
+        let e = PyDict::new(py);
+        e.set_item("transform", s.transform)?;
+        e.set_item("iterations", s.iterations.clone())?;
+        e.set_item("metric", s.metric)?;
+        stages.append(e)?;
+    }
+    d.set_item("linear_stages", stages)?;
+    d.set_item("deformable", run.deformable)?;
+    let files: Vec<String> = run
+        .files
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    d.set_item("files", files)?;
     d.set_item("peak_gpu_bytes", run.peak_gpu_bytes)?;
     d.set_item("memory_budget_bytes", run.memory_budget_bytes)?;
     d.set_item("recipe", recipe::to_dict(py, &run.recipe)?)?;
@@ -205,17 +229,23 @@ fn gpu_info<'py>(py: Python<'py>, adapter: Option<String>) -> PyResult<Bound<'py
 }
 
 /// Whether a registration of a `dims` fixed grid and a `moving_dims` moving grid (default: the
-/// fixed grid) with `channels` channels fits the GPU, as `register_syn` checks it.
+/// fixed grid) with `channels` channels and `recipe` (default: the cohort chain) fits the GPU, as
+/// `register_syn` checks it.
 #[pyfunction]
-#[pyo3(signature = (dims, channels, adapter=None, moving_dims=None))]
+#[pyo3(signature = (dims, channels, adapter=None, moving_dims=None, recipe=None))]
 fn fits_gpu(
     py: Python<'_>,
     dims: [usize; 3],
     channels: usize,
     adapter: Option<String>,
     moving_dims: Option<[usize; 3]>,
+    recipe: Option<Bound<'_, PyDict>>,
 ) -> PyResult<bool> {
-    py.detach(move || engine::fits(dims, moving_dims, channels, adapter))
+    if !(1..=2).contains(&channels) {
+        return Err(PyValueError::new_err("channels must be 1 or 2"));
+    }
+    let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
+    py.detach(move || engine::fits(dims, moving_dims, channels, adapter, &recipe))
         .map_err(py_err)
 }
 
@@ -230,27 +260,39 @@ fn to_grid(g: &GridArgs) -> PyResult<Grid> {
 /// Writes the transforms as one displacement field on `reference` (`antsApplyTransforms
 /// --compose`: `float32` vectors, intent `NIFTI_INTENT_VECTOR`, parallel gzip for `.nii.gz` at
 /// `compression_level`, 0 to 9). A reference point goes through `transforms[0]` first, as in
-/// `ants.apply_transforms(transformlist=transforms)`.
+/// `ants.apply_transforms(transformlist=transforms)`; `invert` (one flag per transform, ANTsPy's
+/// `whichtoinvert`) uses the inverse of a linear transform.
 #[pyfunction]
-#[pyo3(signature = (transforms, reference, out_path, compression_level=None))]
+#[pyo3(signature = (transforms, reference, out_path, compression_level=None, invert=None))]
 fn compose_field(
     py: Python<'_>,
     transforms: Vec<PathBuf>,
     reference: GridArgs,
     out_path: PathBuf,
     compression_level: Option<u32>,
+    invert: Option<Vec<bool>>,
 ) -> PyResult<()> {
     engine::check_compression_level(compression_level).map_err(py_err)?;
     let grid = to_grid(&reference)?;
-    py.detach(move || engine::compose(&transforms, &grid, &out_path, compression_level))
-        .map_err(py_err)
+    py.detach(move || {
+        engine::compose(
+            &transforms,
+            invert.as_deref(),
+            &grid,
+            &out_path,
+            compression_level,
+        )
+    })
+    .map_err(py_err)
 }
 
 /// Resamples `moving` onto `reference` through the transforms (`antsApplyTransforms`), with the
-/// ANTs interpolator `linear`, `nearestNeighbor` or `lanczosWindowedSinc`. Returns the voxels as
-/// a flat `float32` array, x fastest.
+/// ANTs interpolator `linear`, `nearestNeighbor` or `lanczosWindowedSinc`; `invert` (one flag
+/// per transform, ANTsPy's `whichtoinvert`) uses the inverse of a linear transform. Returns the
+/// voxels as a flat `float32` array, x fastest.
 #[pyfunction]
-#[pyo3(signature = (moving, reference, transforms, interpolation="linear", default_value=0.0))]
+#[pyo3(signature = (moving, reference, transforms, interpolation="linear", default_value=0.0, invert=None))]
+#[allow(clippy::too_many_arguments)]
 fn apply_transforms<'py>(
     py: Python<'py>,
     moving: ImageArgs<'py>,
@@ -258,12 +300,22 @@ fn apply_transforms<'py>(
     transforms: Vec<PathBuf>,
     interpolation: &str,
     default_value: f64,
+    invert: Option<Vec<bool>>,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
     let interp = engine::interpolator(interpolation).map_err(py_err)?;
     let grid = to_grid(&reference)?;
     let image = to_volume(&moving)?;
     let out = py
-        .detach(move || engine::apply(&image, &grid, &transforms, interp, default_value))
+        .detach(move || {
+            engine::apply(
+                &image,
+                &grid,
+                &transforms,
+                invert.as_deref(),
+                interp,
+                default_value,
+            )
+        })
         .map_err(py_err)?;
     Ok(PyArray1::from_vec(py, out))
 }

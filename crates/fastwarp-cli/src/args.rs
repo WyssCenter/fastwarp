@@ -25,7 +25,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Rigid, Affine and SyN registration of MOVING to FIXED (the cohort recipe by default).
+    /// Registration of MOVING to FIXED: Rigid, Affine and SyN by default, any start, linear stages
+    /// and optional SyN stage with a stage-list recipe.
     Register(RegisterArgs),
     /// One rigid or affine fit of MOVING to FIXED (Mattes mutual information).
     Linear(LinearArgs),
@@ -51,9 +52,15 @@ pub struct RegisterArgs {
     /// Moving image (NIfTI).
     pub moving: PathBuf,
     /// Output prefix: writes <PREFIX>Composite.h5, <PREFIX>InverseComposite.h5 and
-    /// <PREFIX>0GenericAffine.mat. A prefix ending in a path separator is a folder.
+    /// <PREFIX>0GenericAffine.mat (see --outputs). A prefix ending in a path separator is a
+    /// folder.
     #[arg(short = 'o', long = "output", value_name = "PREFIX")]
     pub output: PathBuf,
+    /// Transform files: composite (Composite.h5, InverseComposite.h5, 0GenericAffine.mat), split
+    /// (what antsRegistration writes without --write-composite-transform: 0GenericAffine.mat and,
+    /// after a SyN stage, 1Warp.nii.gz and 1InverseWarp.nii.gz) or both.
+    #[arg(long, value_enum, default_value_t = Outputs::Composite)]
+    pub outputs: Outputs,
     /// Second fixed channel (for example a T2w image) for the SyN stage.
     #[arg(long, value_name = "F2", requires = "moving2")]
     pub fixed2: Option<PathBuf>,
@@ -64,8 +71,8 @@ pub struct RegisterArgs {
     /// spacing of FIXED (the Python function register_syn defaults to 1.0 mm instead).
     #[arg(long, value_name = "MM")]
     pub iso_mm: Option<f64>,
-    /// Recipe as a JSON file (the form `fastwarp recipe` prints); fields left out keep the
-    /// default.
+    /// Recipe as a JSON file: the form `fastwarp recipe` prints, or the stage-list form
+    /// {"initial": ..., "stages": [...]}; fields left out keep the default.
     #[arg(long, value_name = "FILE")]
     pub recipe: Option<PathBuf>,
     /// Also write <PREFIX>_Warped.nii.gz, MOVING on the registration grid.
@@ -73,6 +80,23 @@ pub struct RegisterArgs {
     pub write_warped: bool,
     #[command(flatten)]
     pub common: Common,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outputs {
+    Composite,
+    Split,
+    Both,
+}
+
+impl Outputs {
+    pub fn name(self) -> &'static str {
+        match self {
+            Outputs::Composite => "composite",
+            Outputs::Split => "split",
+            Outputs::Both => "both",
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,9 +155,16 @@ pub struct ApplyArgs {
     #[arg(short = 'o', long, value_name = "OUTPUT")]
     pub output: PathBuf,
     /// Transform file (.h5, .mat, .txt, or a .nii/.nii.gz displacement field). Repeat it as in
-    /// antsApplyTransforms: the first one given maps the reference point first.
-    #[arg(short = 't', long = "transform", value_name = "FILE", required = true)]
-    pub transforms: Vec<PathBuf>,
+    /// antsApplyTransforms: the first one given maps the reference point first. [FILE,1] uses
+    /// the inverse of a linear transform (a displacement field cannot be inverted).
+    #[arg(
+        short = 't',
+        long = "transform",
+        value_name = "FILE",
+        required = true,
+        value_parser = parse_transform
+    )]
+    pub transforms: Vec<TransformArg>,
     /// Interpolator: linear, nearestNeighbor or lanczosWindowedSinc.
     #[arg(short = 'n', long, value_name = "NAME", default_value = "linear")]
     pub interpolation: String,
@@ -156,9 +187,16 @@ pub struct ComposeArgs {
     /// Output displacement field (.nii or .nii.gz).
     #[arg(short = 'o', long, value_name = "FIELD")]
     pub output: PathBuf,
-    /// Transform file, repeated as for `fastwarp apply`.
-    #[arg(short = 't', long = "transform", value_name = "FILE", required = true)]
-    pub transforms: Vec<PathBuf>,
+    /// Transform file, repeated as for `fastwarp apply` ([FILE,1] for the inverse of a linear
+    /// transform).
+    #[arg(
+        short = 't',
+        long = "transform",
+        value_name = "FILE",
+        required = true,
+        value_parser = parse_transform
+    )]
+    pub transforms: Vec<TransformArg>,
     /// Gzip level 0 to 9 of a .nii.gz output (0 stores without compressing).
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(0..=9))]
     pub compression_level: Option<u32>,
@@ -195,6 +233,10 @@ pub struct FitsArgs {
     /// Number of channels (1, or 2 for a multispectral SyN stage).
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=2))]
     pub channels: u8,
+    /// Recipe as a JSON file, as for `fastwarp register`: the check covers its stages (a chain
+    /// without a SyN stage needs far less memory).
+    #[arg(long, value_name = "FILE")]
+    pub recipe: Option<PathBuf>,
     #[command(flatten)]
     pub common: Common,
 }
@@ -245,6 +287,49 @@ pub struct Common {
     /// Print the result as JSON on standard output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// One `-t` value: a transform file, used inverted with `[FILE,1]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransformArg {
+    pub path: PathBuf,
+    pub invert: bool,
+}
+
+/// `FILE`, `[FILE]`, `[FILE,0]` or `[FILE,1]` (antsApplyTransforms' `useInverse` flag; `true` /
+/// `false` are accepted as well).
+pub fn parse_transform(s: &str) -> Result<TransformArg, String> {
+    let t = s.trim();
+    let Some(inner) = t.strip_prefix('[') else {
+        if t.is_empty() {
+            return Err("expected a transform file".into());
+        }
+        return Ok(TransformArg {
+            path: PathBuf::from(t),
+            invert: false,
+        });
+    };
+    let inner = inner
+        .strip_suffix(']')
+        .ok_or_else(|| format!("{s:?}: expected [FILE,0] or [FILE,1]"))?;
+    let (path, invert) = match inner.rsplit_once(',') {
+        Some((p, f)) => match f.trim() {
+            "0" | "false" => (p.trim(), false),
+            "1" | "true" => (p.trim(), true),
+            other if other.chars().all(|c| c.is_ascii_digit()) => {
+                return Err(format!("{s:?}: the inverse flag is 0 or 1, not {other:?}"))
+            }
+            _ => (inner.trim(), false),
+        },
+        None => (inner.trim(), false),
+    };
+    if path.is_empty() {
+        return Err(format!("{s:?}: expected a transform file"));
+    }
+    Ok(TransformArg {
+        path: PathBuf::from(path),
+        invert,
+    })
 }
 
 /// `LOWER,UPPER` quantiles, `0 <= LOWER < UPPER <= 1`.

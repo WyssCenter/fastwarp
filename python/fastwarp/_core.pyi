@@ -53,7 +53,8 @@ def register_syn(
     write_warped: bool = False,
     adapter: str | None = None,
     cancel: CancelToken | None = None,
-    recipe: dict[str, dict[str, Any]] | None = None,
+    recipe: dict[str, Any] | None = None,
+    outputs: str = "composite",
 ) -> dict[str, Any]: ...
 def gpu_info(adapter: str | None = None) -> dict[str, Any]:
     """Opens the GPU the engine would use and describes it.
@@ -66,6 +67,7 @@ def fits_gpu(
     channels: int,
     adapter: str | None = None,
     moving_dims: tuple[int, int, int] | None = None,
+    recipe: dict[str, Any] | None = None,
 ) -> bool: ...
 def compose_field(
     transforms: list[str],
@@ -77,6 +79,7 @@ def compose_field(
     ],
     out_path: str,
     compression_level: int | None = None,
+    invert: list[bool] | None = None,
 ) -> None: ...
 def apply_transforms(
     moving: _Image,
@@ -89,6 +92,7 @@ def apply_transforms(
     transforms: list[str],
     interpolation: str = "linear",
     default_value: float = 0.0,
+    invert: list[bool] | None = None,
 ) -> npt.NDArray[np.float32]: ...
 def cohort_recipe(channels: int = 1) -> dict[str, dict[str, Any]]: ...
 

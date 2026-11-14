@@ -165,13 +165,47 @@ pub fn prepare_channels(
 }
 
 /// Resamples every channel to the registration grid (when `iso_mm` is set) and builds the
-/// preprocessed [`SynChannel`]s, keeping the resampled raw images.
+/// preprocessed [`SynChannel`]s, keeping the resampled raw images. The intensities are
+/// winsorised to `[WINSORIZE_LOWER, WINSORIZE_UPPER]` ([`prepare_channels_with`] chooses).
 pub fn prepare_channels_full(
     fixed: &[Volume<f64>],
     moving: &[Volume<f64>],
     iso_mm: Option<f64>,
     timings: &mut RegisterTimings,
 ) -> Result<PreparedChannels> {
+    prepare_channels_with(
+        fixed,
+        moving,
+        iso_mm,
+        Some((WINSORIZE_LOWER, WINSORIZE_UPPER)),
+        timings,
+    )
+}
+
+/// Checks a winsorising window: finite quantiles with `0 <= lower < upper <= 1`.
+pub fn check_winsorize(winsorize: Option<(f32, f32)>) -> Result<()> {
+    match winsorize {
+        Some((lo, hi)) if !(0.0 <= lo && lo < hi && hi <= 1.0) => Err(invalid(
+            "register",
+            "winsorize must be (lower, upper) quantiles with 0 <= lower < upper <= 1",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// [`prepare_channels_full`] with the intensity preprocessing of every metric image chosen:
+/// `Some((lower, upper))` is `--winsorize-image-intensities [lower,upper]`; `None` is what
+/// `antsRegistration` does without that option, the quantile window `(0, 1)` (a plain rescale to
+/// `[0, 1]`, [`crate::preprocess::preprocess_volume_no_winsorize`]).
+pub fn prepare_channels_with(
+    fixed: &[Volume<f64>],
+    moving: &[Volume<f64>],
+    iso_mm: Option<f64>,
+    winsorize: Option<(f32, f32)>,
+    timings: &mut RegisterTimings,
+) -> Result<PreparedChannels> {
+    check_winsorize(winsorize)?;
+    let (lower, upper) = winsorize.unwrap_or((0.0, 1.0));
     if fixed.is_empty() || fixed.len() != moving.len() {
         return Err(invalid(
             "register",
@@ -200,8 +234,8 @@ pub fn prepare_channels_full(
     let mut channels = Vec::with_capacity(fixed_raw.len());
     for (f, m) in fixed_raw.iter().zip(&moving_raw) {
         channels.push(SynChannel {
-            fixed: preprocess_volume(f, WINSORIZE_LOWER, WINSORIZE_UPPER, 0.0, 1.0)?,
-            moving: preprocess_volume(m, WINSORIZE_LOWER, WINSORIZE_UPPER, 0.0, 1.0)?,
+            fixed: preprocess_volume(f, lower, upper, 0.0, 1.0)?,
+            moving: preprocess_volume(m, lower, upper, 0.0, 1.0)?,
         });
     }
     timings.preprocess_s += t1.elapsed().as_secs_f64();

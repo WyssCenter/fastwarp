@@ -92,23 +92,28 @@ else:
 ```
 
 - `register_syn(fixed, moving, out_prefix, *, iso_mm=1.0, write_warped=False, adapter=None,
-  cancel=None, recipe=None)`: one image or a list of two (T1w + T2w) on each side; images are `ANTsImage`s
-  or `(array, spacing, origin, direction)` tuples in ITK (LPS) geometry. Writes
-  `<out_prefix>Composite.h5` (`[Affine, Warp]`), `<out_prefix>InverseComposite.h5`
+  cancel=None, recipe=None, outputs="composite")`: one image or a list of two (T1w + T2w) on each
+  side; images are `ANTsImage`s or `(array, spacing, origin, direction)` tuples in ITK (LPS)
+  geometry. Writes `<out_prefix>Composite.h5` (`[Affine, Warp]`), `<out_prefix>InverseComposite.h5`
   (`[InverseWarp, Affine⁻¹]`) and `<out_prefix>0GenericAffine.mat` (a prefix ending in a path
-  separator, such as `"out/sub/"`, is a folder, as in ANTs). Returns timings, the
-  registration grid, per-level SyN diagnostics, the affine and peak GPU memory. Releases the GIL.
+  separator, such as `"out/sub/"`, is a folder, as in ANTs); `outputs="split"` writes ANTs'
+  `0GenericAffine.mat`, `1Warp.nii.gz`, `1InverseWarp.nii.gz` instead, `"both"` all of them.
+  `recipe` may also name the start and the stages (see [Recipe](#recipe)). Returns timings, the
+  registration grid, per-level SyN diagnostics, the affine, the files written and peak GPU
+  memory. Releases the GIL.
 - `CancelToken()`: pass as `cancel=`, call `.cancel()` from another thread; the run stops at
   the next iteration with `RegistrationCancelled`.
-- `compose_field(transforms, reference, out_path, *, compression_level=None)`: the transforms as
-  one displacement field on `reference`'s grid, the file `antsApplyTransforms --compose` writes
-  (`float32`, parallel gzip; `compression_level=0` stores the data as valid gzip without
-  compressing it, which suits displacement fields).
-- `apply_transforms(moving, reference, transforms, *, interpolation="linear", default_value=0.0)`:
-  `antsApplyTransforms` with `linear`, `nearestNeighbor` or `lanczosWindowedSinc`; returns an
-  `ANTsImage` like `reference` (or an array for a tuple reference). `transforms` is a list as
-  `ants.apply_transforms` takes it. Both run on all CPU cores and need no GPU; they equal ANTs
-  to `float32` rounding (`tests/test_post.py`).
+- `compose_field(transforms, reference, out_path, *, compression_level=None, invert=None)`: the
+  transforms as one displacement field on `reference`'s grid, the file `antsApplyTransforms
+  --compose` writes (`float32`, parallel gzip; `compression_level=0` stores the data as valid gzip
+  without compressing it, which suits displacement fields).
+- `apply_transforms(moving, reference, transforms, *, interpolation="linear", default_value=0.0,
+  invert=None)`: `antsApplyTransforms` with `linear`, `nearestNeighbor` or `lanczosWindowedSinc`;
+  returns an `ANTsImage` like `reference` (or an array for a tuple reference). `transforms` is a
+  list as `ants.apply_transforms` takes it; `invert` is its `whichtoinvert`, one `bool` per
+  transform (`antsApplyTransforms -t [file,1]`), for linear transforms only (a displacement field
+  raises `ValueError`; there is no automatic default). Both run on all CPU cores and need no GPU;
+  they equal ANTs to `float32` rounding (`tests/test_post.py`).
 - `linear_session(fixed, moving, *, fixed_mask=None, winsorize=None, adapter=None)`: linear fits
   of one image pair (Mattes MI, regular sampling, one `Rigid` or `Affine` stage per fit from any
   start), the pair prepared, winsorized and uploaded once and its smoothed copies kept between
@@ -123,7 +128,7 @@ else:
   `<prefix>0GenericAffine.mat`. Use it in a `with` block. `register_rigid`, `rigid_session` and
   `RigidSession` are deprecated (they warn and will be removed in fastwarp 0.3.0); use
   `linear_session(...).register()`, `linear_session` and `LinearSession`.
-- `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, moving=None, iso_mm=, channels=)`,
+- `gpu_available()`, `gpu_info()`, `fits_gpu(fixed, moving=None, iso_mm=, channels=, recipe=)`,
   `iso_grid_dims(img, iso_mm)`.
 - Errors: `GpuUnavailableError` and `GpuCapacityError` (checked before any work: fall back to
   ANTs), `RegistrationError`, `RegistrationCancelled`.
@@ -165,7 +170,7 @@ The capacity check uses the device memory the graphics API reports, halved on in
 ## Recipe
 
 The schedule is the caller's: `register_syn(..., recipe={"rigid": {...}, "affine": {...},
-"syn": {...}})`. The structure:
+"syn": {...}})` (the cohort form). The structure:
 
 - centre-of-mass initialisation, then `rigid` and `affine` on Mattes MI over the first channel
   (fields `gradient_step`, `iterations`, `convergence_threshold`, `convergence_window`,
@@ -173,8 +178,9 @@ The schedule is the caller's: `register_syn(..., recipe={"rigid": {...}, "affine
   `sampling_percentage`, `seed`; regular sampling),
 - then `syn` on CC over every channel (`gradient_step`, `update_field_variance`,
   `total_field_variance`, `cc_radius`, `channel_weights`, and the same schedule fields),
-- winsorize `[0.005, 0.995]`, no histogram matching, all on an isotropic grid (`iso_mm`) built
-  from the fixed image.
+- winsorize `[0.005, 0.995]` (the key `"winsorize"`: `[lower, upper]`, or `None` for ANTs'
+  plain rescale to [0, 1] without `--winsorize-image-intensities`), no histogram matching, all on
+  an isotropic grid (`iso_mm`) built from the fixed image.
 
 A stage or field left out keeps the dbs-localizer cohort value, which `cohort_recipe(channels)`
 returns in full: Rigid and Affine `MI[32 bins, regular 25 %]`, `1000x500x250x100`; SyN
@@ -182,6 +188,23 @@ returns in full: Rigid and Affine `MI[32 bins, regular 25 %]`, `1000x500x250x100
 `8x4x2x1`, smoothing `3x2x1x0 vox`. An unknown key, a value of the wrong type, mismatched level
 counts, or what the GPU kernels do not support (MI bins other than 32, a CC radius above 8) is a
 `ValueError` before any work. The result's `"recipe"` is the full recipe that ran.
+
+The stage-list form chooses the start and the stages:
+
+```python
+recipe = {
+    "initial": "identity",  # "com" (default), a pathlib.Path / {"path": ..., "invert": bool}
+                            # to one affine (.mat, .txt), or (parameters, center)
+    "stages": [{"transform": "syn", "iterations": [100, 70, 50, 20]}],
+    "winsorize": None,
+}
+```
+
+`stages` holds any number of `{"transform": "rigid" | "affine", ...}` stages followed by at most
+one `{"transform": "syn", ...}` stage (SyN alone is allowed; left out: the cohort's three), each
+with the fields above. Without a SyN stage `Composite.h5` / `InverseComposite.h5` hold only the
+affine, as ANTs writes them. The capacity check covers the chain: a linear-only chain needs far
+less GPU memory than one with SyN. `fastwarp register --recipe` reads the same forms as JSON.
 
 ## Tests
 

@@ -225,6 +225,121 @@ fn transforms_are_applied_in_ants_order() {
 }
 
 #[test]
+fn an_inverted_affine_is_applied_in_place_and_a_field_is_not_inverted() {
+    let d = tmp("invert");
+    let grid = Grid::new([40, 4, 4], [1.0; 3], [0.0; 3], rot_z(0.0)).unwrap();
+    let data = (0..grid.num_voxels())
+        .map(|i| grid.ijk(i)[0] as f32)
+        .collect();
+    let ramp = d.join("ramp.nii");
+    Volume::from_vec(grid, data)
+        .unwrap()
+        .save_nifti(&ramp)
+        .unwrap();
+    let ref_grid = Grid::new([8, 4, 4], [1.0; 3], [0.0; 3], rot_z(0.0)).unwrap();
+    let reference = d.join("ref.nii");
+    Volume::from_vec(ref_grid, vec![0f32; ref_grid.num_voxels()])
+        .unwrap()
+        .save_nifti(&reference)
+        .unwrap();
+    let shift = d.join("shift.txt");
+    write_affine_txt(&shift, IDENTITY, [-5.0, 0.0, 0.0]);
+    let half = d.join("half.txt");
+    write_affine_txt(
+        &half,
+        [0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        [0.0; 3],
+    );
+    let out = d.join("out.nii");
+    let shift_inv = format!("[{},1]", s(&shift));
+    let half_inv = format!("[ {} , 1 ]", s(&half));
+    let o = run(&[
+        "apply",
+        "-r",
+        s(&reference),
+        "-i",
+        s(&ramp),
+        "-o",
+        s(&out),
+        "-t",
+        &shift_inv,
+        "-t",
+        &half_inv,
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let back = Volume::<f32>::load_nifti(&out).unwrap();
+    let row: Vec<f32> = (0..5).map(|i| back.get(i, 1, 1).unwrap()).collect();
+    assert_eq!(row, vec![10.0, 12.0, 14.0, 16.0, 18.0]);
+    let plain = format!("[{},0]", s(&shift));
+    let field = d.join("field.nii.gz");
+    let o = run(&[
+        "compose",
+        "-r",
+        s(&reference),
+        "-o",
+        s(&field),
+        "-t",
+        &plain,
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let field_inv = format!("[{},1]", s(&field));
+    let o = run(&[
+        "apply",
+        "-r",
+        s(&reference),
+        "-i",
+        s(&ramp),
+        "-o",
+        s(&d.join("bad.nii")),
+        "-t",
+        &field_inv,
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(
+        text(&o.stderr).contains("cannot invert the displacement field"),
+        "{}",
+        text(&o.stderr)
+    );
+    let o = run(&[
+        "apply",
+        "-r",
+        s(&reference),
+        "-i",
+        s(&d.join("missing_input.nii")),
+        "-o",
+        s(&d.join("bad.nii")),
+        "-t",
+        &field_inv,
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    let nested = d.join("new").join("f.nii.gz");
+    let o = run(&[
+        "compose",
+        "-r",
+        s(&reference),
+        "-o",
+        s(&nested),
+        "-t",
+        &field_inv,
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(!d.join("new").exists());
+    let o = run(&[
+        "apply",
+        "-r",
+        s(&reference),
+        "-i",
+        s(&ramp),
+        "-o",
+        s(&d.join("bad.nii")),
+        "-t",
+        &format!("[{},2]", s(&shift)),
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(!d.join("bad.nii").exists());
+}
+
+#[test]
 fn compose_writes_the_displacement_field() {
     let d = tmp("compose");
     let vol = oblique_volume();
@@ -263,6 +378,8 @@ fn errors_have_distinct_exit_codes() {
     vol.save_nifti(&img).unwrap();
     let bad_tx = d.join("bad.txt");
     std::fs::write(&bad_tx, "not a transform").unwrap();
+    let id_tx = d.join("id.txt");
+    write_affine_txt(&id_tx, IDENTITY, [0.0; 3]);
     let cases: Vec<(Vec<&str>, i32, &str)> = vec![
         (
             vec!["register", "a.mha", "b.nii", "-o", "x_"],
@@ -279,7 +396,7 @@ fn errors_have_distinct_exit_codes() {
                 "-o",
                 "o.nii",
                 "-t",
-                s(&bad_tx),
+                s(&id_tx),
             ],
             3,
             "no such file",
