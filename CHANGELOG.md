@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+- ANTs compatibility mode: `fastwarp ants-registration ARGS...` and
+  `fastwarp ants-apply-transforms ARGS...` take the arguments of `antsRegistration` and
+  `antsApplyTransforms` (ANTs 2.6.5), run the subset FastWarp supports and write the files ANTs
+  writes under ANTs' names: `0GenericAffine.mat`, `1Warp.nii.gz`, `1InverseWarp.nii.gz` (or
+  `0Warp.nii.gz` for SyN without `-r`), `Composite.h5` / `InverseComposite.h5` alone with `-a 1`,
+  and the warped and inverse-warped images of `-o [prefix,warped,inverseWarped]` on the native
+  grids. Supported: any Rigid / Affine stages with Mattes MI (regular sampling, 32 bins), then
+  at most one SyN stage with one or two CC metrics; `-r [f,m,1]`, `Identity` or an affine file;
+  fixed masks on linear stages; `-w`; `--random-seed` and `ANTS_RANDOM_SEED`; both stage-option
+  orders and brackets split over shell words. Warped images and fields are `float64`, or
+  `float32` with `--float 1`, as in ANTs. Everything that would change the result and is not
+  supported (MI in SyN, dense or random MI sampling, `-z 0`, histogram matching, SyN masks,
+  moving masks, other transforms, metrics and interpolators, ...) is refused with exit status 2
+  and the reason, before the GPU is opened; `ants-apply-transforms` accepts `-z`, `--time-index`
+  and `-u` with a transform output, which change nothing, with a warning.
+  The compatibility mode is reached only through these subcommands, never by the program's name.
+  The registration grid is the fixed image's smallest spacing; with an anisotropic fixed image the
+  warp fields are resampled onto the fixed image's grid, where ANTs writes them, so the result
+  differs a little more from ANTs' there (about 1 mm at the corners of the field of view in the
+  tests, against 0.06 to 0.5 mm for an isotropic one). Stage options are assigned to stages as
+  ANTs assigns them. Integer `-u` outputs of `ants-apply-transforms` wrap as in ANTs. The parsers
+  are pure functions (`fastwarp_cli::ants::parse_registration` / `parse_apply`, and
+  `resolve_seed` for `--random-seed` / `ANTS_RANDOM_SEED`) that return the plan, its recipe and
+  its output files; the Python layer `fastwarp.ants` runs them through the same code. See
+  `docs/cli.md`.
+
+- Linear stages skip a level whose sample points leave Mattes mutual information undefined
+  (no point on the fixed image, or one fixed value only; typical for a coarse level of a small
+  image or a small mask) and continue with the finer levels, with a warning: on standard error
+  in the command line (`register`, `linear`, `ants-registration`), and as a `UserWarning` in
+  Python, also listed under `"warnings"` in the results of `register_syn` and
+  `LinearSession.register` (the result of `fastwarp.ants.registration` keeps ANTsPy's keys).
+  ANTs 2.6.5 drops the whole stage in that case without an error.
+  When every level of a stage is skipped, the run fails and the message names the levels, their
+  shrink factors, the candidate counts and the remedies.
+
+- `fastwarp.ants`: ANTsPy's `ants.registration` and `ants.apply_transforms` (ANTsPy 0.6.3) with
+  their arguments and results, for the part FastWarp supports. Each call builds the argument list
+  ANTsPy builds (compared token for token in the tests) and runs it with the ANTs compatibility
+  mode, the same code as `fastwarp ants-registration` / `ants-apply-transforms`, with the
+  `ANTsImage`s handed over in memory. Runs `Rigid`, `Affine`, `AffineFast`, `BOLDAffine`,
+  `QuickRigid`, `DenseRigid`, `BOLDRigid`, `SyNCC`, `SyNabp`, `antsRegistrationSyN[r|a|s|sr|so]`,
+  `antsRegistrationSyNQuick[r|a]`, and `SyN`, `SyNRA`, `SyNOnly`, `SyNAggro`, `SyNLessAggro`,
+  `ElasticSyN`, `SyNBold`, `SyNBoldAff` with `syn_metric="CC"`. ANTsPy's default `"SyN"` (Mattes
+  mutual information in SyN), Translation, Similarity, BSplineSyN, GC, time-varying and other
+  unsupported arguments (SyN masks, moving masks, histogram matching, other interpolators, ...)
+  raise `fastwarp.ants.UnsupportedArgument` (a `ValueError`) before any work; arguments ANTsPy
+  ignores for a type are ignored with a `UserWarning`; unknown keyword arguments raise
+  `TypeError`. The result dict has ANTsPy's keys, warped images on the native grids with the
+  fixed image's pixel type, and the transform lists in ANTsPy's order. Keyword-only additions:
+  `iso_mm` (default: the fixed image's smallest spacing), `adapter`, `cancel` and
+  `fallback="ants"`, which runs ANTsPy instead after a refusal, without a GPU or when the
+  registration does not fit, with a warning and an `"engine"` key in the result. A raw argument
+  list, `registration([...], None)`, runs as the subcommand does. `outprefix=""` makes a private
+  temporary folder instead of ANTsPy's `tempfile.mktemp` name. ANTsPy is needed at call time
+  only. See `docs/guide/ants.md`.
+
 - Stage lists: `register_syn(recipe={"initial": ..., "stages": [...]})` runs any number of
   Rigid / Affine stages followed by at most one SyN stage (SyN alone is allowed), from the centres
   of mass (`"com"`, the default), the identity (`"identity"`), one affine from a `.mat` / `.txt`

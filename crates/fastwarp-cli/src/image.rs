@@ -7,10 +7,12 @@
 
 use std::path::Path;
 
-use fastwarp_niftiio::NiftiFile;
-use fastwarp_reg::nifti_io::read_grid as nifti_grid;
+use fastwarp_niftiio::{NiftiFile, WriterOptions};
+use fastwarp_reg::nifti_io::{header_from_grid, read_grid as nifti_grid};
 use fastwarp_reg::{Grid, RegError, Volume};
+use ndarray::Array3;
 
+use crate::ants::PixelType;
 use crate::{CliError, ExitStatus};
 
 /// Whether `path` names a NIfTI-1 file: `.nii` in any case, or that followed by `.gz` in lower
@@ -120,6 +122,49 @@ pub fn save(path: &Path, grid: Grid, data: Vec<f32>) -> Result<(), CliError> {
         .map_err(write_err)
 }
 
+/// Writes `data` (x fastest) on `grid` as a NIfTI file of voxel type `pixel`, with sform and
+/// qform set and the header fields ANTs sets (`pixdim[4..8]` 0, units mm and s). Integer types take the value truncated toward zero and then wrapped to the type's
+/// width, as ITK's static cast in `antsApplyTransforms -u` does (`uchar` -2.7 gives 254).
+pub fn save_as(path: &Path, grid: Grid, data: &[f32], pixel: PixelType) -> Result<(), CliError> {
+    if data.len() != grid.num_voxels() {
+        return Err(CliError::new(
+            ExitStatus::Registration,
+            format!(
+                "cannot write {}: {} values for {} voxels",
+                path.display(),
+                data.len(),
+                grid.num_voxels()
+            ),
+        ));
+    }
+    let [nx, ny, nz] = grid.size();
+    let mut hdr = header_from_grid(&grid);
+    hdr.pixdim[4..].fill(0.0);
+    hdr.xyzt_units = 10;
+    let opts = WriterOptions::new(path).reference_header(&hdr);
+    macro_rules! write_as {
+        ($t:ty, $cast:expr) => {
+            opts.write_nifti(&Array3::<$t>::from_shape_fn((nx, ny, nz), |(i, j, k)| {
+                $cast(data[grid.linear_index(i, j, k)])
+            }))
+        };
+    }
+    match pixel {
+        PixelType::Char => write_as!(i8, |v: f32| v as i64 as i8),
+        PixelType::UChar => write_as!(u8, |v: f32| v as i64 as u8),
+        PixelType::Short => write_as!(i16, |v: f32| v as i64 as i16),
+        PixelType::Int => write_as!(i32, |v: f32| v as i64 as i32),
+        PixelType::Double => write_as!(f64, f64::from),
+        PixelType::Float => write_as!(f32, |v: f32| v),
+    }
+    .map_err(|e| {
+        CliError::new(
+            ExitStatus::Io,
+            format!("cannot write {}: {e}", path.display()),
+        )
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -150,6 +195,47 @@ mod tests {
         let e = load(Path::new("brain.mha"), "fixed image").unwrap_err();
         assert_eq!(e.status, ExitStatus::Usage);
         assert!(e.message.contains("only NIfTI"), "{}", e.message);
+    }
+
+    #[test]
+    fn integer_outputs_wrap_as_ants_writes_them() {
+        let values = [
+            2.7f32, -2.7, 300.4, -300.6, 70000.6, -70000.2, 127.5, 128.5, 255.9, 0.49,
+        ];
+        let grid = Grid::new(
+            [10, 1, 1],
+            [1.0; 3],
+            [0.0; 3],
+            fastwarp_reg::linalg::IDENTITY3,
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("fastwarp_cli_cast_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ants: [(PixelType, [f64; 10]); 4] = [
+            (
+                PixelType::Char,
+                [2., -2., 44., -44., 112., -112., 127., -128., -1., 0.],
+            ),
+            (
+                PixelType::UChar,
+                [2., 254., 44., 212., 112., 144., 127., 128., 255., 0.],
+            ),
+            (
+                PixelType::Short,
+                [2., -2., 300., -300., 4464., -4464., 127., 128., 255., 0.],
+            ),
+            (
+                PixelType::Int,
+                [2., -2., 300., -300., 70000., -70000., 127., 128., 255., 0.],
+            ),
+        ];
+        for (pixel, want) in ants {
+            let path = dir.join(format!("{}.nii", pixel.name()));
+            save_as(&path, grid, &values, pixel).unwrap();
+            let back = Volume::<f64>::load_nifti_f64(&path).unwrap();
+            assert_eq!(back.data(), want.as_slice(), "{}", pixel.name());
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

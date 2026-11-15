@@ -506,6 +506,180 @@ With more than one run, a `med` line gives the median of each column. The machin
 the GPU name, driver, backend, device type and memory budget, the CPU model, logical cores and
 threads used, the operating system and the FastWarp version.
 
+### ants-registration
+
+```bash
+fastwarp ants-registration [antsRegistration arguments]
+```
+
+Takes the arguments of `antsRegistration` (ANTs 2.6.5), runs the subset FastWarp supports on
+the GPU and writes the files `antsRegistration` writes, under the same names. Only this explicit
+subcommand runs it: the program never behaves as `antsRegistration` because of the name it is
+called by, so a copy of FastWarp cannot take the place of ANTs on PATH by accident. Every option
+that would change the result and is not supported is refused with exit status 2 and a message
+that names the option and the reason, before the GPU is opened; options and file names are
+checked before any file is read, the images (for example two SyN channels on different fixed
+grids) right after they are read. The options this command accepts all take effect, or are
+ANTs' defaults. From Python, [`fastwarp.ants`](guide/ants.md) runs the same code on the argument
+lists ANTsPy builds.
+
+**Levels without usable samples are skipped, where ANTs drops the whole stage.** When a level of a Rigid or Affine stage gets no sample point on the fixed image, or only points with one fixed value (typically a coarse level on a small image or inside a small mask: at a shrink factor of 6 a 32-voxel axis has 5 voxels, the regular sampling stride with 20 % of the voxels is 5 as well, and every candidate falls on the same mask edge), Mattes mutual information is undefined there. ANTs 2.6.5 then throws inside the stage, catches the exception, drops the whole stage and exits with status 0, so only the start transform remains (ANTsPy returns it without notice). FastWarp skips only that level, keeps the parameters, runs the finer levels and warns on standard error (`fastwarp: warning: ants-registration: linear stage 1
+(rigid): level 1 of 4 (shrink factors 6x6x6) was skipped: ...`). When every level of a stage is
+skipped, the command fails with exit status 1 and names the remedies (smaller shrink factors, a
+larger sampling percentage, a larger mask, a finer registration grid). `fastwarp register` and
+`fastwarp linear` skip and warn the same way.
+
+```bash
+fastwarp ants-registration -d 3 -r [f.nii.gz,m.nii.gz,1] \
+    -t Rigid[0.1] -m MI[f.nii.gz,m.nii.gz,1,32,Regular,0.25] \
+    -c [1000x500x250x100,1e-6,10] -f 8x4x2x1 -s 3x2x1x0vox \
+    -t Affine[0.1] -m MI[f.nii.gz,m.nii.gz,1,32,Regular,0.25] \
+    -c [1000x500x250x100,1e-6,10] -f 8x4x2x1 -s 3x2x1x0vox \
+    -t SyN[0.1,3,0] -m CC[f.nii.gz,m.nii.gz,1,4] \
+    -c [100x70x50x20,1e-6,10] -f 8x4x2x1 -s 3x2x1x0vox \
+    -o [out/sub_,out/sub_Warped.nii.gz,out/sub_InverseWarped.nii.gz]
+```
+
+The values are parsed as ANTs parses them: names of transforms, metrics, sampling strategies and
+interpolators in any case, brackets split over several shell words (`-c [ 100x70,1e-6,10 ]`, as
+the ANTs scripts write them), and the options of a stage in either order (`-t` before `-m`, as
+the scripts do, or `-m` before `-t`, as ANTsPy does). Stage options are assigned as ANTs
+assigns them: the k-th `-t`, `-c`, `-f` and `-s` belong to stage k, and a `-m` starts the metrics
+of the next stage unless the option just before it is a `-m` too. A list whose number of
+metric stages, `-c`, `-f` or `-s` differs from the number of `-t` is refused (ANTs exits 1 with
+"The number of stages does not match up with the metrics").
+
+Supported:
+
+| Option | Supported values |
+| --- | --- |
+| `-d` | `3` (may be left out) |
+| `-o` | `PREFIX` or `[PREFIX,warped,inverseWarped]`; the prefix is text, as in ANTs |
+| `-r` | `[fixed,moving,1]` (centres of intensity mass, on the images of the first metric), `Identity`, one affine file (`.mat`, `.txt`) or `[file,1]` for its inverse |
+| `-t` | `Rigid[step]` and `Affine[step]` stages, any number, then at most one `SyN[step,<3>,<0>]` stage; `SyN` alone is allowed |
+| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stage: one or two `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (two metrics are two channels) |
+| `-c`, `-f`, `-s` | `MxN` or `[MxN,threshold,window]` (window at least 2), shrink factors, sigmas in `vox` (default) or `mm`; one value per level |
+| `-x` | `[fixedMask,NULL]` (`NA`, `NONE` also mean no mask), once for all stages or once per stage; Rigid and Affine stages only |
+| `-w` | `[lower,upper]`; without it the images are rescaled to [0, 1] as ANTs does |
+| `-a` | `0` or `1` (`Composite.h5` and `InverseComposite.h5` only) |
+| `-z`, `-i`, `-u`, `-p`, `--write-interval-volumes`, `--minc` | `1`, `0`, `0`, `0`, `0`, `0` (the defaults) |
+| `-g` | all-ones vectors (no restriction) |
+| `-n` | `Linear`, `NearestNeighbor`, `LanczosWindowedSinc`: the warped images only |
+| `--float` | `0` or `1`: the voxel type of the warped images and warp fields |
+| `--random-seed` | the seed of every linear stage; without it `ANTS_RANDOM_SEED`, else 20260910 |
+| `-v` | prints the stages, levels, timings and files on standard output |
+| `--version`, `-h`, `--help` | print the version or the supported subset |
+
+Refused, with the reason in the message: `-d 2` and `-d 4`; `--save-state`, `--restore-state`;
+`-z 0` (per-stage transform files); `-i 1`; `-u 1` (histogram matching) and a bare `-u`; `-q`;
+`-r [fixed,moving,0]` and `[...,2]`, a displacement field or more than one `-r`, and centres of
+mass of other images than the first metric's; the transforms `Translation`, `Similarity`,
+`CompositeAffine`, `BSpline`, `BSplineSyN`, `GaussianDisplacementField`,
+`BSplineDisplacementField`, `TimeVaryingVelocityField`, `TimeVaryingBSplineVelocityField`,
+`Exponential`, `BSplineExponential`; a linear stage after the SyN stage or two SyN stages; MI in
+the SyN stage (the default of ANTsPy's `SyN`, `SyNRA`, `SyNOnly`: use `CC`), CC in a Rigid or
+Affine stage, `MeanSquares`, `Demons`, `GC` and the point-set metrics; MI with bins other than
+32, with dense sampling (no strategy or `None`, as in `MI[f,m,1,32]`) or `Random` sampling; CC
+with a sampling strategy, a radius above 8, two radii, or more than two CC metrics;
+`useGradientFilter` 1; two metrics in a linear stage; linear stages on other images than the
+first SyN metric's; a fixed mask on the SyN stage and any moving mask; `-g` with a restriction;
+`-p` and `--write-interval-volumes` above 0; `--minc 1`; the interpolators `MultiLabel`,
+`Gaussian`, `BSpline`, `CosineWindowedSinc`, `WelchWindowedSinc`, `HammingWindowedSinc`,
+`GenericLabel`; images other than NIfTI; an unknown option.
+
+Outputs (with `-z 1`, the default):
+
+| Run | Files |
+| --- | --- |
+| a start (`-r`) or a linear stage, then SyN | `<PREFIX>0GenericAffine.mat`, `<PREFIX>1Warp.nii.gz`, `<PREFIX>1InverseWarp.nii.gz` |
+| linear stages only | `<PREFIX>0GenericAffine.mat` |
+| SyN only, no `-r` | `<PREFIX>0Warp.nii.gz`, `<PREFIX>0InverseWarp.nii.gz` |
+| any, with `-a 1` | `<PREFIX>Composite.h5`, `<PREFIX>InverseComposite.h5` only |
+
+`warped` is the moving image resampled onto the fixed image's grid and `inverseWarped` the fixed
+image resampled onto the moving image's grid, from the images as read (not the rescaled ones),
+with `-n`; both are written for linear-only runs too. Warped images and warp fields are
+`float64`, or `float32` with `--float 1`, as ANTs writes them, with ANTs' header fields. The warp
+fields lie on the fixed image's grid, as in ANTs, also when the registration ran on a finer
+isotropic grid (N1). The output folders must exist: a missing one is refused with exit status 2
+before the GPU is opened, as the other `fastwarp` commands refuse invalid arguments (ANTs runs
+the registration and then fails to write). A mask file that does not exist is an error (ANTs
+silently registers without the mask). The `fastwarp` exit statuses apply
+([Exit status](#exit-status)); a capacity failure (5) or no GPU (4) can fall back to ANTs with
+the same arguments.
+
+The result differs from ANTs' in these ways. The tests in `crates/fastwarp-cli/tests/ants_mode.rs`
+run both programs on a pair that starts 6 to 7 mm apart (shifted, rotated and bent) and compare
+the file names, voxel types and header dimensions, the warped images, the affine at the corners
+of the field of view and the forward map inside the object. With an isotropic fixed image the
+affines agree to 0.06 to 0.5 mm at the corners (a run that does nothing: 5.6 to 7.5 mm) and the
+forward maps to an RMS of 0.03 to 0.06 mm (ANTs' affine without its warp: 0.9 mm); the warped
+images have a correlation of 1.000 with ANTs' (unregistered: 0.83). With a fixed image of 2 x 2 x
+3 mm voxels the corners differ by 1.1 mm and the forward map by 0.36 mm RMS (N1).
+
+- N1, registration grid: FastWarp registers on an isotropic grid at the fixed image's smallest
+  voxel spacing. For an isotropic fixed image this is the fixed grid itself, as in ANTs. For an
+  anisotropic one the images are resampled to that grid (its extent may end up to one voxel short
+  of the fixed image's along the coarse axes) and every axis gets the same shrink factor. The
+  warp fields are then resampled (linearly) onto the fixed image's grid, where ANTs writes them;
+  points of that grid beyond the registration grid get a zero displacement.
+- N2, moving image: it is resampled to that grid as well (without smoothing first); ANTs samples
+  the moving image on its own grid. A moving image much finer than the fixed one loses detail at
+  the last level.
+- N3, precision: the GPU computes in `float32`, also without `--float`, where ANTs computes in
+  `double`. The results differ in the last digits, more after many iterations.
+- N4, random sampling: the regular MI sampling uses ITK's random jitter with ITK's seed sequence;
+  without `--random-seed` and `ANTS_RANDOM_SEED` FastWarp uses the fixed seed 20260910, where
+  ANTs uses the clock. A FastWarp run repeats exactly on the same GPU.
+- N6, centres of mass: computed on the images resampled to the registration grid.
+- N7, voxel values: warped images and fields hold `float32` values even when written as
+  `float64`.
+- N8, transform types: `.mat` and `.h5` files name the `double` types
+  (`AffineTransform_double_3_3`) also with `--float 1`, where ANTs writes `_float_3_3`; every
+  reader accepts both.
+
+N5 (intensity preprocessing) and N9 (warped outputs) of the design list do not apply here: the
+intensity rescale (ANTs' `[0, 1]` window, or `-w`) and the warped outputs on the native grids
+are the same as in ANTs.
+
+A few calls that ANTs runs are refused because they are almost always mistakes: an empty output
+prefix, a bare `-u` (its meaning in ANTs is unclear), `MI[...]` without the bin count, centres
+of mass (`-r [fixed,moving,1]`) of other images than the first metric's,
+compared by file name, and more than one `-r`.
+
+### ants-apply-transforms
+
+```bash
+fastwarp ants-apply-transforms [antsApplyTransforms arguments]
+```
+
+Takes the arguments of `antsApplyTransforms` (ANTs 2.6.5) and writes what it writes, on the
+CPU, with the code of `fastwarp apply` and `fastwarp compose`. Refusals work as for
+`ants-registration`. Options ANTs accepts that change nothing here are accepted with a warning
+on standard error: `-z`, `--time-index` (it applies to `-e 3` only) and `-u` with a transform
+output (ANTs ignores it there too; the type follows `--float`).
+
+| Option | Supported values |
+| --- | --- |
+| `-d`, `-e` | `3`, `0` or `scalar` (may be left out) |
+| `-i`, `-r` | 3-D NIfTI images |
+| `-o` | `warped.nii.gz`; `DisplacementField[field.nii.gz]` or `[field.nii.gz,1]` (the transforms as one field on the reference grid); `[field.h5,1]` (that field as an HDF5 transform); `CompositeTransform[composite.h5]` (the transforms, not collapsed); `Linear[affine.mat,<invert>]` (linear transforms collapsed into one affine, inverted with 1) |
+| `-t` | `file` or `[file,1]`, repeated; the order is that of ANTs (see [apply](#apply)); no `-t` is the identity |
+| `-n` | `Linear`, `NearestNeighbor`, `LanczosWindowedSinc` |
+| `-u` | image output: `char`, `uchar`, `short`, `int`, `float`, `double`, `default` (`double`, or `float` with `--float 1`); field outputs are `double`, or `float` with `--float 1` |
+| `-f`, `--float`, `-v` | default value, voxel type, verbose |
+| `-z`, `--time-index` | accepted with a warning |
+
+Refused: `-d 2`, `-d 4`; `-e` other than 0 (`scalar`); the interpolators FastWarp does not have
+(see above); inverting a displacement field (`-t [1Warp.nii.gz,1]`, where ANTs exits 1 without a
+message: pass the matching `InverseWarp`); a `Linear[...]` output with a field;
+`CompositeTransform[...]` other than `.h5` and `Linear[...]` other than `.mat`. Integer `-u`
+types take each value truncated toward zero and wrapped to the type's width, as ANTs writes them
+(`uchar` -2.7 gives 254, `short` 70000.6 gives 4464). A `[field.h5,1]` output holds the field
+inside a composite transform, where ANTs writes the field transform alone; both read the same.
+The inversion of a `.nii` / `.nii.gz` transform is refused when the arguments are parsed; whether
+an `.h5` or `.mat` file holds a field shows only when it is read.
+
 ## Exit status
 
 | Status | Meaning |

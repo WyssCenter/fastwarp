@@ -171,3 +171,37 @@ def check_linear_stage(
     stage: dict[str, Any] | None = None, transform: str = "rigid"
 ) -> dict[str, Any]: ...
 def cli_main(argv: list[str]) -> int: ...
+
+class UnsupportedArgument(ValueError):
+    """An argument of ``fastwarp.ants`` that FastWarp does not support.
+
+    Raised before any work for an argument that would change the result. Re-exported as
+    ``fastwarp.ants.UnsupportedArgument``.
+    """
+
+_Grid = tuple[
+    tuple[int, int, int],
+    tuple[float, float, float],
+    tuple[float, float, float],
+    tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+]
+
+def ants_parse_registration(argv: list[str]) -> dict[str, Any]: ...
+def ants_parse_apply(argv: list[str]) -> dict[str, Any]: ...
+def ants_resolve_seed(
+    random_seed: int | None = None, ants_random_seed: str | None = None
+) -> int: ...
+def ants_registration(
+    argv: list[str],
+    images: list[tuple[str, _Image]] = ...,
+    keep: list[str] = ...,
+    iso_mm: float | None = None,
+    adapter: str | None = None,
+    cancel: CancelToken | None = None,
+) -> dict[str, Any]: ...
+def ants_apply_transforms(
+    argv: list[str],
+    images: list[tuple[str, _Image]] = ...,
+    grids: list[tuple[str, _Grid]] = ...,
+    keep: list[str] = ...,
+) -> dict[str, Any]: ...

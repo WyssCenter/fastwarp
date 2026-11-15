@@ -12,7 +12,8 @@ FastWarp has three groups of functions:
   machine.
 
 The same functions are available as the [command line](cli.md) `fastwarp`, which works on NIfTI
-files.
+files. For scripts written for ANTsPy, [`fastwarp.ants`](guide/ants.md) takes the calls
+`ants.registration` and `ants.apply_transforms` with their arguments and results.
 
 The pages use the words of ANTs: the {term}`fixed image` is the reference (for example a
 template), and the {term}`moving image` is the one that is aligned to it (for example a
@@ -68,6 +69,13 @@ The registration schedule: every field, its type, unit, default and limits.
 :link-type: doc
 
 Which GPU is used, the memory budget, what fits, and falling back to ANTs.
+:::
+
+:::{grid-item-card} ANTsPy compatibility
+:link: guide/ants
+:link-type: doc
+
+`fastwarp.ants.registration` and `apply_transforms`: ANTsPy's calls, run on the GPU.
 :::
 
 :::{grid-item-card} Command line
@@ -126,6 +134,7 @@ guide/recipes
 guide/linear
 guide/resampling
 guide/gpu
+guide/ants
 cli
 guide/limitations
 ```

@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+mod ants;
 mod recipe;
 
 use fastwarp_cli::engine::{self, Failure, SynOutputs};
@@ -54,6 +55,12 @@ create_exception!(
     RegistrationCancelled,
     PyException,
     "The run was stopped through its CancelToken; no files are written."
+);
+create_exception!(
+    fastwarp,
+    UnsupportedArgument,
+    PyValueError,
+    "An argument of fastwarp.ants that would change the result and that FastWarp does not support; raised before any work. A ValueError."
 );
 
 /// An engine failure as the Python exception the API documents.
@@ -201,6 +208,7 @@ fn register_syn<'py>(
     }
     d.set_item("linear_stages", stages)?;
     d.set_item("deformable", run.deformable)?;
+    d.set_item("warnings", run.warnings.clone())?;
     let files: Vec<String> = run
         .files
         .iter()
@@ -459,6 +467,7 @@ impl LinearSession {
         d.set_item("initial_center", start.center)?;
         d.set_item("metric", fit.metric)?;
         d.set_item("iterations", fit.iterations)?;
+        d.set_item("warnings", fit.warnings)?;
         d.set_item("total_s", t.elapsed().as_secs_f64())?;
         d.set_item("transform", transform)?;
         d.set_item("stage", stage_out)?;
@@ -534,6 +543,12 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LinearSession>()?;
     m.add_function(wrap_pyfunction!(check_linear_stage, m)?)?;
     m.add_function(wrap_pyfunction!(cli_main, m)?)?;
+    m.add_function(wrap_pyfunction!(ants::ants_parse_registration, m)?)?;
+    m.add_function(wrap_pyfunction!(ants::ants_parse_apply, m)?)?;
+    m.add_function(wrap_pyfunction!(ants::ants_resolve_seed, m)?)?;
+    m.add_function(wrap_pyfunction!(ants::ants_registration, m)?)?;
+    m.add_function(wrap_pyfunction!(ants::ants_apply_transforms, m)?)?;
+    m.add("UnsupportedArgument", py.get_type::<UnsupportedArgument>())?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;

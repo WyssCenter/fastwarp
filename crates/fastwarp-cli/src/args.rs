@@ -43,6 +43,32 @@ pub enum Command {
     Fits(FitsArgs),
     /// Time FastWarp registrations on synthetic volumes or on your images.
     Bench(BenchArgs),
+    /// Run antsRegistration arguments (ANTs 2.6.5, supported subset).
+    ///
+    /// Takes the arguments of antsRegistration, runs the subset FastWarp supports and writes the
+    /// files antsRegistration writes; anything else is refused with exit status 2.
+    /// `fastwarp ants-registration --help` lists the subset.
+    #[command(name = "ants-registration", disable_help_flag = true)]
+    AntsRegistration(AntsArgs),
+    /// Run antsApplyTransforms arguments (ANTs 2.6.5, supported subset).
+    ///
+    /// Takes the arguments of antsApplyTransforms and writes what it writes; anything else is
+    /// refused with exit status 2. `fastwarp ants-apply-transforms --help` lists the subset.
+    #[command(name = "ants-apply-transforms", disable_help_flag = true)]
+    AntsApplyTransforms(AntsArgs),
+}
+
+/// The arguments of a compatibility-mode command, passed through unparsed.
+#[derive(Args, Debug)]
+pub struct AntsArgs {
+    /// The arguments of the ANTs program.
+    #[arg(
+        value_name = "ARGS",
+        num_args = 0..,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    pub args: Vec<String>,
 }
 
 #[derive(Args, Debug)]

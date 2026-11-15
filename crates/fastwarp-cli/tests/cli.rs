@@ -107,11 +107,48 @@ fn help_lists_every_subcommand() {
     assert_eq!(code(&o), 0);
     let out = text(&o.stdout);
     for sub in [
-        "register", "linear", "apply", "compose", "recipe", "gpu-info", "fits", "bench",
+        "register",
+        "linear",
+        "apply",
+        "compose",
+        "recipe",
+        "gpu-info",
+        "fits",
+        "bench",
+        "ants-registration",
+        "ants-apply-transforms",
     ] {
         assert!(out.contains(sub), "{sub}");
     }
     assert!(out.contains("Usage: fastwarp <COMMAND>"), "{out}");
+}
+
+#[test]
+fn ants_modes_pass_help_and_version_through() {
+    for (sub, program) in [
+        ("ants-registration", "antsRegistration"),
+        ("ants-apply-transforms", "antsApplyTransforms"),
+    ] {
+        for flag in ["-h", "--help", "--version"] {
+            let o = run(&[sub, flag]);
+            assert_eq!(code(&o), 0, "{sub} {flag}: {}", text(&o.stderr));
+            let out = text(&o.stdout);
+            assert!(
+                out.starts_with(&format!(
+                    "fastwarp {} ({program} compatibility mode",
+                    env!("CARGO_PKG_VERSION")
+                )),
+                "{sub} {flag}: {out}"
+            );
+            assert_eq!(out.contains("Supported:"), flag != "--version", "{out}");
+        }
+    }
+    let o = run(&["ants-registration", "-d", "3", "--foo"]);
+    assert_eq!(code(&o), 2);
+    assert_eq!(
+        text(&o.stderr).trim(),
+        "fastwarp: error: ants-registration: unknown option --foo"
+    );
 }
 
 #[test]
