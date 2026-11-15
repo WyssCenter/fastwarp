@@ -48,6 +48,7 @@ Changelog = "https://github.com/WyssCenter/fastwarp/blob/main/CHANGELOG.md"
 dev = [
     "maturin>=1.9.4,<2",
     "pytest>=9.2.0",
+    "pytest-xdist>=3.8",
     "ruff>=0.17.3",
 ]
 ants = ["antspyx>=0.6.1"]
