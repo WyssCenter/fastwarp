@@ -124,10 +124,9 @@ uvx fastwarp --help
 
 ::::
 
-Release 0.1.0 on PyPI does not have the command line; it comes with release 0.2.0 (see the
-[changelog](changelog.md)), and until then `uvx fastwarp` and `uv tool install fastwarp` do not
-give it. Install FastWarp [from source](#from-source), or run the command from source without
-installing it:
+The command line needs release 0.2.0 or later (see the [changelog](changelog.md)); release
+0.1.0 does not have it. To run the development version, install FastWarp
+[from source](#from-source), or run the command from source without installing it:
 
 ```bash
 uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help

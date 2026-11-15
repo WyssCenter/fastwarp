@@ -40,8 +40,9 @@ The command line `fastwarp` comes with the Python package. `uv tool install fast
 only the command and `uvx fastwarp --help` runs it without installing. From release 0.2.0 it
 also comes as a standalone program without Python, with installer scripts for Linux, macOS and
 Windows ([Command line: install](https://fastwarp.readthedocs.io/latest/cli.html#install)).
-Release 0.1.0 does not have the command line; until 0.2.0 is out,
-`uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help` runs it from source.
+The command line needs release 0.2.0 or later;
+`uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help` runs the
+development version from source.
 [Installation](https://fastwarp.readthedocs.io/latest/installation.html) has the requirements
 and the build from source.
 
