@@ -778,7 +778,8 @@ def _suffixes(result, prefix):
 
 @needs_gpu
 @pytest.mark.parametrize(("t", "kw", "pixeltype"), T4_CASES)
-def test_t4_return_dict_is_antspys(ants, tmp_path, t, kw, pixeltype):
+def test_t4_return_dict_is_antspys(ants, tmp_path, monkeypatch, t, kw, pixeltype):
+    monkeypatch.setattr(sys.modules["ants.config"], "_random_seed", 1)
     fixed = _head(ants, (32, 34, 28), (2.0, 2.0, 2.0), pixeltype=pixeltype)
     moving = _head(ants, (30, 36, 30), (2.2, 1.9, 1.8), shift=(3.0, -2.0, 1.5))
     masked = kw.get("mask") == "MASK"
