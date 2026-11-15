@@ -127,6 +127,7 @@ direction it maps; the result's `files` lists the paths written.
 | `peak_gpu_bytes` | `int` | The most GPU memory the engine's buffers held at one time during the run. |
 | `memory_budget_bytes` | `int` | The memory budget the capacity check used. |
 | `recipe` | `dict` | The full recipe that ran, every field present. |
+| `warnings` | `list[str]` | One entry per linear level skipped because its sample points leave mutual information undefined; each is also emitted as a `UserWarning`. Empty when every level ran. |
 
 Each entry of `levels` is a tuple `(level, grid_size, iterations, converged, energy)`:
 

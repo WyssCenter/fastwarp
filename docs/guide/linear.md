@@ -55,6 +55,7 @@ The fit returns a dictionary:
 | `transform` | `str` | `"rigid"` or `"affine"`. |
 | `stage` | `dict` | The full schedule that ran. |
 | `adapter` | `str` | The GPU used. |
+| `warnings` | `list[str]` | One entry per level skipped because its sample points leave mutual information undefined; each is also emitted as a `UserWarning`. Empty when every level ran. |
 
 ## A rigid fit, then an affine one
 

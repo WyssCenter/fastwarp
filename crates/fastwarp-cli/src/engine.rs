@@ -20,7 +20,7 @@ use fastwarp_reg::init::{initial_transform, InitFeature};
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
 use fastwarp_reg::register::RegisterTimings;
-use fastwarp_reg::stages::{register_stages, write_stage_outputs, StagePlan};
+use fastwarp_reg::stages::{register_stages, write_stage_outputs, StagePlan, StagesOutput};
 use fastwarp_reg::syn::SynOptions;
 use fastwarp_reg::transform::ants_io::{with_suffix, COMPOSITE_SUFFIX};
 use fastwarp_reg::transform::{
@@ -232,6 +232,9 @@ pub struct SynRun {
     pub linear_stages: Vec<StageSummary>,
     /// Whether a SyN stage ran.
     pub deformable: bool,
+    /// One message per linear level that was skipped because its samples left the metric
+    /// undefined (the run went on with the finer levels).
+    pub warnings: Vec<String>,
     /// The files written, in the order composites, affine, warps, warped image.
     pub files: Vec<PathBuf>,
     pub peak_gpu_bytes: u64,
@@ -270,6 +273,45 @@ pub fn register_syn(
     cancel: Option<Arc<AtomicBool>>,
     recipe: Recipe,
 ) -> Result<SynRun, Failure> {
+    register_with(
+        fixed,
+        moving,
+        iso_mm,
+        adapter,
+        cancel,
+        recipe,
+        move |out, fixed, moving| {
+            drop((fixed, moving));
+            let t = Instant::now();
+            let files = match &outputs {
+                Some(o) => write_stage_outputs(&o.prefix, out, o.layout, o.write_warped)
+                    .map_err(|e| Failure::Write(format!("writing outputs: {e}")))?,
+                None => Vec::new(),
+            };
+            Ok((files, t.elapsed().as_secs_f64()))
+        },
+    )
+}
+
+/// [`register_syn`] with the outputs written by `write`, which gets the result and the input
+/// images back (to resample them through the result) and returns the paths it wrote and the
+/// seconds the writing took (`SynRun::write_s`).
+pub fn register_with<W>(
+    fixed: Vec<Volume<f64>>,
+    moving: Vec<Volume<f64>>,
+    iso_mm: f64,
+    adapter: Option<String>,
+    cancel: Option<Arc<AtomicBool>>,
+    recipe: Recipe,
+    write: W,
+) -> Result<SynRun, Failure>
+where
+    W: FnOnce(
+        &StagesOutput,
+        Vec<Volume<f64>>,
+        Vec<Volume<f64>>,
+    ) -> Result<(Vec<PathBuf>, f64), Failure>,
+{
     guarded(move || {
         let t_all = Instant::now();
         let g = open_gpu(adapter)?;
@@ -295,14 +337,7 @@ pub fn register_syn(
             &options,
         )
         .map_err(reg_err)?;
-        drop((fixed, moving));
-        let t = Instant::now();
-        let files = match &outputs {
-            Some(o) => write_stage_outputs(&o.prefix, &out, o.layout, o.write_warped)
-                .map_err(|e| Failure::Write(format!("writing outputs: {e}")))?,
-            None => Vec::new(),
-        };
-        let write_s = t.elapsed().as_secs_f64();
+        let (files, write_s) = write(&out, fixed, moving)?;
         let linear_stages = recipe
             .plan
             .linear
@@ -312,6 +347,16 @@ pub fn register_syn(
                 transform: kind_name(r.kind),
                 iterations: s.levels.iter().map(|l| l.cg.iterations).collect(),
                 metric: s.final_metric(),
+            })
+            .collect();
+        let warnings = recipe
+            .plan
+            .linear
+            .iter()
+            .zip(&out.linear)
+            .enumerate()
+            .flat_map(|(i, (r, s))| {
+                s.warnings(&format!("linear stage {} ({})", i + 1, kind_name(r.kind)))
             })
             .collect();
         Ok(SynRun {
@@ -338,6 +383,7 @@ pub fn register_syn(
             initial_center: out.initial.center,
             linear_stages,
             deformable: out.deformable,
+            warnings,
             files,
             peak_gpu_bytes: g.peak_allocated_bytes(),
             memory_budget_bytes: caps.memory_budget,

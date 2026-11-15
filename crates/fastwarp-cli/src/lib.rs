@@ -14,6 +14,7 @@ use std::sync::Once;
 
 use clap::Parser;
 
+pub mod ants;
 pub mod args;
 pub mod bench;
 mod commands;
@@ -56,6 +57,9 @@ impl ExitStatus {
 pub struct CliError {
     pub status: ExitStatus,
     pub message: String,
+    /// A usage error that names something FastWarp does not support (rather than an invalid
+    /// argument); the Python layer `fastwarp.ants` raises `UnsupportedArgument` for it.
+    pub unsupported: bool,
 }
 
 impl CliError {
@@ -63,11 +67,20 @@ impl CliError {
         Self {
             status,
             message: message.into(),
+            unsupported: false,
         }
     }
 
     pub fn usage(message: impl Into<String>) -> Self {
         Self::new(ExitStatus::Usage, message)
+    }
+
+    /// A usage error for something FastWarp does not support.
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self {
+            unsupported: true,
+            ..Self::usage(message)
+        }
     }
 }
 

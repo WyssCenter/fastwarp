@@ -52,5 +52,8 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
   inverts affine files and composites of affines. A displacement field cannot be inverted inside
   a transform list; use the inverse file FastWarp writes, such as `InverseComposite.h5` or
   `1InverseWarp.nii.gz`.
+- **ANTsPy only in part.** [`fastwarp.ants`](ants.md) runs ANTsPy's registration and
+  resampling calls within these limits and refuses the rest; ANTsPy's default
+  `type_of_transform="SyN"` needs Mattes mutual information in SyN and is refused.
 - **No point transforms.** To move points, use `antsApplyTransformsToPoints` or
   `ants.apply_transforms_to_points` with the [right file](outputs.md).

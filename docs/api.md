@@ -1,7 +1,8 @@
 # API reference
 
-Everything below is imported from the package itself, `import fastwarp`, and listed in
-`fastwarp.__all__`. Modules whose names start with an underscore are private.
+Everything below except the section [ANTsPy compatibility](#antspy-compatibility) is imported from
+the package itself, `import fastwarp`, and listed in `fastwarp.__all__`; that section is the
+module `fastwarp.ants`. Modules whose names start with an underscore are private.
 
 An *image* is an `ANTsImage` or a tuple `(array, spacing, origin, direction)` (see
 [Images](guide/images.md)); a *reference grid* is an `ANTsImage` or a tuple
@@ -57,6 +58,23 @@ Applying ANTs transform files on the CPU. Guide: [Resampling](guide/resampling.m
 
 ```{eval-rst}
 .. autoapidata:: fastwarp.INTERPOLATORS
+```
+
+## ANTsPy compatibility
+
+The module `fastwarp.ants`: ANTsPy's `ants.registration` and `ants.apply_transforms`. Guide:
+[ANTsPy compatibility](guide/ants.md).
+
+```{eval-rst}
+.. autoapifunction:: fastwarp.ants.registration
+```
+
+```{eval-rst}
+.. autoapifunction:: fastwarp.ants.apply_transforms
+```
+
+```{eval-rst}
+.. autoapiexception:: fastwarp.ants.UnsupportedArgument
 ```
 
 ## GPU checks

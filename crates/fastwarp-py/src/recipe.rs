@@ -102,7 +102,7 @@ fn float_json(v: &Bound<'_, PyAny>, what: &str) -> PyResult<Value> {
 }
 
 /// JSON as the Python value `json.loads` would give.
-fn from_json<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
+pub fn from_json<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
     Ok(match v {
         Value::Null => py.None().into_bound(py),
         Value::Bool(b) => PyBool::new(py, *b).to_owned().into_any(),

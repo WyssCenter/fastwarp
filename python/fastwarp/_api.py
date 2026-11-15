@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from os import PathLike, fspath
 from pathlib import Path
@@ -59,6 +60,13 @@ def _image_args(img: Any) -> tuple:
         tuple(float(o) for o in origin),
         tuple(tuple(float(v) for v in row) for row in d),
     )
+
+
+def _warn_skipped(result: dict[str, Any], stacklevel: int = 3) -> dict[str, Any]:
+    """Emits each engine warning of ``result`` (a level skipped for lack of samples)."""
+    for w in result.get("warnings", ()):
+        warnings.warn(f"fastwarp: {w}", UserWarning, stacklevel=stacklevel)
+    return result
 
 
 def _as_list(x: Any) -> list[Any]:
@@ -152,7 +160,9 @@ def register_syn(
         (``affine_parameters``, ``affine_center``), the start (``initial_parameters``,
         ``initial_center``), one dict per linear stage (``linear_stages``), whether a SyN stage ran
         (``deformable``), the paths written (``files``), ``peak_gpu_bytes``,
-        ``memory_budget_bytes`` and the full ``recipe`` that ran.
+        ``memory_budget_bytes``, the full ``recipe`` that ran, and ``warnings``: one message per
+        linear level that was skipped because its samples left the metric undefined (each is
+        also emitted as a ``UserWarning``).
 
     Raises
     ------
@@ -180,7 +190,7 @@ def register_syn(
     image onto the fixed image), ``<out_prefix>InverseComposite.h5`` (the inverse) and
     ``<out_prefix>0GenericAffine.mat`` (the affine part).
     """
-    return _register_syn(
+    result = _register_syn(
         [_image_args(i) for i in _as_list(fixed)],
         [_image_args(i) for i in _as_list(moving)],
         _prepared_prefix(out_prefix),
@@ -191,6 +201,7 @@ def register_syn(
         recipe=_recipe_arg(recipe),
         outputs=outputs,
     )
+    return _warn_skipped(result)
 
 
 def _as_dict(stage: Any) -> Any:
@@ -661,7 +672,8 @@ class LinearSession:
             holds), ``initial_parameters`` and ``initial_center``, ``metric`` (the final value
             of the negative mutual information, lower is better; ``None`` when the last level ran no
             iteration), ``iterations`` per level, ``total_s``, ``transform``, ``stage`` (the full
-            schedule) and ``adapter``.
+            schedule), ``adapter``, and ``warnings``: one message per level that was skipped because
+            its samples left the metric undefined (each is also emitted as a ``UserWarning``).
 
         Raises
         ------
@@ -673,7 +685,7 @@ class LinearSession:
         RegistrationError
             The fit failed, for example because the GPU ran out of memory.
         """
-        return self._core.register(
+        result = self._core.register(
             stage=None if stage is None else dict(stage),
             initial=_initial(initial),
             use_mask=use_mask,
@@ -682,6 +694,7 @@ class LinearSession:
             transform=transform,
             mask=None if mask is None else _image_args(mask),
         )
+        return _warn_skipped(result)
 
     def close(self) -> None:
         """Free the GPU and the images. Using the session afterwards raises ``ValueError``."""

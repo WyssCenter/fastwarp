@@ -28,15 +28,25 @@ pub(crate) fn dispatch(
     err: &mut dyn Write,
 ) -> Result<ExitStatus, CliError> {
     match command {
-        Command::Register(a) => register(a, out),
-        Command::Linear(a) => linear(a, out),
+        Command::Register(a) => register(a, out, err),
+        Command::Linear(a) => linear(a, out, err),
         Command::Apply(a) => apply(a, out),
         Command::Compose(a) => compose(a, out),
         Command::Recipe(a) => recipe(a, out),
         Command::GpuInfo(a) => gpu_info(a, out),
         Command::Fits(a) => fits(a, out),
         Command::Bench(a) => crate::bench::run(a, out, err),
+        Command::AntsRegistration(a) => crate::ants::run::registration(&a.args, out, err),
+        Command::AntsApplyTransforms(a) => crate::ants::run::apply(&a.args, out, err),
     }
+}
+
+/// Prints each engine warning on `err` as `fastwarp: warning: ...`.
+pub(crate) fn warn(err: &mut dyn Write, warnings: &[String]) {
+    for w in warnings {
+        let _ = writeln!(err, "fastwarp: warning: {w}");
+    }
+    let _ = err.flush();
 }
 
 pub(crate) fn print(out: &mut dyn Write, text: &str) -> Result<(), CliError> {
@@ -121,6 +131,7 @@ pub(crate) fn syn_run_json(run: &SynRun) -> Value {
             "metric": s.metric,
         })).collect::<Vec<_>>(),
         "deformable": run.deformable,
+        "warnings": run.warnings,
         "files": run.files.iter().map(|p| path_text(p)).collect::<Vec<_>>(),
         "peak_gpu_bytes": run.peak_gpu_bytes,
         "memory_budget_bytes": run.memory_budget_bytes,
@@ -128,7 +139,11 @@ pub(crate) fn syn_run_json(run: &SynRun) -> Value {
     })
 }
 
-fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
+fn register(
+    a: RegisterArgs,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<ExitStatus, CliError> {
     if let Some(mm) = a.iso_mm {
         engine::check_iso_mm(mm)?;
     }
@@ -174,6 +189,7 @@ fn register(a: RegisterArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError
         None,
         recipe,
     )?;
+    warn(err, &run.warnings);
     let files = &run.files;
     if a.common.json {
         let mut v = syn_run_json(&run);
@@ -224,7 +240,7 @@ fn read_initial(path: &Path) -> Result<AffineTransform, CliError> {
     }
 }
 
-fn linear(a: LinearArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
+fn linear(a: LinearArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<ExitStatus, CliError> {
     let transform = a.transform.name();
     let stage_json = a
         .stage
@@ -271,6 +287,7 @@ fn linear(a: LinearArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
             .map_err(engine::reg_err)
     })?;
     let total_s = t.elapsed().as_secs_f64();
+    warn(err, &fit.warnings);
     let mut files: Vec<PathBuf> = Vec::new();
     if let Some(prefix) = &a.output {
         let path = with_suffix(prefix, AFFINE_SUFFIX);
@@ -293,6 +310,7 @@ fn linear(a: LinearArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
                 "initial_center": start.center,
                 "metric": fit.metric,
                 "iterations": fit.iterations,
+                "warnings": fit.warnings,
                 "total_s": total_s,
                 "transform": transform,
                 "stage": linear_to_json(&stage),
