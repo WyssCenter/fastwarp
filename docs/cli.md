@@ -57,9 +57,9 @@ uvx fastwarp --help
 These need Python 3.11 or later. `uv tool install` puts `fastwarp` in uv's tool folder
 (`~/.local/bin`, on Windows `%USERPROFILE%\.local\bin`); `uv tool uninstall fastwarp` removes it.
 
-Release 0.1.0 on PyPI does not have the command line; it comes with release 0.2.0. Until then,
-install FastWarp [from source](installation.md#from-source), or run the command from source
-without installing it:
+The command line needs release 0.2.0 or later; release 0.1.0 does not have it. To run the
+development version, install FastWarp [from source](installation.md#from-source), or run the
+command from source without installing it:
 
 ```bash
 uvx --from "git+https://github.com/WyssCenter/fastwarp.git" fastwarp --help
