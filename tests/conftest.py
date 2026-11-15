@@ -32,3 +32,13 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             import ants  # noqa: F401
         except ImportError as e:
             pytest.exit(f"FASTWARP_REQUIRE_ANTSPY is set but ANTsPy does not import: {e}", 1)
+
+
+@pytest.fixture(scope="session")
+def baseline(tmp_path_factory):
+    import fastwarp as g
+    from test_register import SHIFT_MM, SPACING, phantom
+
+    out = tmp_path_factory.mktemp("baseline") / "sub_"
+    info = g.register_syn(phantom(), phantom(SHIFT_MM), out, iso_mm=SPACING, write_warped=True)
+    return out, info

@@ -129,16 +129,33 @@ All test variables are listed under [Environment variables](environment.md#tests
 uv sync --locked --no-install-project --group ants
 PYO3_PYTHON="$PWD/.venv/bin/python" cargo nextest run --locked --workspace \
   --features fastwarp-gpu/dev-tools --profile ci
-uv run --no-sync maturin build --locked --release -o dist
-uv pip install --no-deps dist/*.whl
-cargo build --locked --workspace --features fastwarp-gpu/dev-tools --bin fastwarp
-FASTWARP_BIN="$PWD/target/debug/fastwarp" uv run --no-sync pytest tests -v -rs
 ```
 
-It builds a release wheel, installs it, and runs `pytest` against the installed wheel. The local
-commands above install the extension in editable form instead. The `ci` nextest profile
-(`.config/nextest.toml`) keeps going after a failure, prints the failures at the end, and starts
-two long GPU tests first.
+in the job `rust` and, at the same time, in the job `python`:
+
+```bash
+uv sync --locked --no-install-project --group ants
+uv run --no-sync maturin build --locked --release -o dist
+uv pip install --no-deps dist/*.whl
+cargo build --locked --release -p fastwarp-py -p fastwarp-cli --bin fastwarp
+FASTWARP_BIN="$PWD/target/release/fastwarp" uv run --no-sync pytest tests -v -rs \
+  -n auto --durations=20
+```
+
+The job `test` only reports whether both succeeded; it is the check that the ruleset of `main`
+requires, together with `lint`.
+
+The `ci` nextest profile (`.config/nextest.toml`) of the `rust` job keeps going after a failure,
+prints the failures at the end, and starts two long GPU tests first.
+
+The `python` job builds a release wheel, installs it, and runs `pytest` against the installed
+wheel. The local commands above install the extension in editable form instead. The standalone
+program is built with the features of the wheel (`-p fastwarp-py -p fastwarp-cli`), so that it
+reuses what the wheel build compiled. `-n auto` runs the tests in one process per logical CPU
+(pytest-xdist); a plain `pytest` runs them one after the other, which is the safer choice on a
+hardware GPU, where every process opens the GPU. The tests that compare a run with the default
+registration take it from the session fixture `baseline` (`tests/conftest.py`), which runs once
+per process.
 
 Hardware GPUs are not tested in CI: `ci.yml` runs the GPU tests on the lavapipe software
 driver. The hardware in [Performance](performance.md) was measured by hand, and the examples of

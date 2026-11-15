@@ -47,10 +47,8 @@ def phantom(shift_mm=(0.0, 0.0, 0.0)) -> tuple:
 
 
 @pytest.fixture(scope="module")
-def result(tmp_path_factory):
-    out = tmp_path_factory.mktemp("reg") / "sub_"
-    info = g.register_syn(phantom(), phantom(SHIFT_MM), out, iso_mm=SPACING, write_warped=True)
-    return out, info
+def result(baseline):
+    return baseline
 
 
 @needs_gpu
@@ -240,10 +238,9 @@ def _hashes(prefix: Path) -> tuple[str, str]:
 
 
 @needs_gpu
-def test_runs_are_deterministic(tmp_path):
-    g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "a_", iso_mm=SPACING)
+def test_runs_are_deterministic(tmp_path, baseline):
     g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "b_", iso_mm=SPACING)
-    assert _hashes(tmp_path / "a_") == _hashes(tmp_path / "b_")
+    assert _hashes(baseline[0]) == _hashes(tmp_path / "b_")
 
 
 @needs_gpu

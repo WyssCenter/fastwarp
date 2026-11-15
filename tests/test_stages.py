@@ -30,9 +30,8 @@ def _names(info) -> list[str]:
 
 
 @needs_gpu
-def test_the_stage_list_form_of_the_cohort_is_the_default_bit_for_bit(tmp_path):
-    a, b, c = tmp_path / "default_", tmp_path / "staged_", tmp_path / "echo_"
-    g.register_syn(phantom(), phantom(SHIFT_MM), a, iso_mm=SPACING)
+def test_the_stage_list_form_of_the_cohort_is_the_default_bit_for_bit(tmp_path, baseline):
+    a, b, c = baseline[0], tmp_path / "staged_", tmp_path / "echo_"
     cohort = g.cohort_recipe(1)
     staged = {
         "initial": "com",
