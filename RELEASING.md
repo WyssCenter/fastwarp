@@ -36,18 +36,19 @@ only through this manual run. Never push a tag for it: a tag publishes to PyPI.
 
 ## Release steps
 
-`scripts/release.py` does the repetitive steps. It runs on Linux, macOS and Windows with Python
-3.11 or later and no packages (`python scripts/release.py ...`, or
-`uv run --no-project scripts/release.py ...`), and needs `git` and an authenticated `gh` on the
-PATH. It always works from `origin/main` and the GitHub repository of `origin`, asks before each
-step that changes something, and `--dry-run` prints the changes of `prepare` and `finish`
-without making them.
+`scripts/release.py` does the repetitive steps. It runs on Linux, macOS and Windows. Run it with
+`uv run scripts/release.py ...`: uv takes the Python interpreter from `.python-version` and the
+script's own header (Python 3.11 or later, no packages) and does not build the project. Do not
+run it with a bare `python`, which may be any interpreter. It needs `git` and an authenticated
+`gh` on the PATH. It always works from `origin/main` and the GitHub repository of `origin`, asks
+before each step that changes something, and `--dry-run` prints the changes of `prepare` and
+`finish` without making them.
 
 Before you start, by hand: check the pinned tools for newer versions (see the end of *What the
 workflow does*), and search `README.md` and `docs/` for sentences that speak of the coming
 release as a future one.
 
-1. `python scripts/release.py prepare <version>` (`X.Y.Z`, or `major`, `minor` or `patch`) opens
+1. `uv run scripts/release.py prepare <version>` (`X.Y.Z`, or `major`, `minor` or `patch`) opens
    the release pull request from the branch `release/<version>`:
    - `version` in `Cargo.toml` (`[workspace.package]`; the wheel takes its version from there),
      in `Cargo.lock` and in `CITATION.cff`;
@@ -58,7 +59,7 @@ release as a future one.
      `docs/cli.md`.
 2. Squash-merge the pull request when its checks are green, `full.yml` included (the ruleset
    requires only `lint` and `test`). Merge nothing else until the tag is pushed.
-3. `python scripts/release.py tag` checks the head of `origin/main`: it is the release commit
+3. `uv run scripts/release.py tag` checks the head of `origin/main`: it is the release commit
    (its parent has another version and `## Unreleased` is empty), the files above agree on the
    version, the tag does not exist, `ci.yml` is green for the push of the commit, and a manual
    run of the release workflow on `main` (`gh workflow run wheels.yml --ref main`) is green on
@@ -67,7 +68,7 @@ release as a future one.
    publishing anything; the script offers to start it and waits for it. Then, after you type the
    version, it creates the annotated tag `v<version>` on that commit and pushes it. The tag
    publishes to PyPI.
-4. When the release is published, `python scripts/release.py finish <version>` opens a pull
+4. When the release is published, `uv run scripts/release.py finish <version>` opens a pull
    request that pins `benchmarks/fastwarp-pypi.txt` to the new wheels. It takes their SHA-256
    from PyPI and refuses them unless they equal those in `SHA256SUMS` of the GitHub release.
 
