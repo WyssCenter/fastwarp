@@ -24,7 +24,7 @@ As BibTeX, with the version you used:
   author  = {K{\"o}hler, Richard M. and Payonk, Jan Philipp and Neumann, Wolf-Julian},
   title   = {{FastWarp}: the {GPU} registration engine of {Wyss DBS Localizer}},
   year    = {2026},
-  version = {0.1.0},
+  version = {0.2.0},
   url     = {https://github.com/WyssCenter/fastwarp},
   license = {Apache-2.0}
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-11-15)
+
 - ANTs compatibility mode: `fastwarp ants-registration ARGS...` and
   `fastwarp ants-apply-transforms ARGS...` take the arguments of `antsRegistration` and
   `antsApplyTransforms` (ANTs 2.6.5), run the subset FastWarp supports and write the files ANTs
