@@ -1,7 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 # SPDX-License-Identifier: Apache-2.0
 
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+
 """Release helper for FastWarp maintainers (standard library only; needs git and gh).
+
+Run it with uv, which picks the Python interpreter: uv run scripts/release.py COMMAND
 
 prepare  bump the version, roll the changelog, open the release pull request
 tag      check the merged release commit and its CI, then create and push the tag
@@ -451,14 +458,14 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     body = (
         f"Release {version}: version in `Cargo.toml`, `Cargo.lock`, `CITATION.cff` and the "
         f"documentation, and the `CHANGELOG.md` section.\n\n"
-        f"After the merge: `python scripts/release.py tag {version}`."
+        f"After the merge: `uv run scripts/release.py tag {version}`."
     )
     if open_pull_request(
         base, branch, edits, f"release: {version}", body, args.yes, verify_lockfile
     ):
         print(
             f"\nNext: merge the pull request when its checks are green, then run\n"
-            f"  python scripts/release.py tag {version}"
+            f"  uv run scripts/release.py tag {version}"
         )
 
 
@@ -591,7 +598,7 @@ def cmd_tag(args: argparse.Namespace) -> None:
         f"\nThe release workflow runs now; find it with\n"
         f"  gh run list --workflow {RELEASE_WORKFLOW} --limit 1\n"
         f"When the release is published, run\n"
-        f"  python scripts/release.py finish {version}"
+        f"  uv run scripts/release.py finish {version}"
     )
 
 
