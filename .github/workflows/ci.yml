@@ -80,7 +80,6 @@ jobs:
       FASTWARP_GPU_REQUIRE_ADAPTER: "1"
       FASTWARP_REQUIRE_ANTSPY: "1"
       UV_PYTHON: "3.13"
-      LP_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Mesa Vulkan software driver (lavapipe)
