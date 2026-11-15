@@ -36,7 +36,7 @@ jobs:
         with:
           version: "0.13.7"
       - run: uv sync --locked --no-install-project
-      - run: uv run --no-sync ruff check python tests benchmarks && uv run --no-sync ruff format --check python tests benchmarks
+      - run: uv run --no-sync ruff check python tests benchmarks scripts && uv run --no-sync ruff format --check python tests benchmarks scripts
 
   test:
     runs-on: ubuntu-latest
