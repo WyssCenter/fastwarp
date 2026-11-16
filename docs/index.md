@@ -10,7 +10,9 @@ transform files as ANTs, so the rest of an ANTs-based pipeline can stay as it is
 
 FastWarp is a Python package with a compiled Rust engine. It is meant for people who build or run
 neuroimaging pipelines, for example to normalize brain MRI onto a template, and who use ANTs for
-that today.
+that today. It is the registration engine of
+[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), a tool for localizing deep brain
+stimulation electrodes, and works on its own as well.
 
 ```{raw} html
 <figure class="fw-hero">
