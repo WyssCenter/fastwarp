@@ -24,14 +24,20 @@ def _digest(prefix: Path) -> str:
 
 def test_cohort_recipe_has_every_field():
     one, two = g.cohort_recipe(1), g.cohort_recipe(2)
+    three, four = g.cohort_recipe(3), g.cohort_recipe(4)
     assert set(one) == {"rigid", "affine", "syn"}
     assert one["syn"]["channel_weights"] == [1.0]
     assert two["syn"]["channel_weights"] == [0.5, 0.5]
+    assert three["syn"]["channel_weights"] == [1.0 / 3.0] * 3
+    assert four["syn"]["channel_weights"] == [0.25] * 4
     assert one["rigid"]["iterations"] == [1000, 500, 250, 100]
     assert one["syn"]["iterations"] == [100, 70, 50, 20]
     assert one["syn"]["cc_radius"] == 4 and one["rigid"]["bins"] == 32
-    with pytest.raises(ValueError):
-        g.cohort_recipe(3)
+    assert g.cohort_recipe(5)["syn"]["channel_weights"] == [0.2] * 5
+    with pytest.raises(ValueError, match="channels must be at least 1"):
+        g.cohort_recipe(0)
+    with pytest.raises(ValueError, match="too many channels"):
+        g.cohort_recipe(2**62)
 
 
 @needs_gpu

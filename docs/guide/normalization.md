@@ -8,7 +8,7 @@ another start and other stages, for example only the linear ones. All parameters
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
-| `fixed`, `moving` | required | One [image](images.md) each, or a list of two images each (see [Two channels](#two-channels)). |
+| `fixed`, `moving` | required | One [image](images.md) each, or a list of images each (see [Several channels](#several-channels)). |
 | `out_prefix` | required | Where the files go: a file-name prefix, or a folder when it ends in `/` (see [Output prefix](#output-prefix)). |
 | `iso_mm` | `1.0` | Voxel size of the {term}`registration grid`, in millimetres. |
 | `write_warped` | `False` | Also write the warped moving image. |
@@ -139,10 +139,11 @@ Each entry of `levels` is a tuple `(level, grid_size, iterations, converged, ene
 | `converged` | `bool` | `True` when the convergence test stopped the level before its iteration limit. |
 | `energy` | `float` | The metric value of the last iteration, the negative cross-correlation of the first channel (lower is better); 0.0 when the level ran no iteration. |
 
-## Two channels
+## Several channels
 
-Pass two images on each side to use two {term}`channels <channel>` in the SyN stage, for example
-a {term}`T1-weighted and a T2-weighted <T1w, T2w>` scan:
+Pass a list of any number of images on each side to use several
+{term}`channels <channel>` in the SyN stage, for example a {term}`T1-weighted and a T2-weighted
+<T1w, T2w>` scan:
 
 ```python
 info = fastwarp.register_syn(
@@ -151,10 +152,10 @@ info = fastwarp.register_syn(
 ```
 
 The names are placeholders for your own images. The Rigid and Affine stages use only the first
-channel; SyN uses both, each with the weight in `channel_weights` (0.5 each by default). The
-second moving image must already be aligned to the first one, for example by a rigid fit with
-{func}`~fastwarp.linear_session`. Two channels need more GPU memory; pass both lists to
-{func}`~fastwarp.fits_gpu` to check.
+channel; SyN uses all of them, each with the weight in `channel_weights` (`1 / channels` each by
+default). The further moving images must already be aligned to the first one, for example by a
+rigid fit with {func}`~fastwarp.linear_session`. Every channel needs more GPU memory, which is the
+only limit on their number; pass all lists to {func}`~fastwarp.fits_gpu` to check.
 
 ## Cancelling a run
 

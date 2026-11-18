@@ -73,7 +73,9 @@ def test_help_and_version(how):
 EXIT_CASES = [
     ([], 2),
     (["frobnicate"], 2),
-    (["recipe", "--channels", "3"], 2),
+    (["recipe", "--channels", "0"], 2),
+    (["register", "f.nii", "m.nii", "-o", "x_", "--fixed2", "a.nii", "--moving2", "b.nii"], 2),
+    (["register", "f.nii", "m.nii", "-o", "x_", "--channel", "a.nii"], 2),
     (["register", "a.mha", "b.nii", "-o", "x_"], 2),
     (["apply", "-r", "missing.nii", "-i", "m.nii", "-o", "o.nii", "-t", "t.mat"], 3),
     (["fits", "missing.nii.gz"], 3),
@@ -99,11 +101,11 @@ def test_exit_codes_are_the_same_everywhere(args, code):
 def test_main_returns_the_status_in_process():
     from fastwarp.__main__ import main
 
-    assert main(["recipe", "--channels", "3"]) == 2
+    assert main(["recipe", "--channels", "0"]) == 2
     assert main(["fits", "missing.nii.gz"]) == 3
 
 
-@pytest.mark.parametrize("channels", [1, 2])
+@pytest.mark.parametrize("channels", [1, 2, 3, 4, 5])
 def test_recipe_is_cohort_recipe(channels):
     p = ok("recipe", "--channels", str(channels))
     assert json.loads(p.stdout) == g.cohort_recipe(channels)
@@ -321,6 +323,34 @@ def registered(ants, tmp_path_factory):
         "--json",
     )
     return d, files, prefix, json.loads(p.stdout)
+
+
+@needs_gpu
+def test_register_takes_three_channels_with_channel_options(ants, registered, tmp_path):
+    d, files, _, _ = registered
+    fixed, moving = files["fixed"], files["moving"]
+    recipe = d / "recipe.json"
+    p = ok(
+        "register",
+        fixed,
+        moving,
+        "-o",
+        tmp_path / "mc_",
+        "--channel",
+        fixed,
+        moving,
+        "--channel",
+        fixed,
+        moving,
+        "--iso-mm",
+        str(SPACING),
+        "--recipe",
+        recipe,
+        "--json",
+    )
+    info = json.loads(p.stdout)
+    assert info["recipe"]["syn"]["channel_weights"] == [1.0 / 3.0] * 3
+    assert (tmp_path / "mc_Composite.h5").is_file()
 
 
 @needs_gpu

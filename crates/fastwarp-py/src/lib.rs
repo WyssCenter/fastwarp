@@ -134,8 +134,8 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
     Volume::from_vec(grid, values).map_err(|e| PyValueError::new_err(format!("bad image: {e}")))
 }
 
-/// Registers `moving` to `fixed` (1 or 2 channels each) on the GPU with `recipe` (default: the
-/// dbs-localizer cohort chain) and writes the transforms under `out_prefix` in the `outputs`
+/// Registers `moving` to `fixed` (one or more channels each) on the GPU with `recipe`
+/// (default: the dbs-localizer cohort chain) and writes the transforms under `out_prefix` in the `outputs`
 /// layout (`"composite"`: `Composite.h5`, `InverseComposite.h5`, `0GenericAffine.mat`;
 /// `"split"`: `0GenericAffine.mat` and, after a SyN stage, `1Warp.nii.gz` / `1InverseWarp.nii.gz`;
 /// `"both"`), and with `write_warped` `<out_prefix>_Warped.nii.gz`. Returns a dict of timings and
@@ -252,8 +252,8 @@ fn fits_gpu(
     moving_dims: Option<[usize; 3]>,
     recipe: Option<Bound<'_, PyDict>>,
 ) -> PyResult<bool> {
-    if !(1..=2).contains(&channels) {
-        return Err(PyValueError::new_err("channels must be 1 or 2"));
+    if channels == 0 {
+        return Err(PyValueError::new_err("channels must be at least 1"));
     }
     let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
     py.detach(move || engine::fits(dims, moving_dims, channels, adapter, &recipe))
@@ -508,15 +508,17 @@ fn check_linear_stage<'py>(
     recipe::linear_stage_dict(py, &recipe::linear_stage(stage.as_ref(), transform)?)
 }
 
-/// The dbs-localizer cohort recipe for 1 or 2 channels, in the form `register_syn(recipe=...)`
-/// takes; every field present.
+/// The dbs-localizer cohort recipe for one or more channels, in the form
+/// `register_syn(recipe=...)` takes; every field present.
 #[pyfunction]
 #[pyo3(signature = (channels=1))]
 fn cohort_recipe(py: Python<'_>, channels: usize) -> PyResult<Bound<'_, PyDict>> {
-    if !(1..=2).contains(&channels) {
-        return Err(PyValueError::new_err("channels must be 1 or 2"));
+    if channels == 0 {
+        return Err(PyValueError::new_err("channels must be at least 1"));
     }
-    recipe::to_dict(py, &fastwarp_cli::recipe::Recipe::cohort(channels))
+    let recipe =
+        fastwarp_cli::recipe::Recipe::try_cohort(channels).map_err(PyValueError::new_err)?;
+    recipe::to_dict(py, &recipe)
 }
 
 /// Runs the `fastwarp` command line on `argv` (the arguments after the program name) and returns

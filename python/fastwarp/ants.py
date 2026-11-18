@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import math
 import os
+import re
 import sys
 import tempfile
 import warnings
@@ -36,7 +37,12 @@ import numpy as np
 
 from . import _core
 from ._api import _grid_args, _image_args, _prepared_prefix
-from ._core import CancelToken, GpuCapacityError, GpuUnavailableError, UnsupportedArgument
+from ._core import (
+    CancelToken,
+    GpuCapacityError,
+    GpuUnavailableError,
+    UnsupportedArgument,
+)
 
 UnsupportedArgument.__module__ = "fastwarp.ants"
 
@@ -162,8 +168,7 @@ _MOVING = "<moving>.nii"
 _WARPED_MOVING = "<warpedmovout>.nii"
 _WARPED_FIXED = "<warpedfixout>.nii"
 _MASK = "<mask>.nii"
-_EXTRA_FIXED = "<extra_fixed_0>.nii"
-_EXTRA_MOVING = "<extra_moving_0>.nii"
+_EXTRA_NAME = re.compile(r"<extra_(fixed|moving)_(\d+)>\.nii")
 
 _LABELS = {
     _FIXED: "fixed",
@@ -171,13 +176,15 @@ _LABELS = {
     _WARPED_MOVING: "warpedmovout",
     _WARPED_FIXED: "warpedfixout",
     _MASK: "mask",
-    _EXTRA_FIXED: "multivariate_extras[0][1]",
-    _EXTRA_MOVING: "multivariate_extras[0][2]",
     "--initial-moving-transform": "initial_transform",
 }
 
 
-def _registration_names() -> dict[str, str]:
+def _extra_name(kind: str, i: int) -> str:
+    return f"<extra_{kind}_{i}>.nii"
+
+
+def _registration_names(extras: int) -> dict[str, str]:
     """The names the argument list of :func:`registration` gives the images it holds in memory:
     no brackets or commas, which the argument syntax of ANTs reserves."""
     return {
@@ -186,16 +193,28 @@ def _registration_names() -> dict[str, str]:
         "warpedmovout": _WARPED_MOVING,
         "warpedfixout": _WARPED_FIXED,
         "mask": _MASK,
-        "extra_fixed": _EXTRA_FIXED,
-        "extra_moving": _EXTRA_MOVING,
+        **{
+            f"extra_{kind}{f'_{i}' if i else ''}": _extra_name(kind, i)
+            for i in range(extras)
+            for kind in ("fixed", "moving")
+        },
     }
+
+
+def _extra_metric(names: dict[str, str], i: int, name: Any, weight: Any, radius: Any) -> str:
+    suffix = f"_{i}" if i else ""
+    fixed = names["extra_fixed" + suffix]
+    moving = names["extra_moving" + suffix]
+    return f"{name}[{fixed},{moving},{weight},{radius}]"
 
 
 def _readable(text: str) -> str:
     """``text`` with the in-memory image names replaced by the names of the arguments."""
     for name, label in _LABELS.items():
         text = text.replace(name, label)
-    return text
+    return _EXTRA_NAME.sub(
+        lambda m: f"multivariate_extras[{m[2]}][{1 if m[1] == 'fixed' else 2}]", text
+    )
 
 
 def _ants() -> Any:
@@ -378,32 +397,35 @@ def _aff_metric_check(a: dict[str, Any], t: str) -> None:
 
 def _extras_check(a: dict[str, Any], ants: Any, radius: int) -> None:
     extras = a["multivariate_extras"]
-    if not isinstance(extras, (list, tuple)) or len(extras) != 1:
+    if not isinstance(extras, (list, tuple)) or not extras:
         raise _unsupported(
             _REG,
             "multivariate_extras",
             extras,
-            "FastWarp's SyN stage takes one extra CC metric at most (two channels)",
+            "FastWarp's SyN stage takes one or more extra CC metrics",
         )
-    extra = extras[0]
+    for i, extra in enumerate(extras):
+        _extra_check(a, ants, radius, i, extra)
+
+
+def _extra_check(a: dict[str, Any], ants: Any, radius: int, i: int, extra: Any) -> None:
     if not isinstance(extra, (list, tuple)) or len(extra) != 5:
         raise ValueError(
             "fastwarp.ants.registration: multivariate_extras holds (metric, fixed, moving, "
             "weight, radius) tuples"
         )
     name, f2, m2, weight, r = extra
+    where = f"multivariate_extras[{i}]"
     if str(name).lower() != "cc":
-        raise _unsupported(
-            _REG, "multivariate_extras[0][0]", name, "FastWarp's SyN stage uses CC only"
-        )
+        raise _unsupported(_REG, f"{where}[0]", name, "FastWarp's SyN stage uses CC only")
     if isinstance(r, bool) or not isinstance(r, (int, np.integer)) or r != radius:
         raise _unsupported(
             _REG,
-            "multivariate_extras[0][4]",
+            f"{where}[4]",
             r,
-            f"FastWarp's SyN stage uses one CC radius for both channels ({radius} here)",
+            f"FastWarp's SyN stage uses one CC radius for all channels ({radius} here)",
         )
-    for img, what in ((f2, "multivariate_extras[0][1]"), (m2, "multivariate_extras[0][2]")):
+    for img, what in ((f2, f"{where}[1]"), (m2, f"{where}[2]")):
         if not ants.is_image(img):
             raise ValueError(f"fastwarp.ants.registration: {what} must be an ANTsImage")
         _check_image(img, what)
@@ -419,7 +441,7 @@ def _extras_check(a: dict[str, Any], ants: Any, radius: int) -> None:
     if not same_grid:
         raise _unsupported(
             _REG,
-            "multivariate_extras[0][1]",
+            f"{where}[1]",
             f2,
             "it is not on fixed's grid, and FastWarp's SyN channels share one fixed grid; "
             "resample it onto that grid first",
@@ -430,8 +452,7 @@ def _extras_check(a: dict[str, Any], ants: Any, radius: int) -> None:
         ok = False
     if not ok:
         raise ValueError(
-            f"fastwarp.ants.registration: multivariate_extras[0][3]={weight!r} must be a "
-            "non-negative weight"
+            f"fastwarp.ants.registration: {where}[3]={weight!r} must be a non-negative weight"
         )
 
 
@@ -469,7 +490,8 @@ def _linear_schedule(a: dict[str, Any]) -> tuple[Any, Any, Any]:
 def _registration_argv(t: str, a: dict[str, Any], names: dict[str, str]) -> list[str]:
     """The ``antsRegistration`` argument list ANTsPy 0.6.3 builds for a type FastWarp runs, with
     ``names`` for its image pointers (``fixed``, ``moving``, ``warpedmovout``,
-    ``warpedfixout``, ``mask``, ``extra_fixed``, ``extra_moving``) and ``a`` the arguments."""
+    ``warpedfixout``, ``mask``, ``extra_fixed``, ``extra_moving``, and ``extra_fixed_1``,
+    ``extra_moving_1`` and so on for further extras) and ``a`` the arguments."""
     f = names["fixed"]
     m = names["moving"]
     fmask = names["mask"] if a["mask"] is not None else "NA"
@@ -568,11 +590,8 @@ def _registration_argv(t: str, a: dict[str, Any], names: dict[str, str]) -> list
     elif t == "SyNOnly":
         metrics = ["--metric", syn]
         if a["multivariate_extras"] is not None:
-            for name, _f2, _m2, weight, radius in a["multivariate_extras"]:
-                metrics += [
-                    "--metric",
-                    f"{name}[{names['extra_fixed']},{names['extra_moving']},{weight},{radius}]",
-                ]
+            for i, (name, _f2, _m2, weight, radius) in enumerate(a["multivariate_extras"]):
+                metrics += ["--metric", _extra_metric(names, i, name, weight, radius)]
         args = [
             *head,
             *metrics,
@@ -715,11 +734,8 @@ def _script_argv(
     ]
     syn = ["--transform", "SyN[0.2,3,0]", "--metric", f"CC[{f},{m},1,2]"]
     if a["multivariate_extras"] is not None:
-        for name, _f2, _m2, weight, radius in a["multivariate_extras"]:
-            syn += [
-                "--metric",
-                f"{name}[{names['extra_fixed']},{names['extra_moving']},{weight},{radius}]",
-            ]
+        for i, (name, _f2, _m2, weight, radius) in enumerate(a["multivariate_extras"]):
+            syn += ["--metric", _extra_metric(names, i, name, weight, radius)]
     syn += [
         "--convergence",
         syn_conv,
@@ -1072,9 +1088,9 @@ def registration(
     verbose : bool, default False
         Print the ``antsRegistration`` arguments and FastWarp's report of the run.
     multivariate_extras : list of tuple, optional
-        One ``("CC", fixed2, moving2, weight, radius)`` with the main CC radius, a second
-        channel, for ``SyNOnly`` and ``antsRegistrationSyN[s|sr|so]``. ``fixed2`` must be on
-        ``fixed``'s grid.
+        One or more ``("CC", fixed2, moving2, weight, radius)`` with the main CC radius, each a
+        further channel, for ``SyNOnly`` and
+        ``antsRegistrationSyN[s|sr|so]``. Each ``fixed2`` must be on ``fixed``'s grid.
     restrict_transformation : sequence of float, optional
         All ones only (no restriction).
     smoothing_in_mm : bool, default False
@@ -1200,18 +1216,21 @@ def registration(
     else:
         prefix = _prepared_prefix(outprefix)
     a["outprefix"] = prefix
-    names = _registration_names()
+    names = _registration_names(
+        len(multivariate_extras) if isinstance(multivariate_extras, (list, tuple)) else 0
+    )
     argv = _registration_argv(t, a, names)
     images = [(_FIXED, _image_args(fixed)), (_MOVING, _image_args(moving))]
     if mask is not None:
         binary = (mask.numpy() != 0).astype(np.float32)
         images.append((_MASK, _image_args((binary, mask.spacing, mask.origin, mask.direction))))
     if multivariate_extras is not None and _uses_extras(t, script):
-        _, f2, m2, _, _ = multivariate_extras[0]
-        images += [
-            (names["extra_fixed"], _image_args(f2)),
-            (names["extra_moving"], _image_args(m2)),
-        ]
+        for i, (_, f2, m2, _, _) in enumerate(multivariate_extras):
+            suffix = f"_{i}" if i else ""
+            images += [
+                (names["extra_fixed" + suffix], _image_args(f2)),
+                (names["extra_moving" + suffix], _image_args(m2)),
+            ]
     if verbose:
         print("antsRegistration " + _readable(" ".join(argv)))
     try:

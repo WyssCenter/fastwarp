@@ -96,8 +96,8 @@ False ['rigid', 'affine']
 : A list of dicts, each with `"transform"` set to `"rigid"`, `"affine"` or `"syn"` and any of
   that stage's fields (see the tables below). Any number of rigid and affine stages, in any
   order, then at most one SyN stage, which must come last. SyN alone is allowed. `None` (or
-  leaving `stages` out) runs the default three stages. Two {term}`channels <channel>` need a SyN
-  stage, because only SyN uses the second image.
+  leaving `stages` out) runs the default three stages. Several {term}`channels <channel>` need a SyN
+  stage, because only SyN uses the further images.
 
 Each linear stage starts as the identity, centred where the previous linear transform is
 centred, and is applied before everything earlier, as ANTs chains its stages; all of them are
@@ -155,7 +155,7 @@ The `syn` stage uses neighbourhood {term}`cross-correlation` on every channel.
 | `update_field_variance` | `float` | `3.0` | Variance of the Gaussian that smooths each update, in voxels². 0 or more. |
 | `total_field_variance` | `float` | `0.0` | Variance of the Gaussian that smooths the total deformation, in voxels². 0 (the default) means no smoothing. |
 | `cc_radius` | `int` | `4` | Radius of the cross-correlation window, in voxels: the window is `2 * cc_radius + 1` voxels wide. 1 to 8: the GPU kernels support no larger radius. |
-| `channel_weights` | `list[float]` | `[1.0]`, or `[0.5, 0.5]` for two channels | Weight of each channel's metric. One weight per channel, each 0 or more, with a positive sum. |
+| `channel_weights` | `list[float]` | `[1.0]`, or `1 / channels` each (`[0.5, 0.5]` for two) | Weight of each channel's metric. One weight per channel, each 0 or more, with a positive sum. |
 | `iterations` | `list[int]` | `[100, 70, 50, 20]` | As for the linear stages. |
 | `convergence_threshold` | `float` | `1e-6` | As for the linear stages. |
 | `convergence_window` | `int` | `10` | As for the linear stages. |
@@ -163,15 +163,15 @@ The `syn` stage uses neighbourhood {term}`cross-correlation` on every channel.
 | `smoothing_sigmas` | `list[float]` | `[3.0, 2.0, 1.0, 0.0]` | As for the linear stages. |
 | `sigma_units` | `str` | `"vox"` | As for the linear stages. |
 
-`cohort_recipe(channels=2)` gives `channel_weights` `[0.5, 0.5]`. A recipe for a two-channel run
-must have two weights.
+`cohort_recipe(channels=2)` gives `channel_weights` `[0.5, 0.5]`, and `channels=4` gives four
+weights of `0.25`. A recipe for a run of several channels must have one weight per channel.
 
 ## Mistakes are caught before any work
 
 An unknown stage or field, a value of the wrong type, lists of different lengths in one stage, a
 value outside the limits above, an empty stage list, a stage after the SyN stage, keys of both
 forms in one recipe, a start file that does not exist, a start affine that cannot be inverted,
-or two channels without a SyN stage raises `ValueError` before the GPU is opened. The message
+or several channels without a SyN stage raises `ValueError` before the GPU is opened. The message
 names the field:
 
 ```python

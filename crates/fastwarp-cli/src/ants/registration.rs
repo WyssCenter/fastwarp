@@ -105,7 +105,7 @@ pub struct LinearStageSpec {
     pub fixed_mask: Option<PathBuf>,
 }
 
-/// A `SyN[step,ufv,tfv]` stage with one or two `CC` metrics (channels).
+/// A `SyN[step,ufv,tfv]` stage with one or more `CC` metrics (channels).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SynStageSpec {
     pub gradient_step: f64,
@@ -161,7 +161,7 @@ pub struct RegistrationPlan {
 }
 
 impl RegistrationPlan {
-    /// Number of channels (1, or 2 with two SyN metrics).
+    /// Number of channels (1, or as many as the SyN stage has metrics).
     pub fn channels(&self) -> usize {
         self.fixed.len()
     }
@@ -325,7 +325,7 @@ Supported:
   -r [fixed,moving,1] | Identity | file.mat | [file.mat,1]
   stages, any number of Rigid / Affine, then at most one SyN:
     -t Rigid[step] | Affine[step]   -m MI[fixed,moving,w,32,Regular,percentage]
-    -t SyN[step,ufv,tfv]            -m CC[fixed,moving,w,radius 1..8] (one or two)
+    -t SyN[step,ufv,tfv]            -m CC[fixed,moving,w,radius 1..8] (one or more)
     -c [MxN,threshold,window]  -f MxN  -s MxN[vox|mm]
   -x [fixedMask,NULL] (Rigid / Affine stages)   -w [lower,upper]   -u 0
   -a 0|1   -z 1   -i 0   -n Linear|NearestNeighbor|LanczosWindowedSinc
@@ -750,12 +750,6 @@ fn check_syn_metrics(k: usize, metrics: &[MetricArg]) -> Result<(), Refusal> {
             );
         }
     }
-    if metrics.len() > 2 {
-        return unsupported(
-            format!("stage {k}: {} metrics in the SyN stage", metrics.len()),
-            "FastWarp's SyN stage takes one or two CC metrics (channels).",
-        );
-    }
     for m in metrics {
         if m.param == 0 || m.param as usize > GPU_CC_RADIUS_MAX {
             return unsupported(
@@ -773,11 +767,11 @@ fn check_syn_metrics(k: usize, metrics: &[MetricArg]) -> Result<(), Refusal> {
             "FastWarp's CC is dense; leave the sampling strategy out or give None.",
         );
     }
-    if let [a, b] = metrics {
-        if a.param != b.param {
+    if let Some(first) = metrics.first() {
+        if let Some(other) = metrics.iter().find(|m| m.param != first.param) {
             return unsupported(
-                format!("stage {k}: CC radii {} and {}", a.param, b.param),
-                "FastWarp's SyN stage uses one radius for both channels.",
+                format!("stage {k}: CC radii {} and {}", first.param, other.param),
+                "FastWarp's SyN stage uses one radius for all channels.",
             );
         }
     }
@@ -1466,6 +1460,28 @@ mod tests {
     }
 
     #[test]
+    fn three_four_and_five_cc_metrics_are_channels() {
+        let p = plan(
+            "-t SyN[0.2,3,0] -m CC[a.nii,b.nii,1,4] -m CC[c.nii,d.nii,1,4] -m CC[e.nii,f.nii,1,4] \
+             -c 5 -f 1 -s 0 -o o_",
+        );
+        assert_eq!(p.channels(), 3);
+        assert_eq!(p.moving[2], PathBuf::from("f.nii"));
+        assert!(Recipe::from_json(&p.recipe_json(), 3).is_ok());
+        let p = plan(
+            "-t SyN[0.2,3,0] -m CC[a.nii,b.nii,1,4] -m CC[c.nii,d.nii,1,4] -m CC[e.nii,f.nii,1,4] \
+             -m CC[g.nii,h.nii,1,4] -c 5 -f 1 -s 0 -o o_",
+        );
+        assert_eq!(p.channels(), 4);
+        let p = plan(
+            "-t SyN[0.2,3,0] -m CC[a.nii,b.nii,1,4] -m CC[c.nii,d.nii,1,4] -m CC[e.nii,f.nii,1,4] \
+             -m CC[g.nii,h.nii,1,4] -m CC[i.nii,j.nii,1,4] -c 5 -f 1 -s 0 -o o_",
+        );
+        assert_eq!(p.channels(), 5);
+        assert!(Recipe::from_json(&p.recipe_json(), 5).is_ok());
+    }
+
+    #[test]
     fn masks_options_seed_and_flags() {
         let p = plan(&format!(
             "{LIN} -x [mask.nii.gz,NULL] -o o_ --float -v -a 0 -z 1 -i 0 -u 0 -p 0 \
@@ -1559,8 +1575,8 @@ mod tests {
             ("-t Affine[0.1] -m MI[f.nii,m.nii,1,32,Regular,0.2] -m MI[f.nii,m.nii,1,32,Regular,0.2] -c 5 -f 1 -s 0 -o o_".into(), "stage 1: 2 metrics in the Affine stage is not supported: FastWarp's Rigid and Affine stages use one MI metric."),
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,9] -c 5 -f 1 -s 0 -o o_".into(), "metric CC with radius 9 is not supported: the GPU kernels support radius 1 to 8."),
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4,Regular,0.5] -c 5 -f 1 -s 0 -o o_".into(), "metric CC with Regular sampling is not supported: FastWarp's CC is dense; leave the sampling strategy out or give None."),
-            ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -m CC[a.nii,b.nii,1,2] -c 5 -f 1 -s 0 -o o_".into(), "stage 1: CC radii 4 and 2 is not supported: FastWarp's SyN stage uses one radius for both channels."),
-            ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -m CC[a.nii,b.nii,1,4] -m CC[c.nii,d.nii,1,4] -c 5 -f 1 -s 0 -o o_".into(), "stage 1: 3 metrics in the SyN stage is not supported: FastWarp's SyN stage takes one or two CC metrics (channels)."),
+            ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -m CC[a.nii,b.nii,1,2] -c 5 -f 1 -s 0 -o o_".into(), "stage 1: CC radii 4 and 2 is not supported: FastWarp's SyN stage uses one radius for all channels."),
+            ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -m CC[a.nii,b.nii,1,4] -m CC[c.nii,d.nii,1,2] -c 5 -f 1 -s 0 -o o_".into(), "stage 1: CC radii 4 and 2 is not supported: FastWarp's SyN stage uses one radius for all channels."),
             ("-t SyN[0.1] -m CC[f.mha,m.nii,1,4] -c 5 -f 1 -s 0 -o o_".into(), "image f.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -c 5 -f 1 -s 0 -o [o_,w.mha]".into(), "image w.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             (format!("{SYN} {LIN} -o o_"), "stage order SyN, Rigid, Affine is not supported: FastWarp runs the linear stages first and at most one SyN stage, last."),

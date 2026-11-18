@@ -27,7 +27,7 @@ Centre of mass
 
 Channel
   One image of a set that is registered together, for example a T1-weighted and a T2-weighted
-  scan of the same subject. FastWarp registers one or two channels.
+  scan of the same subject. FastWarp registers any number of channels.
 
 Coregistration
   Aligning two images of the same subject, for example a CT onto an MRI scan, usually with a

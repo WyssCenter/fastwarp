@@ -36,10 +36,10 @@ Both forms describe the image in the geometry of [ITK](https://itk.org), which A
 
 ## Several channels
 
-{func}`~fastwarp.register_syn` accepts one image or a list of two images on each side, for
-example a T1-weighted and a T2-weighted scan. The second moving image must already be aligned to
-the first one, for example by a rigid fit with {func}`~fastwarp.linear_session`. See
-[Normalization](normalization.md#two-channels).
+{func}`~fastwarp.register_syn` accepts one image or a list of images on each side,
+for example a T1-weighted, a T2-weighted and a FGATIR scan. The further moving images must already
+be aligned to the first one, for example by a rigid fit with {func}`~fastwarp.linear_session`. See
+[Normalization](normalization.md#several-channels).
 
 ## Masks
 

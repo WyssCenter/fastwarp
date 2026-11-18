@@ -301,7 +301,7 @@ it does not exist.
 ### register
 
 ```bash
-fastwarp register FIXED MOVING -o PREFIX [--fixed2 F2 --moving2 M2] [--iso-mm MM]
+fastwarp register FIXED MOVING -o PREFIX [--channel FIXED MOVING]... [--iso-mm MM]
                   [--recipe FILE] [--outputs composite|split|both] [--write-warped]
                   [--adapter NAME] [--json]
 ```
@@ -320,8 +320,11 @@ names. This is {func}`fastwarp.register_syn`; see [Normalization](guide/normaliz
   `<PREFIX>1Warp.nii.gz` and `<PREFIX>1InverseWarp.nii.gz`, written as `float32` where ANTs
   writes `float64`) or `both`. Without a SyN stage the
   composites hold only the affine.
-- `--fixed2 F2 --moving2 M2`: a second channel (for example T2w) for the SyN stage. The second
-  moving image must already be in the space of MOVING. Give both or neither.
+- `--channel FIXED MOVING`: a further channel (for example T2w or FGATIR) for the SyN stage: its
+  fixed image on the grid of FIXED, its moving image already in the space of MOVING. Repeat it
+  for more channels, as many as the GPU memory allows. The channels are in this order: FIXED and
+  MOVING, then each `--channel`. Each channel weighs `1 / channels` unless the recipe says
+  otherwise.
 - `--iso-mm MM`: spacing of the isotropic grid the registration runs on, in millimetres. The
   default is the smallest voxel spacing of FIXED, so that the registration keeps the detail of
   the fixed image: a 1 mm template registers at 1 mm, a 0.5 mm template at 0.5 mm.
@@ -422,11 +425,11 @@ without compressing it, which suits displacement fields.
 ### recipe
 
 ```bash
-fastwarp recipe [--channels 1|2]
+fastwarp recipe [--channels N]
 ```
 
-Prints the default [recipe](guide/recipes.md) as JSON, the same dictionary as
-{func}`fastwarp.cohort_recipe`. Edit a copy and pass it with `--recipe`.
+Prints the default [recipe](guide/recipes.md) for N channels (default 1) as JSON, the same
+dictionary as {func}`fastwarp.cohort_recipe`. Edit a copy and pass it with `--recipe`.
 
 ### gpu-info
 
@@ -441,7 +444,7 @@ found.
 ### fits
 
 ```bash
-fastwarp fits FIXED [MOVING] [--iso-mm MM] [--channels 1|2] [--recipe FILE] [--adapter NAME]
+fastwarp fits FIXED [MOVING] [--iso-mm MM] [--channels N] [--recipe FILE] [--adapter NAME]
               [--json]
 ```
 
@@ -557,7 +560,7 @@ Supported:
 | `-o` | `PREFIX` or `[PREFIX,warped,inverseWarped]`; the prefix is text, as in ANTs |
 | `-r` | `[fixed,moving,1]` (centres of intensity mass, on the images of the first metric), `Identity`, one affine file (`.mat`, `.txt`) or `[file,1]` for its inverse |
 | `-t` | `Rigid[step]` and `Affine[step]` stages, any number, then at most one `SyN[step,<3>,<0>]` stage; `SyN` alone is allowed |
-| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stage: one or two `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (two metrics are two channels) |
+| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stage: one or more `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (each metric is a channel) |
 | `-c`, `-f`, `-s` | `MxN` or `[MxN,threshold,window]` (window at least 2), shrink factors, sigmas in `vox` (default) or `mm`; one value per level |
 | `-x` | `[fixedMask,NULL]` (`NA`, `NONE` also mean no mask), once for all stages or once per stage; Rigid and Affine stages only |
 | `-w` | `[lower,upper]`; without it the images are rescaled to [0, 1] as ANTs does |
@@ -580,7 +583,7 @@ mass of other images than the first metric's; the transforms `Translation`, `Sim
 the SyN stage (the default of ANTsPy's `SyN`, `SyNRA`, `SyNOnly`: use `CC`), CC in a Rigid or
 Affine stage, `MeanSquares`, `Demons`, `GC` and the point-set metrics; MI with bins other than
 32, with dense sampling (no strategy or `None`, as in `MI[f,m,1,32]`) or `Random` sampling; CC
-with a sampling strategy, a radius above 8, two radii, or more than two CC metrics;
+with a sampling strategy, a radius above 8 or different radii;
 `useGradientFilter` 1; two metrics in a linear stage; linear stages on other images than the
 first SyN metric's; a fixed mask on the SyN stage and any moving mask; `-g` with a restriction;
 `-p` and `--write-interval-volumes` above 0; `--minc 1`; the interpolators `MultiLabel`,

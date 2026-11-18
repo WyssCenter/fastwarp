@@ -93,7 +93,7 @@ pub struct Recipe {
 }
 
 impl Recipe {
-    /// The dbs-localizer cohort recipe for `channels` channels (weights 1, or 0.5 each for two).
+    /// The dbs-localizer cohort recipe for `channels` channels (each weighs 1 / `channels`).
     pub fn cohort(channels: usize) -> Self {
         Self {
             plan: StagePlan::cohort(&LinearPlan::cohort(), &cohort_syn(channels)),
@@ -101,6 +101,18 @@ impl Recipe {
             initial: InitialSpec::CentreOfMass,
             winsorize: Some(DEFAULT_WINSORIZE),
         }
+    }
+
+    /// [`Recipe::cohort`] for a channel count that comes from the user: an error instead of an
+    /// abort when the channel weights cannot be allocated.
+    pub fn try_cohort(channels: usize) -> Result<Self, String> {
+        let syn = SynRecipe::try_cohort_channels(channels).map_err(|e| e.to_string())?;
+        Ok(Self {
+            plan: StagePlan::cohort(&LinearPlan::cohort(), &syn),
+            stage_list: false,
+            initial: InitialSpec::CentreOfMass,
+            winsorize: Some(DEFAULT_WINSORIZE),
+        })
     }
 
     fn linear_name(&self, index: usize) -> String {
@@ -128,7 +140,7 @@ impl Recipe {
         }
         if self.plan.syn.is_none() && channels > 1 {
             return Err(format!(
-                "recipe['stages'] has no SyN stage, which the second channel is for: the linear \
+                "recipe['stages'] has no SyN stage, which the further channels are for: the linear \
                  stages register the first channel only; give one fixed and one moving image, \
                  not {channels}"
             ));
@@ -306,11 +318,7 @@ pub fn resolve_initial_path(v: &Value, base: &std::path::Path) -> Value {
 }
 
 fn cohort_syn(channels: usize) -> SynRecipe {
-    if channels == 2 {
-        SynRecipe::cohort_multispectral()
-    } else {
-        SynRecipe::cohort()
-    }
+    SynRecipe::cohort_channels(channels)
 }
 
 /// `"rigid"` or `"affine"`.
@@ -723,11 +731,23 @@ mod tests {
 
     #[test]
     fn the_cohort_round_trips_through_json() {
-        for channels in [1, 2] {
+        for channels in 1..=5 {
             let r = Recipe::cohort(channels);
             let back = Recipe::from_json(&r.to_json(), channels).unwrap();
             assert_eq!(back.to_json(), r.to_json());
         }
+    }
+
+    #[test]
+    fn cohort_weights_are_one_over_the_channel_count() {
+        let weights = |n| Recipe::cohort(n).plan.syn.unwrap().channel_weights;
+        assert_eq!(weights(1), vec![1.0]);
+        assert_eq!(weights(2), vec![0.5, 0.5]);
+        assert_eq!(weights(3), vec![1.0 / 3.0; 3]);
+        assert_eq!(weights(4), vec![0.25; 4]);
+        assert_eq!(weights(5), vec![0.2; 5]);
+        assert!(Recipe::cohort(3).check(3).is_ok());
+        assert!(Recipe::cohort(4).check(3).is_err());
     }
 
     #[test]

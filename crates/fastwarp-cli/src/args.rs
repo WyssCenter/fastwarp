@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 /// GPU image registration (Rigid, Affine, SyN) with ANTs-compatible outputs.
 ///
@@ -71,6 +71,10 @@ pub struct AntsArgs {
     pub args: Vec<String>,
 }
 
+fn channels_parser() -> clap::builder::RangedI64ValueParser<u32> {
+    clap::value_parser!(u32).range(1..)
+}
+
 #[derive(Args, Debug)]
 pub struct RegisterArgs {
     /// Fixed image (NIfTI).
@@ -87,12 +91,11 @@ pub struct RegisterArgs {
     /// after a SyN stage, 1Warp.nii.gz and 1InverseWarp.nii.gz) or both.
     #[arg(long, value_enum, default_value_t = Outputs::Composite)]
     pub outputs: Outputs,
-    /// Second fixed channel (for example a T2w image) for the SyN stage.
-    #[arg(long, value_name = "F2", requires = "moving2")]
-    pub fixed2: Option<PathBuf>,
-    /// Second moving channel, already in the space of MOVING.
-    #[arg(long, value_name = "M2", requires = "fixed2")]
-    pub moving2: Option<PathBuf>,
+    /// A further channel for the SyN stage (for example T2w): its fixed image on the grid of FIXED
+    /// and its moving image already in the space of MOVING. Repeat for more channels; they follow
+    /// the pair of FIXED and MOVING.
+    #[arg(long = "channel", value_names = ["FIXED", "MOVING"], num_args = 2, action = ArgAction::Append)]
+    pub channel: Vec<PathBuf>,
     /// Spacing of the isotropic registration grid in millimetres. Default: the smallest voxel
     /// spacing of FIXED (the Python function register_syn defaults to 1.0 mm instead).
     #[arg(long, value_name = "MM")]
@@ -113,6 +116,29 @@ pub enum Outputs {
     Composite,
     Split,
     Both,
+}
+
+impl RegisterArgs {
+    /// The fixed and moving image of each channel with the names the messages use: the positional
+    /// pair, then each --channel.
+    pub fn channel_pairs(&self) -> Vec<(PathBuf, PathBuf, String, String)> {
+        let mut pairs = vec![(
+            self.fixed.clone(),
+            self.moving.clone(),
+            "fixed image".to_string(),
+            "moving image".to_string(),
+        )];
+        let (chunks, _) = self.channel.as_chunks::<2>();
+        for (i, [f, m]) in chunks.iter().enumerate() {
+            pairs.push((
+                f.clone(),
+                m.clone(),
+                format!("fixed image of --channel {}", i + 1),
+                format!("moving image of --channel {}", i + 1),
+            ));
+        }
+        pairs
+    }
 }
 
 impl Outputs {
@@ -230,9 +256,9 @@ pub struct ComposeArgs {
 
 #[derive(Args, Debug)]
 pub struct RecipeArgs {
-    /// Number of channels (1, or 2 for a multispectral SyN stage).
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=2))]
-    pub channels: u8,
+    /// Number of channels (1 or more; more than 1 is a multispectral SyN stage).
+    #[arg(long, default_value_t = 1, value_parser = channels_parser())]
+    pub channels: u32,
 }
 
 #[derive(Args, Debug)]
@@ -256,9 +282,9 @@ pub struct FitsArgs {
     /// spacing of FIXED, as for `fastwarp register` (fastwarp.fits_gpu defaults to 1.0 mm).
     #[arg(long, value_name = "MM")]
     pub iso_mm: Option<f64>,
-    /// Number of channels (1, or 2 for a multispectral SyN stage).
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=2))]
-    pub channels: u8,
+    /// Number of channels (1 or more; more than 1 is a multispectral SyN stage).
+    #[arg(long, default_value_t = 1, value_parser = channels_parser())]
+    pub channels: u32,
     /// Recipe as a JSON file, as for `fastwarp register`: the check covers its stages (a chain
     /// without a SyN stage needs far less memory).
     #[arg(long, value_name = "FILE")]

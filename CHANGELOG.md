@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The SyN stage registers any number of channels (for example T1w + T2w + FGATIR), not 1 or 2.
+  `register_syn`, `fits_gpu` and `cohort_recipe` take one or more images or channels; each channel
+  weighs `1 / channels` by default (unchanged for one and two). `fastwarp register` takes
+  `--channel FIXED MOVING` (repeatable) after the positional pair, and `fastwarp recipe` and
+  `fastwarp fits` take any `--channels` of 1 or more. The ANTs compatibility mode takes any number
+  of `CC` metrics in the SyN stage, and `fastwarp.ants.registration` one or more
+  `multivariate_extras`. The GPU memory is the only limit: its plan adds the same 20 bytes per
+  voxel for every further channel, which bounded the measured peak for one to four channels.
+- Changed: `fastwarp register` no longer takes `--fixed2` and `--moving2`; `--fixed2 F2 --moving2 M2`
+  becomes `--channel F2 M2`.
+
 ## 0.2.0 (2026-11-15)
 
 - ANTs compatibility mode: `fastwarp ants-registration ARGS...` and

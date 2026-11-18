@@ -25,8 +25,8 @@ const LARGEST_BINDING_BYTES_PER_VOXEL: u64 = 3 * 4;
 /// shrunk (`tests/syn_parity.rs`, `the_capacity_plan_bounds_the_pool_peak_of_a_two_level_run`);
 /// the idle buffers of coarser levels and of the device self-test are planned separately.
 const LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS: u64 = 188;
-/// What a second channel adds (two smoothed and two warped images, with the derivative fields
-/// accumulated one channel at a time); one channel measured 165.7 B/voxel.
+/// What each channel after the first adds (two smoothed and two warped images, with the derivative
+/// fields accumulated one channel at a time); one channel measured 165.7 B/voxel.
 const LEVEL_BYTES_PER_VOXEL_PER_CHANNEL: u64 = 20;
 /// Each channel keeps one smoothed moving image on the moving image's own grid for the whole
 /// level (`syn.rs`, `syn_fields`); the per-voxel figures above count it on the fixed grid.
@@ -334,7 +334,7 @@ pub fn plan_capacity_syn(
         .saturating_mul(LARGEST_BINDING_BYTES_PER_VOXEL)
         .max(moving_voxels.saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL));
     let per_voxel = LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS - LEVEL_BYTES_PER_VOXEL_PER_CHANNEL
-        + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL * (channels - 1);
+        + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL.saturating_mul(channels - 1);
     let moving_excess = moving_voxels
         .saturating_sub(voxels)
         .saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL)
@@ -764,6 +764,7 @@ mod tests {
         assert_eq!(per_voxel(1), 168);
         assert_eq!(per_voxel(2), 188);
         assert_eq!(per_voxel(3), 208);
+        assert_eq!(per_voxel(4), 228);
         assert_eq!(per_voxel(0), 168);
     }
 
@@ -826,7 +827,7 @@ mod tests {
 
     #[test]
     fn a_moving_grid_of_the_fixed_size_or_smaller_plans_like_the_fixed_grid_alone() {
-        for channels in [1, 2] {
+        for channels in [1, 2, 3, 4] {
             let alone = plan_capacity([197, 233, 189], channels, &arc()).unwrap();
             let same =
                 plan_capacity_pair([197, 233, 189], [197, 233, 189], channels, &arc()).unwrap();
@@ -841,7 +842,7 @@ mod tests {
     fn a_larger_moving_grid_adds_its_excess_image_bytes_for_every_channel() {
         let fixed = 10 * 10 * 10;
         let moving = 20 * 20 * 20;
-        for channels in [1u64, 2] {
+        for channels in [1u64, 2, 3, 4] {
             let plan =
                 plan_capacity_pair([10, 10, 10], [20, 20, 20], channels as usize, &unlimited())
                     .unwrap();
@@ -979,7 +980,7 @@ mod tests {
 
     #[test]
     fn a_single_full_resolution_level_plans_like_the_pair() {
-        for channels in [1, 2] {
+        for channels in [1, 2, 3, 4] {
             let pair = plan_capacity_pair([48; 3], [60; 3], channels, &unlimited()).unwrap();
             let syn = plan_capacity_syn([48; 3], [60; 3], channels, &[1], &unlimited()).unwrap();
             assert_eq!(syn, pair);
@@ -1070,7 +1071,7 @@ mod tests {
 
     #[test]
     fn the_cohort_pyramid_adds_little_to_a_large_grid() {
-        for channels in [1, 2] {
+        for channels in [1, 2, 3, 4] {
             let single = syn_total([197, 233, 189], channels, &[1]);
             let cohort = syn_total([197, 233, 189], channels, &[8, 4, 2, 1]);
             assert!(cohort > single);

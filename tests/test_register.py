@@ -81,6 +81,24 @@ def test_two_channels(tmp_path):
 
 
 @needs_gpu
+def test_three_channels(tmp_path):
+    fixed = [phantom(), phantom(), phantom()]
+    moving = [phantom(SHIFT_MM), phantom(SHIFT_MM), phantom(SHIFT_MM)]
+    info = g.register_syn(fixed, moving, tmp_path / "mc3_", iso_mm=SPACING)
+    assert Path(f"{tmp_path}/mc3_Composite.h5").is_file()
+    assert info["recipe"]["syn"]["channel_weights"] == [1.0 / 3.0] * 3
+    np.testing.assert_allclose(np.asarray(info["affine_parameters"])[9:], SHIFT_MM, atol=0.3)
+
+
+def test_no_channels_or_unequal_channel_counts_are_refused(tmp_path):
+    p = phantom()
+    for fixed, moving in (([], []), ([p, p], [p])):
+        with pytest.raises(ValueError, match="at least one fixed image|as many moving"):
+            g.register_syn(fixed, moving, tmp_path / "x_", iso_mm=SPACING)
+    assert not any(tmp_path.iterdir())
+
+
+@needs_gpu
 def test_resamples_to_iso_grid(tmp_path):
     info = g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "iso_", iso_mm=3.0)
     assert tuple(info["grid"]) == g.iso_grid_dims(phantom(), 3.0)
@@ -148,12 +166,10 @@ def test_fits_gpu_validates_arguments():
     p = phantom()
     for call in (
         lambda: g.fits_gpu([]),
-        lambda: g.fits_gpu([p, p, p]),
         lambda: g.fits_gpu(p, [p, p]),
         lambda: g.fits_gpu([p, p], p),
         lambda: g.fits_gpu([p, p], channels=1),
         lambda: g.fits_gpu(p, channels=0),
-        lambda: g.fits_gpu(p, channels=3),
         lambda: g.fits_gpu(p, iso_mm=-1.0),
         lambda: g.fits_gpu(p, iso_mm=float("nan")),
     ):
@@ -168,7 +184,12 @@ def test_fits_gpu_channels_follow_the_fixed_images(monkeypatch):
     g.fits_gpu(p)
     g.fits_gpu([p, p], [p, p])
     g.fits_gpu(p, channels=2)
-    assert seen == [1, 2, 2]
+    g.fits_gpu([p, p, p], [p, p, p])
+    g.fits_gpu(p, channels=3)
+    g.fits_gpu(p, channels=4)
+    g.fits_gpu([p] * 5, [p] * 5)
+    g.fits_gpu(p, channels=6)
+    assert seen == [1, 2, 2, 3, 3, 4, 5, 6]
 
 
 @needs_gpu
