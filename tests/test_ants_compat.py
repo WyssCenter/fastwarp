@@ -220,10 +220,10 @@ def test_t1_argument_list_is_antspys(ants, R, pair, monkeypatch, t, kw):
     assert len(plan["recipe"]["stages"]) == real.count("--transform")
     fixed_mask, moving_mask = kw.get("mask") is not None, kw.get("moving_mask") is not None
     has_syn = any(s["transform"] == "syn" for s in plan["recipe"]["stages"])
-    assert (plan["syn_masks"] is not None) == has_syn
+    assert len(plan["syn_masks"]) == int(has_syn)
     if has_syn:
-        assert (plan["syn_masks"]["fixed"] is not None) == fixed_mask
-        assert (plan["syn_masks"]["moving"] is not None) == moving_mask
+        assert (plan["syn_masks"][0]["fixed"] is not None) == fixed_mask
+        assert (plan["syn_masks"][0]["moving"] is not None) == moving_mask
     every_stage = (
         bool(kw.get("mask_all_stages")) or t.startswith("antsRegistrationSyN") or not has_syn
     )

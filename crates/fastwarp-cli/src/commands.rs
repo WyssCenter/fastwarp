@@ -17,7 +17,7 @@ use crate::args::{
     ApplyArgs, Command, ComposeArgs, FitsArgs, GpuInfoArgs, LinearArgs, RecipeArgs, RegisterArgs,
     TransformArg,
 };
-use crate::engine::{self, SynOutputs, SynRun};
+use crate::engine::{self, LevelSummary, SynOutputs, SynRun};
 use crate::image;
 use crate::recipe::{linear_stage_from_json, linear_to_json, Recipe};
 use crate::{CliError, ExitStatus};
@@ -102,6 +102,17 @@ fn grid_text(g: [usize; 3]) -> String {
     format!("{}x{}x{}", g[0], g[1], g[2])
 }
 
+fn level_json(l: &LevelSummary) -> Value {
+    json!({
+        "stage": l.stage,
+        "level": l.level,
+        "grid": l.grid_size,
+        "iterations": l.iterations,
+        "converged": l.converged,
+        "energy": l.energy,
+    })
+}
+
 pub(crate) fn syn_run_json(run: &SynRun) -> Value {
     let t = &run.timings;
     json!({
@@ -114,13 +125,12 @@ pub(crate) fn syn_run_json(run: &SynRun) -> Value {
         "syn_s": t.syn_s,
         "warp_s": t.warp_s,
         "write_s": run.write_s,
-        "levels": run.levels.iter().map(|l| json!({
-            "level": l.level,
-            "grid": l.grid_size,
-            "iterations": l.iterations,
-            "converged": l.converged,
-            "energy": l.energy,
-        })).collect::<Vec<_>>(),
+        "levels": run.levels.iter().map(level_json).collect::<Vec<_>>(),
+        "syn_stages": run
+            .syn_stages()
+            .into_iter()
+            .map(|s| s.into_iter().map(level_json).collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
         "affine_parameters": run.affine_parameters,
         "affine_center": run.affine_center,
         "initial_parameters": run.initial_parameters,

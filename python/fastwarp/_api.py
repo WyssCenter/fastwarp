@@ -143,9 +143,12 @@ def register_syn(
         (``"com"``, the default; ``"identity"``; a ``pathlib.Path`` or ``{"path": ..., "invert":
         bool}`` to a file with one affine; or ``(parameters, center)``) and the stages (dicts with
         ``"transform"`` set to ``"rigid"``, ``"affine"`` or ``"syn"``: any number of linear stages,
-        then at most one SyN stage). Both forms take ``"winsorize"``: ``[lower, upper]``
-        quantiles (default ``[0.005, 0.995]``) or ``None`` for a plain rescale to [0, 1]. A stage
-        or field left out keeps its default.
+        then any number of SyN stages, which must end with the same shrink factor). In a stage
+        list, ``"fixed_mask": False`` on a stage, or ``"moving_mask": False`` on a SyN stage,
+        keeps that mask of the call out of that stage (both default to ``True``). Both forms take
+        ``"winsorize"``: ``[lower, upper]`` quantiles (default ``[0.005, 0.995]``) or ``None`` for
+        a plain rescale to [0, 1]. A stage or field left out keeps its default. See
+        :doc:`/guide/recipes`.
     outputs : {"composite", "split", "both"}, default "composite"
         Which transform files to write: the composites ``Composite.h5`` and
         ``InverseComposite.h5`` with ``0GenericAffine.mat``; ANTs' separate files
@@ -154,13 +157,15 @@ def register_syn(
     fixed_mask : ANTsImage or tuple, optional
         A mask in the space of the fixed image, on any grid; its non-zero voxels are inside. Every
         stage uses only the parts of the images inside it, as ``antsRegistration --masks
-        [fixedMask,...]`` given once. Use it to leave out, for example, a lesion in the fixed
-        image. See :doc:`/guide/normalization`.
+        [fixedMask,...]`` given once, except the stages of a stage-list recipe that switch it off
+        (``"fixed_mask": False``). Use it to leave out, for example, a lesion in the fixed image,
+        or to restrict a last SyN stage to a region. See :doc:`/guide/normalization`.
     moving_mask : ANTsImage or tuple, optional
         A mask in the space of the moving image, on any grid; its non-zero voxels are inside. The
-        SyN stage uses only the parts of the images inside it, so that a lesion or a resection
-        cavity outside the mask does not drive the deformation. The linear stages do not use it,
-        and a recipe without a SyN stage refuses it.
+        SyN stages use only the parts of the images inside it (except those of a stage-list recipe
+        that switch it off with ``"moving_mask": False``), so that a lesion or a resection cavity
+        outside the mask does not drive the deformation. The linear stages do not use it, and a
+        recipe without a SyN stage refuses it.
 
     Returns
     -------
@@ -168,7 +173,9 @@ def register_syn(
         Timings in seconds (``total_s``, ``resample_s``, ``preprocess_s``, ``linear_s``, ``syn_s``,
         ``warp_s``, ``write_s``), the GPU with its graphics API and type (``adapter``), the
         registration grid size (``grid``), one ``(level, grid_size, iterations, converged,
-        energy)`` tuple per SyN level (``levels``, empty without SyN), the combined affine
+        energy)`` tuple per SyN level (``levels``: the levels of every SyN stage, one stage after
+        the other; empty without SyN), the same tuples grouped by SyN stage (``syn_stages``: one
+        list per SyN stage), the combined affine
         (``affine_parameters``, ``affine_center``), the start (``initial_parameters``,
         ``initial_center``), one dict per linear stage (``linear_stages``), whether a SyN stage ran
         (``deformable``), the paths written (``files``), ``peak_gpu_bytes``,
@@ -180,8 +187,8 @@ def register_syn(
     ------
     ValueError
         An argument or the recipe is invalid, a mask is not a 3-D image or has no voxel inside,
-        or a moving mask is given for a recipe without a SyN stage. Checked before the GPU is
-        opened.
+        or a mask is given that no stage would use (a moving mask for a recipe without a SyN
+        stage, or a mask that every stage switches off). Checked before the GPU is opened.
     GpuUnavailableError
         No usable GPU. Raised before any work, so the caller can run ANTs instead.
     GpuCapacityError
@@ -353,7 +360,8 @@ def fits_gpu(
         checked on its own: a recipe without a SyN stage needs much less memory.
     fixed_mask, moving_mask : ANTsImage or tuple, optional
         The masks :func:`register_syn` would get; only their grid sizes count. They stay on their
-        own grids on the GPU during the SyN stage, and each level needs more memory with them.
+        own grids on the GPU during the SyN stages that use them (the recipe's switches select
+        those), and each level needs more memory with them.
 
     Returns
     -------
@@ -365,7 +373,8 @@ def fits_gpu(
     ValueError
         No fixed images, not as many moving images as fixed ones, ``channels`` below 1
         or not equal to the number of fixed images in a list, ``iso_mm`` not positive, an
-        invalid recipe, a mask that is not 3-D, or a moving mask for a recipe without a SyN stage.
+        invalid recipe, a mask that is not 3-D, or a mask that no stage would use (a moving mask
+        for a recipe without a SyN stage, or a mask that every stage switches off).
 
     See Also
     --------

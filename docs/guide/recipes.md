@@ -12,7 +12,8 @@ The cohort form
 
 The stage-list form
 : `{"initial": ..., "stages": [...]}`: any start, and any number of rigid and affine stages
-  followed by at most one SyN stage (see [Stage lists](#stage-lists)).
+  followed by any number of SyN stages, each stage with switches for the masks of the call (see
+  [Stage lists](#stage-lists)).
 
 Both forms also take `"winsorize"` (see [Winsorizing](#winsorizing)); the two forms' other keys do
 not mix. A stage or field that you leave out keeps its default value. The result's `"recipe"`
@@ -95,9 +96,11 @@ False ['rigid', 'affine']
 `stages`
 : A list of dicts, each with `"transform"` set to `"rigid"`, `"affine"` or `"syn"` and any of
   that stage's fields (see the tables below). Any number of rigid and affine stages, in any
-  order, then at most one SyN stage, which must come last. SyN alone is allowed. `None` (or
-  leaving `stages` out) runs the default three stages. Several {term}`channels <channel>` need a SyN
-  stage, because only SyN uses the further images.
+  order, then any number of SyN stages, which must come last (see
+  [Several SyN stages](#several-syn-stages)). SyN alone is allowed. `None` (or leaving `stages`
+  out) runs the default three stages. Several {term}`channels <channel>` need a SyN stage,
+  because only SyN uses the further images. Each stage may also carry the mask switches
+  `"fixed_mask"` and, on a SyN stage, `"moving_mask"` (see [Mask switches](#mask-switches)).
 
 Each linear stage starts as the identity, centred where the previous linear transform is
 centred, and is applied before everything earlier, as ANTs chains its stages; all of them are
@@ -110,6 +113,101 @@ A recipe without a SyN stage needs much less GPU memory, because the linear stag
 their sample buffers: on the laptop of the other examples, the default recipe at `iso_mm=0.5`
 does not fit, while the rigid-and-affine recipe above does. Pass the recipe to
 {func}`~fastwarp.fits_gpu` to check (see [What fits](gpu.md#what-fits)).
+
+### Several SyN stages
+
+A stage list may end with several SyN stages, as `antsRegistration` runs several `-t SyN[...]`
+stages. Each SyN stage starts from everything before it: it samples the moving image (and the
+moving mask) through its own moving-side field, then through the field of the earlier SyN stages,
+then through the affine, with one interpolation of the image. After each SyN stage its field is
+composed with the earlier one, as `antsRegistration --collapse-output-transforms 1` collapses
+consecutive displacement fields, so the output is still one affine and one field per direction:
+`Composite.h5` holds `[Affine, Warp]`, and the [split files](outputs.md#split-files) are
+`0GenericAffine.mat`, `1Warp.nii.gz` and `1InverseWarp.nii.gz`.
+
+Every SyN stage has its own fields (iterations, levels, window radius, gradient step, ...), and
+all SyN stages register the same channels. They must end with the same shrink factor (usually 1),
+so that their fields share the grid of the last level. The result reports the levels of every
+SyN stage, one stage after the other, in `levels`, and the same levels grouped by stage in
+`syn_stages` (see [Normalization](normalization.md#result)). Each SyN stage needs the GPU memory of
+a single SyN stage, and each SyN stage after the first 12 bytes per voxel more for the field of
+the earlier stages (see [GPU memory](gpu.md#what-fits)).
+
+With three or more SyN stages, a stage sees the earlier SyN stages through their collapsed field
+(the field the output holds), while `antsRegistration` chains their fields one after the other;
+the two differ only where the collapsed field is interpolated between its voxels (by up to
+0.07 mm in a test with synthetic fields of 2 mm that change by up to 0.4 mm per mm; smoother
+fields differ less). With two SyN stages there is no difference.
+
+### Mask switches
+
+The masks of a call (`fixed_mask=` and `moving_mask=` of {func}`~fastwarp.register_syn`, or
+`--mask` and `--moving-mask` of `fastwarp register`) apply to every stage they are allowed on: the
+fixed mask to every stage, the moving mask to every SyN stage (see
+[Masks](normalization.md#masks)). In a stage list each stage can switch them off for itself:
+
+`"fixed_mask"`
+: `True` (the default) or `False`: whether this stage uses the fixed mask.
+
+`"moving_mask"`
+: `True` (the default) or `False`: whether this SyN stage uses the moving mask. Rigid and affine
+  stages never use the moving mask, so they have no such switch, and giving one is an error.
+
+A switch that is on while the call gives no mask does nothing. A mask that every stage switches
+off is refused, as is a moving mask for a recipe without a SyN stage. The result's `"recipe"`
+reports both switches of every stage. This is how `antsRegistration` takes one `--masks` per
+stage, with each stage's masks being either the call's masks or `NULL`.
+
+A "subcortical refine": a whole-brain SyN, then a second SyN that only the region of a
+subcortical mask of the template drives, with a mask of the resection cavity in the subject left
+out of both SyN stages. The file names are placeholders for your own images:
+
+```python
+import ants
+import fastwarp
+
+template = ants.image_read("template_T1w.nii.gz")
+subject = ants.image_read("sub-01_T1w.nii.gz")
+subcortical = ants.image_read("template_subcortical_mask.nii.gz")
+cavity = ants.image_read("sub-01_cavity.nii.gz")
+
+recipe = {
+    "initial": "com",
+    "stages": [
+        {"transform": "rigid", "fixed_mask": False},
+        {"transform": "affine", "fixed_mask": False},
+        {"transform": "syn", "fixed_mask": False},
+        {
+            "transform": "syn",
+            "iterations": [40, 20],
+            "shrink_factors": [2, 1],
+            "smoothing_sigmas": [1.0, 0.0],
+        },
+    ],
+}
+info = fastwarp.register_syn(
+    template,
+    subject,
+    "out/sub-01_",
+    recipe=recipe,
+    fixed_mask=subcortical,
+    moving_mask=cavity == 0,
+)
+print([len(levels) for levels in info["syn_stages"]])
+```
+
+```{code-block} text
+:class: fw-output
+[4, 2]
+```
+
+The linear stages and the first SyN stage switch the subcortical mask off; the second SyN stage
+keeps both masks, so it only updates the deformation in and around the subcortical region. The
+same run with `antsRegistration` gives each stage its masks:
+`-x [NULL,NULL]` for the rigid and the affine stage, `-x [NULL,cavity_mask]` for the first SyN
+stage and `-x [subcortical_mask,cavity_mask]` for the second; `fastwarp ants-registration` takes
+exactly that (see [ANTs compatibility](ants.md)). As a JSON file for
+`fastwarp register --recipe`, write `false` for `False`.
 
 ## Winsorizing
 
@@ -169,9 +267,11 @@ weights of `0.25`. A recipe for a run of several channels must have one weight p
 ## Mistakes are caught before any work
 
 An unknown stage or field, a value of the wrong type, lists of different lengths in one stage, a
-value outside the limits above, an empty stage list, a stage after the SyN stage, keys of both
-forms in one recipe, a start file that does not exist, a start affine that cannot be inverted,
-or several channels without a SyN stage raises `ValueError` before the GPU is opened. The message
+value outside the limits above, an empty stage list, a linear stage after a SyN stage, SyN
+stages that end with different shrink factors, a mask switch that is not `True` or `False` or a
+`"moving_mask"` switch on a linear stage, keys of both forms in one recipe, a start file that does
+not exist, a start affine that cannot be inverted, or several channels without a SyN stage raises
+`ValueError` before the GPU is opened. The message
 names the field:
 
 ```python

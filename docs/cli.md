@@ -343,27 +343,32 @@ names. This is {func}`fastwarp.register_syn`; see [Normalization](guide/normaliz
   the identity instead), `"identity"`, `{"path": "start.mat", "invert": false}` (a relative path
   is read from the folder of the recipe file) or `{"parameters": [...], "center": [...]}`;
   `stages` lists
-  `rigid` / `affine` stages and at most one `syn` stage, last; `winsorize` is `[lower, upper]`
-  or `null` (ANTs' plain rescale to [0, 1]). A stage or field left out keeps the default value.
+  `rigid` / `affine` stages, then any number of `syn` stages (see
+  [Several SyN stages](guide/recipes.md#several-syn-stages)), each stage with the mask switches
+  `"fixed_mask"` and, on `syn` stages, `"moving_mask"` (`true` by default, `false` keeps that
+  mask out of the stage; see [Mask switches](guide/recipes.md#mask-switches)); `winsorize` is
+  `[lower, upper]` or `null` (ANTs' plain rescale to [0, 1]). A stage or field left out keeps the default value.
   An unknown key, a wrong type, an unsupported stage order or a value the GPU kernels do not
   support is refused with exit status 2 before any work.
 - `--mask MASK`: a fixed-image mask (NIfTI, any grid), as `fastwarp linear --mask`: every stage
-  uses only its non-zero voxels. This is `register_syn(fixed_mask=...)`; see
-  [Masks](guide/normalization.md#masks).
-- `--moving-mask MASK`: a moving-image mask (NIfTI, any grid): the SyN stage uses only its
-  non-zero voxels, for example everything but a resection cavity. The linear stages do not use
-  it, and a recipe without a SyN stage refuses it (exit status 2). This is
+  uses only its non-zero voxels, except the stages of a stage-list recipe that switch it off.
+  This is `register_syn(fixed_mask=...)`; see [Masks](guide/normalization.md#masks).
+- `--moving-mask MASK`: a moving-image mask (NIfTI, any grid): the SyN stages use only its
+  non-zero voxels (except those that switch it off), for example everything but a resection
+  cavity. The linear stages do not use it, and a recipe without a SyN stage, or one that switches
+  it off in every SyN stage, refuses it (exit status 2). This is
   `register_syn(moving_mask=...)`.
 - `--write-warped`: also writes `<PREFIX>_Warped.nii.gz`, MOVING on the registration grid.
 - `--adapter NAME`: use the GPU whose name contains NAME.
 - `--json`: print the timings and diagnostics as JSON: the keys of the dictionary
-  `register_syn` returns (`files` among them), with `levels` as a list of objects, and
-  `outputs`, the files written (the same list as `files`).
+  `register_syn` returns (`files` among them), with `levels` as a list of objects (each with
+  `stage`, the index of its SyN stage from 0, as well), `syn_stages` as one such list per SyN
+  stage, and `outputs`, the files written (the same list as `files`).
 
 The capacity check runs before the registration: a grid that does not fit the GPU stops with
 exit status 5, and no transform files are written (the output folder may already have been
-created). It checks the linear stages and the SyN stage each on its own and requires the larger
-of the two to fit.
+created). It checks the linear stages and each SyN stage on its own and requires the largest to
+fit.
 
 ### linear
 
@@ -509,7 +514,7 @@ spacing of FIXED, as for `register`).
 Each run reports four times in seconds:
 
 - `linear_s`: the centre of mass, Rigid and Affine stages;
-- `syn_s`: the SyN stage;
+- `syn_s`: the SyN stages;
 - `total_s`: all phases of the registration: resampling to the isotropic grid, intensity
   preprocessing, linear, SyN and the final warp;
 - `wall_s`: the whole call, including opening the GPU and the capacity check.
@@ -568,10 +573,10 @@ Supported:
 | `-d` | `3` (may be left out) |
 | `-o` | `PREFIX` or `[PREFIX,warped,inverseWarped]`; the prefix is text, as in ANTs |
 | `-r` | `[fixed,moving,1]` (centres of intensity mass, on the images of the first metric), `Identity`, one affine file (`.mat`, `.txt`) or `[file,1]` for its inverse |
-| `-t` | `Rigid[step]` and `Affine[step]` stages, any number, then at most one `SyN[step,<3>,<0>]` stage; `SyN` alone is allowed |
-| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stage: one or more `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (each metric is a channel) |
+| `-t` | `Rigid[step]` and `Affine[step]` stages, any number, then any number of `SyN[step,<3>,<0>]` stages ending with the same shrink factor; `SyN` alone is allowed |
+| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stages: one or more `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (each metric is a channel); every SyN stage has the same images in the same order |
 | `-c`, `-f`, `-s` | `MxN` or `[MxN,threshold,window]` (window at least 2), shrink factors, sigmas in `vox` (default) or `mm`; one value per level |
-| `-x` | `[fixedMask,movingMask]` or `fixedMask` (`NULL`, `NA`, `NONE` mean no mask), once for all stages or once per stage; a moving mask on the SyN stage only |
+| `-x` | `[fixedMask,movingMask]` or `fixedMask` (`NULL`, `NA`, `NONE` mean no mask), once for all stages or once per stage; a moving mask on SyN stages only; across the SyN stages, one fixed and one moving mask file (each SyN stage takes that file or `NULL`) |
 | `-w` | `[lower,upper]`; without it the images are rescaled to [0, 1] as ANTs does |
 | `-a` | `0` or `1` (`Composite.h5` and `InverseComposite.h5` only) |
 | `-z`, `-i`, `-u`, `-p`, `--write-interval-volumes`, `--minc` | `1`, `0`, `0`, `0`, `0`, `0` (the defaults) |
@@ -588,8 +593,10 @@ Refused, with the reason in the message: `-d 2` and `-d 4`; `--save-state`, `--r
 mass of other images than the first metric's; the transforms `Translation`, `Similarity`,
 `CompositeAffine`, `BSpline`, `BSplineSyN`, `GaussianDisplacementField`,
 `BSplineDisplacementField`, `TimeVaryingVelocityField`, `TimeVaryingBSplineVelocityField`,
-`Exponential`, `BSplineExponential`; a linear stage after the SyN stage or two SyN stages; MI in
-the SyN stage (the default of ANTsPy's `SyN`, `SyNRA`, `SyNOnly`: use `CC`), CC in a Rigid or
+`Exponential`, `BSplineExponential`; a linear stage after a SyN stage; SyN stages with
+other CC images than the first SyN stage's or that end with different shrink factors; two
+different fixed-mask files or two different moving-mask files across the SyN stages; MI in
+a SyN stage (the default of ANTsPy's `SyN`, `SyNRA`, `SyNOnly`: use `CC`), CC in a Rigid or
 Affine stage, `MeanSquares`, `Demons`, `GC` and the point-set metrics; MI with bins other than
 32, with dense sampling (no strategy or `None`, as in `MI[f,m,1,32]`) or `Random` sampling; CC
 with a sampling strategy, a radius above 8 or different radii;
@@ -631,7 +638,14 @@ images have a correlation of 1.000 with ANTs' (unregistered: 0.83). With a fixed
 3 mm voxels the corners differ by 1.1 mm and the forward map by 0.36 mm RMS (N1). A SyN stage
 with `-x [fixedMask,movingMask]` from the centres of mass, on a pair with a cavity in the moving
 image, agrees with ANTs to an RMS of 1e-4 mm, and the masks move both programs' maps by the same
-2.04 mm next to the cavity.
+2.04 mm next to the cavity. Two SyN stages (the second with `-c [15,1e-6,10] -f 1 -s 0vox`) agree
+with ANTs to an RMS of 5e-6 mm without masks, the second stage moving both maps by the same
+0.226 mm. With masks the agreement is that of a masked single stage, which is looser when a mask
+edge is curved (a ball): a fixed mask on the second stage only (`-x [NULL,NULL] -x
+[refineMask,NULL]`) gives 0.026 mm RMS, and moves FastWarp's map by 0.32 mm and ANTs' by
+0.35 mm inside the mask; with a lesion mask on both stages as well, 0.058 mm RMS, and 0.21 mm
+against 0.26 mm inside the refine mask. Far from the refine mask the second stage moves either
+map by less than 0.006 mm.
 
 - Masks: FastWarp counts every non-zero mask voxel as inside. ANTs reads a mask file as
   `unsigned char`, so a mask stored as floating point with values between 0 and 1 is empty in

@@ -219,7 +219,7 @@ fn build_recipe(plan: &RegistrationPlan, images: &mut Images) -> Result<Recipe, 
     for (stage, spec) in recipe.plan.linear.iter_mut().zip(plan.linear_stages()) {
         stage.mask = load(&spec.fixed_mask)?;
     }
-    if let (Some(stage), Some(spec)) = (recipe.plan.syn.as_mut(), plan.syn_stage()) {
+    for (stage, spec) in recipe.plan.syn.iter_mut().zip(plan.syn_stages()) {
         stage.fixed_mask = load(&spec.fixed_mask)?;
         stage.moving_mask = load(&spec.moving_mask)?;
         stage
@@ -341,6 +341,7 @@ fn registration_report(plan: &RegistrationPlan, run: &SynRun, iso_mm: f64) -> St
         interpolation_name(plan.interpolation),
     );
     let mut linear = run.linear_stages.iter();
+    let mut syn_index = 0;
     for (i, s) in plan.stages.iter().enumerate() {
         match s {
             StageSpec::Linear(l) => {
@@ -356,7 +357,9 @@ fn registration_report(plan: &RegistrationPlan, run: &SynRun, iso_mm: f64) -> St
                 ));
             }
             StageSpec::Syn(_) => {
-                for l in &run.levels {
+                let index = syn_index;
+                syn_index += 1;
+                for l in run.levels.iter().filter(|l| l.stage == index) {
                     text.push_str(&format!(
                         "stage {} syn level {}: grid {}x{}x{}, iterations {}, energy {:.6}{}\n",
                         i + 1,

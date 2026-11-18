@@ -396,7 +396,7 @@ fn ants_reads_the_split_outputs_of_a_syn_only_and_a_linear_only_run() {
             StagePlan {
                 initial: InitialTransform::Identity,
                 linear: Vec::new(),
-                syn: Some(syn.clone()),
+                syn: vec![syn.clone()],
                 winsorize: None,
             },
         ),
@@ -405,7 +405,7 @@ fn ants_reads_the_split_outputs_of_a_syn_only_and_a_linear_only_run() {
             StagePlan {
                 initial: InitialTransform::CentreOfMass,
                 linear: vec![linear.clone()],
-                syn: None,
+                syn: Vec::new(),
                 winsorize: None,
             },
         ),

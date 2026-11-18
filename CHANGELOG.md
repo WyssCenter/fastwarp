@@ -26,6 +26,26 @@
   ANTsPy applies them (the last stage, every stage with `mask_all_stages`) and refuses a moving
   mask that ANTsPy would give to a linear stage. A level with no voxel inside both masks fails
   with a clear error. Runs without masks are unchanged, bit for bit.
+- Several SyN stages in one registration, for example a whole-brain SyN followed by a SyN that
+  only a subcortical region of the template drives ("subcortical refine"). A stage-list recipe
+  (`register_syn(recipe=...)`, `fastwarp register --recipe`) takes any number of `syn` stages
+  after the linear stages; they must end with the same shrink factor. As in `antsRegistration`,
+  each SyN stage starts from everything before it: its moving image and moving mask are sampled
+  through its moving-side field, the earlier SyN field and the affine, with one interpolation of
+  the image (a new GPU kernel, `k_warp_pre`; the existing kernels and results are unchanged, bit
+  for bit). After each stage the fields are collapsed as `--collapse-output-transforms 1` does,
+  so the outputs stay one affine and one warp per direction. Each stage of a stage list takes the
+  mask switches `"fixed_mask"` and, on SyN stages, `"moving_mask"` (default `true`), which keep
+  the call's masks out of single stages; a mask that every stage switches off is refused, and a
+  `"moving_mask"` switch on a linear stage is an error. The result has `syn_stages`, the levels
+  of each SyN stage, next to `levels` (all SyN levels, one stage after the other); the plan
+  JSON of the ANTs compatibility mode now reports `syn_masks` as a list, one entry per SyN
+  stage. `fastwarp ants-registration` takes several `-t SyN[...]` stages with the same CC images
+  and one `-x` per stage, and refuses two different fixed-mask or moving-mask files across the
+  SyN stages. The GPU capacity check plans each SyN stage on its own plus 12 bytes per voxel for
+  the earlier field. Against ANTs 2.6.5, two SyN stages agree to an RMS of 5e-6 mm without
+  masks; with masks the agreement is that of a masked single stage (see `docs/cli.md`).
+  `fastwarp.ants` is unchanged: no ANTsPy type runs more than one SyN stage.
 
 ## 0.2.0 (2026-11-15)
 

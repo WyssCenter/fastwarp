@@ -61,6 +61,11 @@ Three rules hold for every argument:
 
 Any other name raises ANTsPy's `ValueError("... does not exist")`.
 
+No ANTsPy type runs more than one SyN stage. For several SyN stages, for example a whole-brain
+SyN followed by one restricted to a region of the template, use a stage-list recipe with
+{func}`~fastwarp.register_syn` (see [Several SyN stages](recipes.md#several-syn-stages)) or
+`fastwarp ants-registration` with several `-t SyN[...]` stages and one `-x` per stage.
+
 ## Arguments of `registration`
 
 | Argument | In FastWarp |
