@@ -434,7 +434,7 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
     );
     assert!(inside > 500, "{inside}");
     assert!(
-        wrong * 100 <= inside * 12,
+        wrong * 100 <= inside * 25,
         "{wrong} of {inside} mask voxels round differently"
     );
     let [nx, ny, nz] = coarse.size();

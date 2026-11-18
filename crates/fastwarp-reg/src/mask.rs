@@ -34,7 +34,7 @@ use crate::volume::Volume;
 /// A registration mask, fixed or moving: the inside test of ITK's `ImageMaskSpatialObject` on a
 /// background-zero mask image, evaluated in physical (LPS mm) space.
 ///
-/// The mask grid need not be the fixed image grid; the point is mapped through each grid on its
+/// The mask grid need not be the grid of the image it masks; the point is mapped through each grid on its
 /// own, exactly as ANTs attaches a `--masks [fixed,moving]` image through a spatial object.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaskVolume {

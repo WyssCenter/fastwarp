@@ -273,6 +273,22 @@ fn is_interior(grid: &Grid, idx: usize, margin: usize) -> bool {
         && k + margin < nz
 }
 
+fn mask_warp_result(op: &str, got: &[f64], want: &[f64], n: usize) -> OpResult {
+    let wrong = got.iter().zip(want).filter(|(a, b)| a != b).count();
+    let inside = want.iter().filter(|v| **v == 1.0).count();
+    let mut r = compare(
+        op,
+        got,
+        want,
+        0.0,
+        format!("{wrong} of {n} voxels differ, {inside} inside"),
+    );
+    let binary = got.iter().all(|v| *v == 0.0 || *v == 1.0);
+    let covered = got.len() == want.len() && inside > 0 && inside < want.len();
+    r.ok = covered && (r.ok || (binary && wrong <= 1 + n / 500));
+    r
+}
+
 fn mismatch(what: &str, e: RegError) -> RegError {
     RegError::Invalid {
         what: "parity",
@@ -506,18 +522,31 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
         .map_err(|e| mismatch("warp_mask_through_field", e))?;
     let c_warped = cpu.warp_mask_through_field(&mask_src, &cf, Some(&affine), None)?;
     let got = gpu.download_image(&g_warped)?;
-    let want = c_warped.data();
-    let wrong = got.iter().zip(want).filter(|(a, b)| a != b).count();
-    let inside = want.iter().filter(|v| **v == 1.0).count();
-    let mut r = compare(
+    out.push(mask_warp_result(
         "warp_mask_through_field+affine",
         &got,
-        want,
-        0.0,
-        format!("{wrong} of {n} voxels differ, {inside} inside"),
-    );
-    r.ok = r.ok || (got.iter().all(|v| *v == 0.0 || *v == 1.0) && wrong <= 1 + n / 500);
-    out.push(r);
+        c_warped.data(),
+        n,
+    ));
+    let second_src = Volume::from_vec(
+        other,
+        image(&other, case.seed + 5, 0.0)
+            .data()
+            .iter()
+            .map(|v| f64::from(u8::from(*v > 0.4)))
+            .collect(),
+    )?;
+    let g_second = gpu.upload_image(&second_src)?;
+    let g_product = gpu
+        .warp_mask_through_field(&g_second, &gf, None, Some(g_warped))
+        .map_err(|e| mismatch("warp_mask_through_field product", e))?;
+    let c_product = cpu.warp_mask_through_field(&second_src, &cf, None, Some(c_warped))?;
+    out.push(mask_warp_result(
+        "warp_mask_through_field product",
+        &gpu.download_image(&g_product)?,
+        c_product.data(),
+        n,
+    ));
 
     for variance in [3.0, 0.3, 0.8, 14.0] {
         let g = gpu.smooth_field(gpu.copy_field(&gf)?, variance)?;
