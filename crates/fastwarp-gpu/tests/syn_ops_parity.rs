@@ -5,8 +5,11 @@
 use fastwarp_gpu::parity::{check_all, field, image, Case};
 use fastwarp_gpu::{BackendSelect, GpuError, GpuField, WgpuBackend};
 use fastwarp_reg::backend::Backend;
-use fastwarp_reg::field_ops::InvertParams;
+use fastwarp_reg::field_ops::{InvertParams, VectorField};
+use fastwarp_reg::linalg::{Vec3, IDENTITY3};
+use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
 use fastwarp_reg::transform::AffineTransform;
+use fastwarp_reg::{Grid, Volume};
 
 fn require_adapter() -> bool {
     fastwarp_gpu::device::env_var("FASTWARP_GPU_REQUIRE_ADAPTER")
@@ -298,6 +301,285 @@ fn paired_scalar_operations_match_the_single_ones_bit_for_bit_in_one_read_back()
     assert_eq!(forward_stats, single_forward_stats);
     assert_eq!(field_bits(&inverse), field_bits(&single_inverse));
     assert_eq!(field_bits(&forward), field_bits(&single_forward));
+}
+
+fn ball_mask(grid: &Grid, centre: Vec3, radius: f64, cut: Option<(usize, f64)>) -> Volume<f64> {
+    let data = (0..grid.num_voxels())
+        .map(|idx| {
+            let [i, j, k] = grid.ijk(idx);
+            let p = grid.index_to_point([i as f64, j as f64, k as f64]);
+            let d = ((p[0] - centre[0]).powi(2)
+                + (p[1] - centre[1]).powi(2)
+                + (p[2] - centre[2]).powi(2))
+            .sqrt();
+            let out = cut.is_some_and(|(axis, at)| p[axis] > at);
+            if d < radius && !out {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    Volume::from_vec(*grid, data).unwrap()
+}
+
+fn grid_centre(grid: &Grid) -> Vec3 {
+    let [nx, ny, nz] = grid.size();
+    grid.index_to_point([
+        (nx - 1) as f64 / 2.0,
+        (ny - 1) as f64 / 2.0,
+        (nz - 1) as f64 / 2.0,
+    ])
+}
+
+fn mismatches(a: &[f64], b: &[f64]) -> usize {
+    a.iter().zip(b).filter(|(x, y)| x != y).count()
+}
+
+#[test]
+fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
+    let Some(b) = backend() else { return };
+    let cpu = fastwarp_reg::cpu::CpuBackend;
+    let case = Case::awkward([29, 23, 19], [1.2, 1.6, 2.0], true, 3);
+    let grid = case.grid().unwrap();
+    let mask_grid = case.other_grid().unwrap();
+    let c = grid_centre(&grid);
+    let first = ball_mask(&mask_grid, c, 13.0, Some((1, c[1] + 4.0)));
+    let second = ball_mask(&mask_grid, [c[0] + 3.0, c[1], c[2] - 2.0], 12.0, None);
+    let f0 = field(&grid, 2.0, 5);
+    let g0 = field(&grid, 1.5, 8);
+    let affine = AffineTransform::new(
+        [[1.03, 0.02, 0.0], [-0.02, 0.98, 0.01], [0.0, 0.01, 1.01]],
+        [0.7, -0.4, 0.3],
+        c,
+    );
+    let (gf, gg) = (b.upload_field(&f0).unwrap(), b.upload_field(&g0).unwrap());
+    let (m1, m2) = (
+        b.upload_image(&first).unwrap(),
+        b.upload_image(&second).unwrap(),
+    );
+    let single = b.warp_mask_through_field(&m1, &gf, None, None).unwrap();
+    let single_gpu = b.download_image(&single).unwrap();
+    let product = b
+        .warp_mask_through_field(&m2, &gg, Some(&affine), Some(single))
+        .unwrap();
+    let product_gpu = b.download_image(&product).unwrap();
+    let single_cpu = cpu
+        .warp_mask_through_field(&first, &f0, None, None)
+        .unwrap();
+    let product_cpu = cpu
+        .warp_mask_through_field(&second, &g0, Some(&affine), Some(single_cpu.clone()))
+        .unwrap();
+    let n = grid.num_voxels();
+    for (label, gpu, reference) in [
+        ("single", &single_gpu, single_cpu.data()),
+        ("product", &product_gpu, product_cpu.data()),
+    ] {
+        let inside = reference.iter().filter(|v| **v == 1.0).count();
+        let wrong = mismatches(gpu, reference);
+        eprintln!("{label}: {inside} of {n} voxels inside, {wrong} differ from the CPU");
+        assert!(gpu.iter().all(|v| *v == 0.0 || *v == 1.0));
+        assert!(inside > n / 10 && inside < 9 * n / 10, "{label}: {inside}");
+        assert!(wrong * 500 <= n, "{label}: {wrong} of {n} voxels differ");
+    }
+    let level = Grid::new([12, 10, 9], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
+    let coarse = Grid::new([6, 5, 5], [2.0; 3], [0.0; 3], IDENTITY3).unwrap();
+    let stripes = Volume::from_vec(
+        coarse,
+        (0..coarse.num_voxels())
+            .map(|idx| {
+                let [i, j, k] = coarse.ijk(idx);
+                f64::from(u8::from((i + 2 * j + k) % 3 == 0))
+            })
+            .collect(),
+    )
+    .unwrap();
+    let zero = VectorField::zeros(level);
+    let want = cpu
+        .warp_mask_through_field(&stripes, &zero, None, None)
+        .unwrap();
+    let got = b
+        .warp_mask_through_field(
+            &b.upload_image(&stripes).unwrap(),
+            &b.upload_field(&zero).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+    let got = b.download_image(&got).unwrap();
+    assert_eq!(got, want.data(), "half-voxel points round up on both");
+    assert_eq!(want.data()[level.linear_index(1, 0, 0)], 0.0);
+    assert_eq!(want.data()[level.linear_index(5, 0, 0)], 1.0);
+    let fine = Grid::new([40, 36, 32], [1.1; 3], [-21.37, -19.03, -17.11], IDENTITY3).unwrap();
+    let coarse = Grid::new([20, 18, 16], [2.2; 3], [-20.82, -18.48, -16.56], IDENTITY3).unwrap();
+    let ball = ball_mask(&fine, grid_centre(&fine), 13.0, Some((2, 4.0)));
+    let zero = VectorField::zeros(coarse);
+    let want = cpu
+        .warp_mask_through_field(&ball, &zero, None, None)
+        .unwrap();
+    let got = b
+        .warp_mask_through_field(
+            &b.upload_image(&ball).unwrap(),
+            &b.upload_field(&zero).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+    let got = b.download_image(&got).unwrap();
+    let wrong = mismatches(&got, want.data());
+    let inside = want.data().iter().filter(|v| **v == 1.0).count();
+    eprintln!(
+        "ties in floating point (a 2:1 grid with inexact origins): {wrong} of {} voxels differ, {inside} inside",
+        coarse.num_voxels()
+    );
+    assert!(inside > 500, "{inside}");
+    assert!(
+        wrong * 5 <= inside,
+        "{wrong} of {inside} mask voxels round differently"
+    );
+    let [nx, ny, nz] = coarse.size();
+    for idx in (0..coarse.num_voxels()).filter(|i| got[*i] != want.data()[*i]) {
+        let [i, j, k] = coarse.ijk(idx);
+        let edge = [[1i64, 0, 0], [0, 1, 0], [0, 0, 1]].iter().any(|d| {
+            [-1i64, 1].iter().any(|s| {
+                let n = [
+                    i as i64 + s * d[0],
+                    j as i64 + s * d[1],
+                    k as i64 + s * d[2],
+                ];
+                let inside_grid = n[0] >= 0
+                    && n[1] >= 0
+                    && n[2] >= 0
+                    && n[0] < nx as i64
+                    && n[1] < ny as i64
+                    && n[2] < nz as i64;
+                inside_grid
+                    && want.data()[coarse.linear_index(n[0] as usize, n[1] as usize, n[2] as usize)]
+                        != want.data()[idx]
+            })
+        });
+        assert!(edge, "voxel {i},{j},{k} differs away from the mask's edge");
+    }
+}
+
+#[test]
+fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair() {
+    let Some(b) = backend() else { return };
+    let cpu = fastwarp_reg::cpu::CpuBackend;
+    for (dims, spacing, radius) in [
+        ([29, 23, 19], [1.2, 1.6, 2.0], 3usize),
+        ([13, 11, 9], [1.0, 1.0, 1.0], 2usize),
+    ] {
+        let grid = Case::awkward(dims, spacing, true, 3).grid().unwrap();
+        let n = grid.num_voxels();
+        let (fa, fb) = (image(&grid, 3, 0.2), image(&grid, 4, 0.2));
+        let c = grid_centre(&grid);
+        let hole = ball_mask(&grid, c, 0.25 * dims[0] as f64 * spacing[0], None);
+        let valid = Volume::from_vec(
+            grid,
+            hole.data()
+                .iter()
+                .enumerate()
+                .map(|(idx, h)| {
+                    let [i, _, _] = grid.ijk(idx);
+                    if *h == 0.0 && i + 2 < dims[0] {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        )
+        .unwrap();
+        let (ga, gb, gv) = (
+            b.upload_image(&fa).unwrap(),
+            b.upload_image(&fb).unwrap(),
+            b.upload_image(&valid).unwrap(),
+        );
+        let field_values = |f: &GpuField| -> Vec<f64> {
+            b.download_field(f)
+                .unwrap()
+                .data()
+                .iter()
+                .flat_map(|v| v.iter().copied())
+                .collect()
+        };
+        let before = b.stats().scalar_readbacks;
+        let (((v1, d1), (v2, d2)), [n1, n2]) = b
+            .cc_value_derivative_pair_masked_with_norms(&ga, &gb, &gv, radius)
+            .unwrap();
+        assert_eq!(b.stats().scalar_readbacks - before, 1);
+        let ((s1, e1), (s2, e2)) = b
+            .cc_value_derivative_pair_masked(&ga, &gb, &gv, radius)
+            .unwrap();
+        let (m1, m2) = (b.l2_norm(&e1).unwrap(), b.l2_norm(&e2).unwrap());
+        assert_eq!(bits(&[v1, v2, n1, n2]), bits(&[s1, s2, m1, m2]));
+        assert_eq!(bits(&field_values(&d1)), bits(&field_values(&e1)));
+        assert_eq!(bits(&field_values(&d2)), bits(&field_values(&e2)));
+        let ((cv1, cd1), (cv2, cd2)) = cpu
+            .cc_value_derivative_pair_masked(&fa, &fb, &valid, radius)
+            .unwrap();
+        assert!((v1 - cv1).abs() < 1e-4 * cv1.abs().max(1e-6), "{v1} {cv1}");
+        assert!((v2 - cv2).abs() < 1e-4 * cv2.abs().max(1e-6), "{v2} {cv2}");
+        for (gpu, reference) in [(d1, &cd1), (d2, &cd2)] {
+            let gpu = b.download_field(&gpu).unwrap();
+            let range = reference
+                .data()
+                .iter()
+                .flat_map(|v| v.iter())
+                .fold(0.0f64, |a, x| a.max(x.abs()));
+            assert!(range > 0.0);
+            let mut worst = 0.0f64;
+            for (idx, (g, r)) in gpu.data().iter().zip(reference.data()).enumerate() {
+                if valid.data()[idx] == 0.0 {
+                    assert_eq!(g, &[0.0; 3], "voxel {idx} is outside the mask");
+                    continue;
+                }
+                let [x, y, z] = grid.ijk(idx);
+                let [nx, ny, nz] = grid.size();
+                if x > 0 && y > 0 && z > 0 && x + 1 < nx && y + 1 < ny && z + 1 < nz {
+                    for k in 0..3 {
+                        worst = worst.max((g[k] - r[k]).abs());
+                    }
+                }
+            }
+            eprintln!("{dims:?}: masked derivative max diff {worst:.3e} of {range:.3e}");
+            assert!(worst < 1e-3 * range, "masked derivative {worst} of {range}");
+        }
+        let ones = b
+            .upload_image(&Volume::from_vec(grid, vec![1.0; n]).unwrap())
+            .unwrap();
+        let ((o1, od1), (o2, od2)) = b
+            .cc_value_derivative_pair_masked(&ga, &gb, &ones, radius)
+            .unwrap();
+        let ((u1, ud1), (u2, ud2)) = b.cc_value_derivative_pair(&ga, &gb, radius).unwrap();
+        for (masked, plain) in [(o1, u1), (o2, u2)] {
+            assert!(
+                (masked - plain).abs() <= 1e-6 * plain.abs(),
+                "{masked} {plain}"
+            );
+        }
+        for (masked, plain) in [(od1, ud1), (od2, ud2)] {
+            let (m, p) = (field_values(&masked), field_values(&plain));
+            let range = p.iter().fold(0.0f64, |a, x| a.max(x.abs()));
+            let worst = m
+                .iter()
+                .zip(&p)
+                .fold(0.0f64, |a, (x, y)| a.max((x - y).abs()));
+            let differ = m.iter().zip(&p).filter(|(x, y)| x != y).count();
+            eprintln!(
+                "{dims:?}: all-ones mask vs unmasked derivative: {differ} of {} values differ, max {worst:.3e} of {range:.3e}",
+                m.len()
+            );
+            assert!(worst <= 1e-5 * range, "{worst} of {range}");
+        }
+        let zeros = b.upload_image(&Volume::zeros(grid)).unwrap();
+        let err = b
+            .cc_value_derivative_pair_masked(&ga, &gb, &zeros, radius)
+            .err()
+            .expect("an empty mask is refused");
+        assert!(err.to_string().contains(NO_VOXEL_IN_MASKS), "{err}");
+    }
 }
 
 #[test]

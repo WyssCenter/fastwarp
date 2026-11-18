@@ -203,19 +203,28 @@ fn build_recipe(plan: &RegistrationPlan, images: &mut Images) -> Result<Recipe, 
         recipe.check(channels).map_err(CliError::usage)?;
     }
     let mut loaded: Vec<(PathBuf, MaskVolume)> = Vec::new();
-    for (stage, spec) in recipe.plan.linear.iter_mut().zip(plan.linear_stages()) {
-        let Some(path) = &spec.fixed_mask else {
-            continue;
+    let mut load = |path: &Option<PathBuf>| -> Result<Option<MaskVolume>, CliError> {
+        let Some(path) = path else {
+            return Ok(None);
         };
-        let mask = match loaded.iter().find(|(p, _)| p == path) {
+        Ok(Some(match loaded.iter().find(|(p, _)| p == path) {
             Some((_, m)) => m.clone(),
             None => {
                 let m = MaskVolume::from_volume(images.load(path, "--masks")?);
                 loaded.push((path.clone(), m.clone()));
                 m
             }
-        };
-        stage.mask = Some(mask);
+        }))
+    };
+    for (stage, spec) in recipe.plan.linear.iter_mut().zip(plan.linear_stages()) {
+        stage.mask = load(&spec.fixed_mask)?;
+    }
+    if let (Some(stage), Some(spec)) = (recipe.plan.syn.as_mut(), plan.syn_stage()) {
+        stage.fixed_mask = load(&spec.fixed_mask)?;
+        stage.moving_mask = load(&spec.moving_mask)?;
+        stage
+            .validate()
+            .map_err(|e| CliError::usage(format!("--masks: {e}")))?;
     }
     Ok(recipe)
 }

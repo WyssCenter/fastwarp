@@ -37,7 +37,9 @@
 //!    through `F^-1`, and the moving image through `affine(M^-1(x))`;
 //! 2. the ANTs CC metric runs on those two images (identity transforms, so its derivative is a
 //!    per-voxel image-space gradient), once with the fixed-side image as "fixed" and once with the
-//!    roles swapped; several channels combine as ITK's multi-metric
+//!    roles swapped; with masks, the fixed mask is resampled through `F^-1` and the moving mask
+//!    through `affine(M^-1(x))` (nearest neighbour), and the metric uses only the voxels inside
+//!    both; several channels combine as ITK's multi-metric
 //!    `(sum |d_j| / J) sum w_j d_j / |d_j|`; the value is the first metric's;
 //! 3. each gradient is Gaussian-smoothed (update variance) and scaled so its largest voxel step is
 //!    the gradient step;
@@ -242,6 +244,7 @@ fn side_updates<B: Backend>(
     recipe: &SynRecipe,
     fixed_mid: &[B::Image],
     moving_mid: &[B::Image],
+    valid: Option<&B::Image>,
 ) -> Result<(SideUpdate<B>, SideUpdate<B>)> {
     let channels = fixed_mid.len();
     let sum: f64 = recipe.channel_weights.iter().sum();
@@ -249,21 +252,27 @@ fn side_updates<B: Backend>(
     let mut fixed_side = SideAccumulator::<B>::new(channels);
     let mut moving_side = SideAccumulator::<B>::new(channels);
     for c in 0..channels {
+        let (fixed, moving, radius) = (&fixed_mid[c], &moving_mid[c], recipe.cc_radius);
         let (((fixed_value, fixed_derivative), (moving_value, moving_derivative)), norms) =
-            if channels == 1 {
-                let pair = backend.cc_value_derivative_pair(
-                    &fixed_mid[c],
-                    &moving_mid[c],
-                    recipe.cc_radius,
-                )?;
-                (pair, None)
-            } else {
-                let (pair, norms) = backend.cc_value_derivative_pair_with_norms(
-                    &fixed_mid[c],
-                    &moving_mid[c],
-                    recipe.cc_radius,
-                )?;
-                (pair, Some(norms))
+            match (channels == 1, valid) {
+                (true, None) => (
+                    backend.cc_value_derivative_pair(fixed, moving, radius)?,
+                    None,
+                ),
+                (true, Some(valid)) => (
+                    backend.cc_value_derivative_pair_masked(fixed, moving, valid, radius)?,
+                    None,
+                ),
+                (false, None) => {
+                    let (pair, norms) =
+                        backend.cc_value_derivative_pair_with_norms(fixed, moving, radius)?;
+                    (pair, Some(norms))
+                }
+                (false, Some(valid)) => {
+                    let (pair, norms) = backend
+                        .cc_value_derivative_pair_masked_with_norms(fixed, moving, valid, radius)?;
+                    (pair, Some(norms))
+                }
             };
         fixed_side.add(
             backend,
@@ -312,6 +321,49 @@ fn update_total_field<B: Backend>(
         return Err(invalid("syn", "the displacement field is not finite"));
     }
     Ok((new_field, new_inverse, stats_inverse, stats_field))
+}
+
+struct StageMasks<B: Backend> {
+    fixed: Option<B::Image>,
+    moving: Option<B::Image>,
+}
+
+impl<B: Backend> StageMasks<B> {
+    fn upload(backend: &B, recipe: &SynRecipe) -> Result<Self> {
+        let up = |m: &Option<crate::mask::MaskVolume>| {
+            m.as_ref()
+                .map(|m| backend.upload_image_owned(m.to_binary_volume()?))
+                .transpose()
+        };
+        Ok(Self {
+            fixed: up(&recipe.fixed_mask)?,
+            moving: up(&recipe.moving_mask)?,
+        })
+    }
+
+    /// The voxels of the level grid inside both masks, as ITK resamples the masks onto the
+    /// virtual domain in `ComputeMetricGradientField`; `None` without masks.
+    fn validity(
+        &self,
+        backend: &B,
+        state: &State<B>,
+        initial: &AffineTransform,
+    ) -> Result<Option<B::Image>> {
+        let fixed = self
+            .fixed
+            .as_ref()
+            .map(|m| backend.warp_mask_through_field(m, &state.f2m_inv, None, None))
+            .transpose()?;
+        match &self.moving {
+            Some(m) => Ok(Some(backend.warp_mask_through_field(
+                m,
+                &state.m2m_inv,
+                Some(initial),
+                fixed,
+            )?)),
+            None => Ok(fixed),
+        }
+    }
 }
 
 fn upload_smoothed<B: Backend>(
@@ -404,6 +456,7 @@ fn syn_fields<B: Backend>(
             ));
         }
     }
+    let masks = StageMasks::<B>::upload(backend, recipe)?;
     let mut state: Option<State<B>> = None;
     let mut levels = Vec::with_capacity(recipe.levels());
     for level in 0..recipe.levels() {
@@ -490,7 +543,10 @@ fn syn_fields<B: Backend>(
                     Some(initial),
                 )?);
             }
-            let (fixed_side, moving_side) = side_updates(backend, recipe, &fixed_mid, &moving_mid)?;
+            let valid = masks.validity(backend, &st, initial)?;
+            let (fixed_side, moving_side) =
+                side_updates(backend, recipe, &fixed_mid, &moving_mid, valid.as_ref())?;
+            drop(valid);
             let State {
                 f2m,
                 f2m_inv,

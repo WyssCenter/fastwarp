@@ -100,6 +100,8 @@ def register_syn(
     cancel: CancelToken | None = None,
     recipe: Mapping[str, Any] | None = None,
     outputs: str = "composite",
+    fixed_mask: Any | None = None,
+    moving_mask: Any | None = None,
 ) -> dict[str, Any]:
     """Register ``moving`` onto ``fixed`` on the GPU and write ANTs transform files.
 
@@ -149,6 +151,16 @@ def register_syn(
         ``InverseComposite.h5`` with ``0GenericAffine.mat``; ANTs' separate files
         ``0GenericAffine.mat``, ``1Warp.nii.gz`` and ``1InverseWarp.nii.gz``; or both. See
         :data:`OUTPUT_LAYOUTS`.
+    fixed_mask : ANTsImage or tuple, optional
+        A mask in the space of the fixed image, on any grid; its non-zero voxels are inside. Every
+        stage uses only the parts of the images inside it, as ``antsRegistration --masks
+        [fixedMask,...]`` given once. Use it to leave out, for example, a lesion in the fixed
+        image. See :doc:`/guide/normalization`.
+    moving_mask : ANTsImage or tuple, optional
+        A mask in the space of the moving image, on any grid; its non-zero voxels are inside. The
+        SyN stage uses only the parts of the images inside it, so that a lesion or a resection
+        cavity outside the mask does not drive the deformation. The linear stages do not use it,
+        and a recipe without a SyN stage refuses it.
 
     Returns
     -------
@@ -167,7 +179,9 @@ def register_syn(
     Raises
     ------
     ValueError
-        An argument or the recipe is invalid. Checked before the GPU is opened.
+        An argument or the recipe is invalid, a mask is not a 3-D image or has no voxel inside,
+        or a moving mask is given for a recipe without a SyN stage. Checked before the GPU is
+        opened.
     GpuUnavailableError
         No usable GPU. Raised before any work, so the caller can run ANTs instead.
     GpuCapacityError
@@ -175,7 +189,8 @@ def register_syn(
     RegistrationCancelled
         ``cancel`` was cancelled. No files are written.
     RegistrationError
-        The registration failed, for example on an image with NaN voxels.
+        The registration failed, for example on an image with NaN voxels, or because no voxel of a
+        SyN level lies inside both masks.
 
     See Also
     --------
@@ -200,6 +215,8 @@ def register_syn(
         cancel=cancel,
         recipe=_recipe_arg(recipe),
         outputs=outputs,
+        fixed_mask=None if fixed_mask is None else _image_args(fixed_mask),
+        moving_mask=None if moving_mask is None else _image_args(moving_mask),
     )
     return _warn_skipped(result)
 
@@ -307,6 +324,8 @@ def fits_gpu(
     channels: int | None = None,
     adapter: str | None = None,
     recipe: Mapping[str, Any] | None = None,
+    fixed_mask: Any | None = None,
+    moving_mask: Any | None = None,
 ) -> bool:
     """Check whether :func:`register_syn` would fit the GPU's memory, without registering.
 
@@ -332,6 +351,9 @@ def fits_gpu(
     recipe : dict, optional
         The recipe, as :func:`register_syn` takes it; by default the default recipe. Each phase is
         checked on its own: a recipe without a SyN stage needs much less memory.
+    fixed_mask, moving_mask : ANTsImage or tuple, optional
+        The masks :func:`register_syn` would get; only their grid sizes count. They stay on their
+        own grids on the GPU during the SyN stage, and each level needs more memory with them.
 
     Returns
     -------
@@ -342,8 +364,8 @@ def fits_gpu(
     ------
     ValueError
         No fixed images, not as many moving images as fixed ones, ``channels`` below 1
-        or not equal to the number of fixed images in a list, ``iso_mm`` not positive, or an
-        invalid recipe.
+        or not equal to the number of fixed images in a list, ``iso_mm`` not positive, an
+        invalid recipe, a mask that is not 3-D, or a moving mask for a recipe without a SyN stage.
 
     See Also
     --------
@@ -372,10 +394,25 @@ def fits_gpu(
         moving_dims = max(grids, key=lambda d: d[0] * d[1] * d[2])
     try:
         return _fits_gpu(
-            iso_grid_dims(fixed_img, iso_mm), channels, adapter, moving_dims, _recipe_arg(recipe)
+            iso_grid_dims(fixed_img, iso_mm),
+            channels,
+            adapter,
+            moving_dims,
+            _recipe_arg(recipe),
+            None if fixed_mask is None else _mask_dims(fixed_mask),
+            None if moving_mask is None else _mask_dims(moving_mask),
         )
     except GpuUnavailableError:
         return False
+
+
+def _mask_dims(mask: Any) -> tuple[int, int, int]:
+    """The grid size of a mask given as an ``ANTsImage`` or as a tuple
+    ``(array, spacing, origin, direction)``."""
+    shape = tuple(int(n) for n in (np.shape(mask[0]) if isinstance(mask, tuple) else mask.shape))
+    if len(shape) != 3:
+        raise ValueError(f"expected a 3-D mask, got shape {shape}")
+    return (shape[0], shape[1], shape[2])
 
 
 def gpu_available(adapter: str | None = None) -> bool:

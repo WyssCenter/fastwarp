@@ -31,6 +31,14 @@ const LEVEL_BYTES_PER_VOXEL_PER_CHANNEL: u64 = 20;
 /// Each channel keeps one smoothed moving image on the moving image's own grid for the whole
 /// level (`syn.rs`, `syn_fields`); the per-voxel figures above count it on the fixed grid.
 const MOVING_IMAGE_BYTES_PER_VOXEL: u64 = 4;
+/// What masks add per voxel of a level (`syn.rs`, `StageMasks::validity`, and
+/// `wgpu_backend.rs`, `cc_evaluate_masked`): the image of valid voxels and the sixth window
+/// plane with its sum (12 B/voxel), and the per-workgroup counts of valid voxels, rounded up.
+/// Both masks on a 96^3 run added 21.5 B/voxel to the pool peak, the two masks' own 8 B/voxel
+/// included (`tests/syn_parity.rs`, `the_capacity_plan_bounds_the_pool_peak_of_a_masked_run`).
+const MASK_BYTES_PER_VOXEL: u64 = 13;
+/// A mask stays on its own grid for the whole stage, one `f32` per voxel.
+const MASK_IMAGE_BYTES_PER_VOXEL: u64 = 4;
 /// The share of the per-voxel figures held by the nine displacement fields of a level.
 const LEVEL_FIELD_BYTES_PER_VOXEL: u64 = 9 * 12;
 const SYN_WORKGROUP: [u64; 3] = [8, 8, 4];
@@ -217,12 +225,12 @@ pub struct CapacityPlan {
 /// Why a grid cannot fit.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CapacityError {
-    /// The largest binding (the three-plane displacement field, or a larger moving image)
-    /// exceeds `max_storage_buffer_binding_size`.
+    /// The largest binding (the three-plane displacement field, or a larger moving image or
+    /// mask) exceeds `max_storage_buffer_binding_size`.
     #[error(
         "the finest registration level {dims:?} needs a storage binding of {need} bytes \
-         (the three-plane displacement field, or the moving image when that is larger), but the \
-         device binds at most {limit} bytes per storage buffer"
+         (the three-plane displacement field, or the moving image or a mask when that is larger), \
+         but the device binds at most {limit} bytes per storage buffer"
     )]
     Binding {
         /// Grid dimensions of the finest level.
@@ -304,14 +312,14 @@ fn voxel_count(dims: [usize; 3]) -> u64 {
         .fold(1u64, |acc, d| acc.saturating_mul(*d as u64))
 }
 
-fn syn_partial_bytes(dims: [usize; 3], voxels: u64) -> u64 {
+fn syn_partial_bytes(dims: [usize; 3], voxels: u64, masked: bool) -> u64 {
     let groups = dims.iter().zip(SYN_WORKGROUP).fold(1u64, |acc, (d, w)| {
         acc.saturating_mul((*d as u64).div_ceil(w))
     });
     let items = voxels.div_ceil(SYN_REDUCTION_GROUP).max(1);
     let x = items.min(SYN_REDUCTION_MAX_GROUPS_X);
     groups
-        .saturating_mul(4 + 8 + 8)
+        .saturating_mul(4 + 8 + 8 + if masked { 4 } else { 0 })
         .saturating_add(x.saturating_mul(items.div_ceil(x)).saturating_mul(4))
 }
 
@@ -327,14 +335,36 @@ pub fn plan_capacity_syn(
     shrink_factors: &[u32],
     caps: &CapacityCaps,
 ) -> Result<CapacityPlan, CapacityError> {
+    plan_capacity_syn_masked(grid_dims, moving_dims, channels, shrink_factors, &[], caps)
+}
+
+/// Like [`plan_capacity_syn`] for a SyN stage with masks: `mask_dims` holds the grid size of
+/// each mask given (the fixed mask, the moving mask, or both). Each mask stays on its own grid
+/// for the whole stage, and every level adds the image of valid voxels and the extra window
+/// plane of the masked metric.
+pub fn plan_capacity_syn_masked(
+    grid_dims: [usize; 3],
+    moving_dims: [usize; 3],
+    channels: usize,
+    shrink_factors: &[u32],
+    mask_dims: &[[usize; 3]],
+    caps: &CapacityCaps,
+) -> Result<CapacityPlan, CapacityError> {
     let voxels = voxel_count(grid_dims);
     let moving_voxels = voxel_count(moving_dims);
     let channels = channels.max(1) as u64;
+    let masked = !mask_dims.is_empty();
+    let mask_bytes: Vec<u64> = mask_dims
+        .iter()
+        .map(|d| voxel_count(*d).saturating_mul(MASK_IMAGE_BYTES_PER_VOXEL))
+        .collect();
     let largest_binding_bytes = voxels
         .saturating_mul(LARGEST_BINDING_BYTES_PER_VOXEL)
-        .max(moving_voxels.saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL));
+        .max(moving_voxels.saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL))
+        .max(mask_bytes.iter().copied().max().unwrap_or(0));
     let per_voxel = LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS - LEVEL_BYTES_PER_VOXEL_PER_CHANNEL
-        + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL.saturating_mul(channels - 1);
+        + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL.saturating_mul(channels - 1)
+        + if masked { MASK_BYTES_PER_VOXEL } else { 0 };
     let moving_excess = moving_voxels
         .saturating_sub(voxels)
         .saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL)
@@ -367,7 +397,7 @@ pub fn plan_capacity_syn(
             };
             level
                 .saturating_mul(kept_per_voxel)
-                .saturating_add(syn_partial_bytes(dims, level))
+                .saturating_add(syn_partial_bytes(dims, level, masked))
         })
         .fold(0u64, u64::saturating_add);
     let stale_field_bytes = coarser
@@ -381,6 +411,7 @@ pub fn plan_capacity_syn(
         .saturating_add(moving_excess)
         .saturating_add(coarser_bytes)
         .saturating_add(stale_field_bytes)
+        .saturating_add(mask_bytes.iter().fold(0u64, |a, b| a.saturating_add(*b)))
         .saturating_add(SELFTEST_POOL_BYTES);
     if largest_binding_bytes > caps.max_storage_buffer_binding_size {
         return Err(CapacityError::Binding {
@@ -995,7 +1026,7 @@ mod tests {
 
     #[test]
     fn a_coarse_level_below_the_retain_floor_is_kept_whole() {
-        let partials = syn_partial_bytes([24; 3], 24u64.pow(3));
+        let partials = syn_partial_bytes([24; 3], 24u64.pow(3), false);
         assert_eq!(partials, 3 * 3 * 6 * 20 + 54 * 4);
         assert_eq!(
             syn_total([48; 3], 1, &[2, 1]),
@@ -1017,17 +1048,17 @@ mod tests {
         assert!(images_only * 4 < RETAIN_FLOOR_BYTES && images_only * 12 >= RETAIN_FLOOR_BYTES);
         assert_eq!(
             syn_total([100; 3], 1, &[2, 1]) - syn_total([100; 3], 1, &[1]),
-            images_only * 60 + syn_partial_bytes([50; 3], images_only) + images_only * 12
+            images_only * 60 + syn_partial_bytes([50; 3], images_only, false) + images_only * 12
         );
         let above = 128u64.pow(3);
         assert_eq!(
             syn_total([256; 3], 2, &[2, 1]) - syn_total([256; 3], 2, &[1]),
-            syn_partial_bytes([128; 3], above) + above * 12
+            syn_partial_bytes([128; 3], above, false) + above * 12
         );
         let small = 24u64.pow(3);
         assert_eq!(
             syn_total([48; 3], 1, &[2, 1]) - syn_total([48; 3], 1, &[1]),
-            small * 168 + syn_partial_bytes([24; 3], small)
+            small * 168 + syn_partial_bytes([24; 3], small, false)
         );
     }
 
@@ -1052,7 +1083,7 @@ mod tests {
         let f4 = 64u64.pow(3);
         assert_eq!(
             syn_total([256; 3], 1, &[4, 2, 1]) - syn_total([256; 3], 1, &[2, 1]),
-            syn_partial_bytes([64; 3], f4)
+            syn_partial_bytes([64; 3], f4, false)
         );
     }
 
@@ -1061,7 +1092,7 @@ mod tests {
         let level = 128u64.pow(3);
         assert_eq!(
             syn_total([256; 3], 1, &[1, 2]) - syn_total([256; 3], 1, &[1]),
-            level * 168 + syn_partial_bytes([128; 3], level)
+            level * 168 + syn_partial_bytes([128; 3], level, false)
         );
         assert_eq!(
             syn_total([256; 3], 1, &[4, 2, 4, 1]) - syn_total([256; 3], 1, &[4, 2, 1]),

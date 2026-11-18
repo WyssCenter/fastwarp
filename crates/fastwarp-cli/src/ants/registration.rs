@@ -119,6 +119,10 @@ pub struct SynStageSpec {
     pub shrink_factors: Vec<u32>,
     pub smoothing_sigmas: Vec<f64>,
     pub sigma_units: SigmaUnits,
+    /// The fixed-image mask of this stage (`--masks [fixed,...]`).
+    pub fixed_mask: Option<PathBuf>,
+    /// The moving-image mask of this stage (`--masks [...,moving]`).
+    pub moving_mask: Option<PathBuf>,
 }
 
 /// One stage, in command-line order.
@@ -221,7 +225,7 @@ impl RegistrationPlan {
     }
 
     /// The recipe (stage-list form, `fastwarp register --recipe`) of the call. A start from a
-    /// file is given as `{"path": ..., "invert": ...}`; fixed masks are not part of a recipe
+    /// file is given as `{"path": ..., "invert": ...}`; masks are not part of a recipe
     /// (see [`RegistrationPlan::to_json`]). Without `--random-seed` the stages keep the default
     /// seed.
     pub fn recipe_json(&self) -> Value {
@@ -296,6 +300,10 @@ impl RegistrationPlan {
                 .linear_stages()
                 .map(|l| l.fixed_mask.as_deref().map(text))
                 .collect::<Vec<_>>(),
+            "syn_masks": self.syn_stage().map(|s| json!({
+                "fixed": s.fixed_mask.as_deref().map(text),
+                "moving": s.moving_mask.as_deref().map(text),
+            })),
             "prefix": text(&self.prefix),
             "warped": self.warped.as_deref().map(text),
             "inverse_warped": self.inverse_warped.as_deref().map(text),
@@ -327,7 +335,7 @@ Supported:
     -t Rigid[step] | Affine[step]   -m MI[fixed,moving,w,32,Regular,percentage]
     -t SyN[step,ufv,tfv]            -m CC[fixed,moving,w,radius 1..8] (one or more)
     -c [MxN,threshold,window]  -f MxN  -s MxN[vox|mm]
-  -x [fixedMask,NULL] (Rigid / Affine stages)   -w [lower,upper]   -u 0
+  -x [fixedMask,movingMask] (moving mask: SyN stage only)   -w [lower,upper]   -u 0
   -a 0|1   -z 1   -i 0   -n Linear|NearestNeighbor|LanczosWindowedSinc
   --float 0|1   --random-seed N   -v 0|1   --version   -h, --help
 ",
@@ -798,7 +806,9 @@ fn is_null(text: &str) -> bool {
     )
 }
 
-fn parse_masks(opts: &[Opt], stages: usize) -> Result<Vec<Option<PathBuf>>, Refusal> {
+type StageMasks = (Option<PathBuf>, Option<PathBuf>);
+
+fn parse_masks(opts: &[Opt], stages: usize) -> Result<Vec<StageMasks>, Refusal> {
     let mut masks = Vec::new();
     for o in opts.iter().filter(|o| o.key == "--masks") {
         let v = o.value()?;
@@ -817,23 +827,18 @@ fn parse_masks(opts: &[Opt], stages: usize) -> Result<Vec<Option<PathBuf>>, Refu
         } else {
             (v.to_string(), String::new())
         };
-        if !is_null(&moving) {
-            return unsupported(
-                "a moving-image mask in --masks",
-                "FastWarp has no moving-image mask.",
-            );
-        }
-        let fixed = if is_null(&fixed) {
-            None
-        } else {
-            let p = PathBuf::from(fixed);
+        let image = |name: String| -> Result<Option<PathBuf>, Refusal> {
+            if is_null(&name) {
+                return Ok(None);
+            }
+            let p = PathBuf::from(name);
             check_image_name(&p)?;
-            Some(p)
+            Ok(Some(p))
         };
-        masks.push(fixed);
+        masks.push((image(fixed)?, image(moving)?));
     }
     match masks.len() {
-        0 => Ok(vec![None; stages]),
+        0 => Ok(vec![(None, None); stages]),
         1 => Ok(vec![masks[0].clone(); stages]),
         n if n == stages => Ok(masks),
         n => refuse(format!(
@@ -1178,16 +1183,10 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
 
     let masks = parse_masks(&opts, parsed.len())?;
     let mut stages = Vec::with_capacity(parsed.len());
-    for (p, mask) in parsed.into_iter().zip(masks) {
+    for (p, (fixed_mask, moving_mask)) in parsed.into_iter().zip(masks) {
         let s = p.schedule;
         match p.transform.kind {
             TransformKind::Syn => {
-                if mask.is_some() {
-                    return unsupported(
-                        "a fixed-image mask on the SyN stage (--masks)",
-                        "FastWarp's SyN stage has no mask; give NULL for that stage.",
-                    );
-                }
                 let t = &p.transform.params;
                 stages.push(StageSpec::Syn(SynStageSpec {
                     gradient_step: t[0],
@@ -1201,9 +1200,23 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
                     shrink_factors: s.shrink,
                     smoothing_sigmas: s.sigmas,
                     sigma_units: s.units,
+                    fixed_mask,
+                    moving_mask,
                 }));
             }
             kind => {
+                if moving_mask.is_some() {
+                    let name = if kind == TransformKind::Rigid {
+                        "Rigid"
+                    } else {
+                        "Affine"
+                    };
+                    return unsupported(
+                        format!("a moving-image mask on the {name} stage (--masks)"),
+                        "FastWarp applies a moving-image mask to the SyN stage only; give NULL as \
+                         the moving mask of that stage.",
+                    );
+                }
                 let m = &p.metrics[0];
                 stages.push(StageSpec::Linear(LinearStageSpec {
                     kind: if kind == TransformKind::Rigid {
@@ -1219,7 +1232,7 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
                     smoothing_sigmas: s.sigmas,
                     sigma_units: s.units,
                     sampling_percentage: m.percentage.unwrap_or(1.0),
-                    fixed_mask: mask,
+                    fixed_mask,
                 }));
             }
         }
@@ -1503,6 +1516,33 @@ mod tests {
         assert_eq!(masks, vec![None, Some(PathBuf::from("a.nii"))]);
         let j = per_stage.to_json();
         assert_eq!(j["fixed_masks"], json!([null, "a.nii"]));
+        assert_eq!(j["syn_masks"], json!({"fixed": null, "moving": null}));
+        let syn = plan(&format!(
+            "-r [f.nii.gz,m.nii.gz,1] {LIN} {SYN} -x [a.nii,NULL] -x NULL -x [f.nii,m.nii.gz] -o o_"
+        ));
+        let s = syn.syn_stage().unwrap();
+        assert_eq!(s.fixed_mask, Some(PathBuf::from("f.nii")));
+        assert_eq!(s.moving_mask, Some(PathBuf::from("m.nii.gz")));
+        let j = syn.to_json();
+        assert_eq!(j["fixed_masks"], json!(["a.nii", null]));
+        assert_eq!(
+            j["syn_masks"],
+            json!({"fixed": "f.nii", "moving": "m.nii.gz"})
+        );
+        let once = plan(&format!("{SYN} -x [f.nii,m.nii] -o o_"));
+        let s = once.syn_stage().unwrap();
+        assert_eq!(
+            (s.fixed_mask.clone(), s.moving_mask.clone()),
+            (Some(PathBuf::from("f.nii")), Some(PathBuf::from("m.nii")))
+        );
+        assert_eq!(
+            plan(&full("-x mask.nii")).syn_stage().unwrap().fixed_mask,
+            Some(PathBuf::from("mask.nii"))
+        );
+        assert_eq!(
+            plan(&format!("{LIN} -o o_")).to_json()["syn_masks"],
+            Value::Null
+        );
         assert_eq!(j["initial"], json!("com"));
         assert_eq!(j["files"].as_array().unwrap().len(), 3);
     }
@@ -1545,8 +1585,9 @@ mod tests {
             (full("-u"), "-u needs a value, 0 or 1"),
             (full("--minc 1"), "--minc 1 is not supported: FastWarp writes ITK transform files."),
             (full("--foo 1"), "unknown option --foo"),
-            (full("-x [f.nii.gz,m.nii.gz]"), "a moving-image mask in --masks is not supported: FastWarp has no moving-image mask."),
-            (full("-x mask.nii.gz"), "a fixed-image mask on the SyN stage (--masks) is not supported: FastWarp's SyN stage has no mask; give NULL for that stage."),
+            (full("-x [f.nii.gz,m.nii.gz]"), "a moving-image mask on the Rigid stage (--masks) is not supported: FastWarp applies a moving-image mask to the SyN stage only; give NULL as the moving mask of that stage."),
+            (full("-x [NULL,NULL] -x [a.nii,m.nii] -x [a.nii,m.nii]"), "a moving-image mask on the Affine stage (--masks) is not supported: FastWarp applies a moving-image mask to the SyN stage only; give NULL as the moving mask of that stage."),
+            (full("-x [NULL,m.mha]"), "image m.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             (full("-x NULL -x NULL -x a.nii -x NULL"), "--masks is given 4 times for 3 stages: give it once or once per stage"),
             (full("-x a.mha"), "image a.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             (full("-w [0.9,0.1]"), "-w [0.9,0.1]: expected quantiles with 0 <= lower < upper <= 1"),

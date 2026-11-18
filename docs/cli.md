@@ -302,8 +302,8 @@ it does not exist.
 
 ```bash
 fastwarp register FIXED MOVING -o PREFIX [--channel FIXED MOVING]... [--iso-mm MM]
-                  [--recipe FILE] [--outputs composite|split|both] [--write-warped]
-                  [--adapter NAME] [--json]
+                  [--recipe FILE] [--mask MASK] [--moving-mask MASK]
+                  [--outputs composite|split|both] [--write-warped] [--adapter NAME] [--json]
 ```
 
 Registers MOVING to FIXED: {term}`centre of mass`, Rigid and Affine
@@ -347,6 +347,13 @@ names. This is {func}`fastwarp.register_syn`; see [Normalization](guide/normaliz
   or `null` (ANTs' plain rescale to [0, 1]). A stage or field left out keeps the default value.
   An unknown key, a wrong type, an unsupported stage order or a value the GPU kernels do not
   support is refused with exit status 2 before any work.
+- `--mask MASK`: a fixed-image mask (NIfTI, any grid), as `fastwarp linear --mask`: every stage
+  uses only its non-zero voxels. This is `register_syn(fixed_mask=...)`; see
+  [Masks](guide/normalization.md#masks).
+- `--moving-mask MASK`: a moving-image mask (NIfTI, any grid): the SyN stage uses only its
+  non-zero voxels, for example everything but a resection cavity. The linear stages do not use
+  it, and a recipe without a SyN stage refuses it (exit status 2). This is
+  `register_syn(moving_mask=...)`.
 - `--write-warped`: also writes `<PREFIX>_Warped.nii.gz`, MOVING on the registration grid.
 - `--adapter NAME`: use the GPU whose name contains NAME.
 - `--json`: print the timings and diagnostics as JSON: the keys of the dictionary
@@ -454,7 +461,9 @@ Checks whether a registration of FIXED (and MOVING) at `--iso-mm` fits the GPU, 
 read. Exit status 0 when it fits, 5 when it does not, 4 when there is no usable GPU. Without
 MOVING, the moving grid is taken to be the fixed grid. `--recipe` checks the stages of that
 recipe (default: the default recipe); a chain without a SyN stage needs far less GPU memory. This
-is {func}`fastwarp.fits_gpu`; see [GPU and memory](guide/gpu.md#what-fits).
+is {func}`fastwarp.fits_gpu`; see [GPU and memory](guide/gpu.md#what-fits). It does not count
+masks: `fits_gpu(fixed_mask=..., moving_mask=...)` does, and `register` checks its masks before it
+runs.
 
 ### bench
 
@@ -562,7 +571,7 @@ Supported:
 | `-t` | `Rigid[step]` and `Affine[step]` stages, any number, then at most one `SyN[step,<3>,<0>]` stage; `SyN` alone is allowed |
 | `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stage: one or more `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (each metric is a channel) |
 | `-c`, `-f`, `-s` | `MxN` or `[MxN,threshold,window]` (window at least 2), shrink factors, sigmas in `vox` (default) or `mm`; one value per level |
-| `-x` | `[fixedMask,NULL]` (`NA`, `NONE` also mean no mask), once for all stages or once per stage; Rigid and Affine stages only |
+| `-x` | `[fixedMask,movingMask]` or `fixedMask` (`NULL`, `NA`, `NONE` mean no mask), once for all stages or once per stage; a moving mask on the SyN stage only |
 | `-w` | `[lower,upper]`; without it the images are rescaled to [0, 1] as ANTs does |
 | `-a` | `0` or `1` (`Composite.h5` and `InverseComposite.h5` only) |
 | `-z`, `-i`, `-u`, `-p`, `--write-interval-volumes`, `--minc` | `1`, `0`, `0`, `0`, `0`, `0` (the defaults) |
@@ -585,7 +594,8 @@ Affine stage, `MeanSquares`, `Demons`, `GC` and the point-set metrics; MI with b
 32, with dense sampling (no strategy or `None`, as in `MI[f,m,1,32]`) or `Random` sampling; CC
 with a sampling strategy, a radius above 8 or different radii;
 `useGradientFilter` 1; two metrics in a linear stage; linear stages on other images than the
-first SyN metric's; a fixed mask on the SyN stage and any moving mask; `-g` with a restriction;
+first SyN metric's; a moving mask on a Rigid or Affine stage (`-x [fixed,moving]` given once
+reaches every stage, so with linear stages give `-x` once per stage); `-g` with a restriction;
 `-p` and `--write-interval-volumes` above 0; `--minc 1`; the interpolators `MultiLabel`,
 `Gaussian`, `BSpline`, `CosineWindowedSinc`, `WelchWindowedSinc`, `HammingWindowedSinc`,
 `GenericLabel`; images other than NIfTI; an unknown option.
@@ -618,7 +628,14 @@ of the field of view and the forward map inside the object. With an isotropic fi
 affines agree to 0.06 to 0.5 mm at the corners (a run that does nothing: 5.6 to 7.5 mm) and the
 forward maps to an RMS of 0.03 to 0.06 mm (ANTs' affine without its warp: 0.9 mm); the warped
 images have a correlation of 1.000 with ANTs' (unregistered: 0.83). With a fixed image of 2 x 2 x
-3 mm voxels the corners differ by 1.1 mm and the forward map by 0.36 mm RMS (N1).
+3 mm voxels the corners differ by 1.1 mm and the forward map by 0.36 mm RMS (N1). A SyN stage
+with `-x [fixedMask,movingMask]` from the centres of mass, on a pair with a cavity in the moving
+image, agrees with ANTs to an RMS of 1e-4 mm, and the masks move both programs' maps by the same
+2.04 mm next to the cavity.
+
+- Masks: FastWarp counts every non-zero mask voxel as inside. ANTs reads a mask file as
+  `unsigned char`, so a mask stored as floating point with values between 0 and 1 is empty in
+  ANTs (and 1.5 counts as 1). Store masks as 0 and 1, as ANTsPy does (`mask != 0`).
 
 - N1, registration grid: FastWarp registers on an isotropic grid at the fixed image's smallest
   voxel spacing. For an isotropic fixed image this is the fixed grid itself, as in ANTs. For an

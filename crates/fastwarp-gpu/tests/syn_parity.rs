@@ -8,13 +8,31 @@ use std::time::Instant;
 
 use common::*;
 use fastwarp_gpu::capacity::SELFTEST_POOL_BYTES;
-use fastwarp_gpu::{plan_capacity_syn, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::{plan_capacity_syn, plan_capacity_syn_masked, CapacityCaps, WgpuBackend};
 use fastwarp_reg::apply::{apply_chain, Interpolation};
 use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
+use fastwarp_reg::linalg::{Vec3, IDENTITY3};
 use fastwarp_reg::recipe::SynRecipe;
 use fastwarp_reg::syn::{run_syn, SynChannel, SynOptions, SynResult};
-use fastwarp_reg::{AffineTransform, Volume};
+use fastwarp_reg::{AffineTransform, Grid, MaskVolume, Volume};
+
+/// A mask on `grid` that is inside everywhere except in a ball of `radius` mm around `hole`.
+fn mask_without_ball(grid: Grid, hole: Vec3, radius: f64) -> MaskVolume {
+    let data = (0..grid.num_voxels())
+        .map(|idx| {
+            let [i, j, k] = grid.ijk(idx);
+            let p = grid.index_to_point([i as f64, j as f64, k as f64]);
+            let d2 = (0..3).map(|a| (p[a] - hole[a]).powi(2)).sum::<f64>();
+            if d2 < radius * radius {
+                0.0
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    MaskVolume::from_volume(Volume::from_vec(grid, data).unwrap())
+}
 
 fn contrast3(v: f64) -> f64 {
     (1.5 * v).sin()
@@ -225,6 +243,100 @@ fn syn_on_the_blob_phantom_matches_the_cpu_reference() {
 }
 
 #[test]
+fn masked_syn_matches_the_cpu_reference() {
+    let Some(gpu) = backend() else { return };
+    let fixed_mask_grid = Grid::new([33; 3], [1.5; 3], [-24.0, -23.5, -24.25], IDENTITY3).unwrap();
+    let moving_mask_grid = Grid::new([20; 3], [2.5; 3], [-24.0; 3], IDENTITY3).unwrap();
+    let with_masks = |mut recipe: SynRecipe| {
+        recipe.convergence_threshold = -1.0;
+        recipe.fixed_mask = Some(mask_without_ball(fixed_mask_grid, [9.0, 3.0, -2.0], 6.0));
+        recipe.moving_mask = Some(mask_without_ball(moving_mask_grid, [-7.0, 5.5, 4.5], 7.0));
+        recipe
+    };
+    let one = with_masks(small_recipe(&[(2, 1.0, 20), (1, 0.0, 12)], 2));
+    let two = SynRecipe {
+        channel_weights: vec![0.5, 0.5],
+        ..with_masks(small_recipe(&[(2, 1.0, 12), (1, 0.0, 6)], 2))
+    };
+    let p24 = phantom(24, 2.0, 2.0);
+    let on_grid = SynRecipe {
+        fixed_mask: Some(mask_without_ball(p24.grid, [9.0, 3.0, -2.0], 6.0)),
+        moving_mask: Some(mask_without_ball(p24.grid, [-7.0, 5.5, 4.5], 7.0)),
+        ..one.clone()
+    };
+    let cases = [
+        ("masked blob 24^3 T1", phantom(24, 2.0, 2.0), one, false),
+        (
+            "masked blob 24^3 T1, masks on the image grid",
+            p24,
+            on_grid,
+            false,
+        ),
+        (
+            "masked blob 16^3 T1+T2",
+            phantom(16, 2.0, 1.5),
+            two.clone(),
+            true,
+        ),
+    ];
+    for (label, p, recipe, two) in &cases {
+        let c = compare(&gpu, p, recipe, *two, &SynOptions::default());
+        report(label, &c);
+        assert!(
+            c.warp_rms_diff / c.warp_rms < 0.05,
+            "{label}: warp field differs"
+        );
+        assert!((c.ncc_cpu - c.ncc_gpu).abs() < 2e-3, "{label}");
+        assert!(c.ncc_gpu > 0.95, "{label}");
+        assert!(c.max_energy_diff < 2e-3, "{label}");
+        assert_eq!(c.iterations_cpu, c.iterations_gpu, "{label}");
+    }
+    let p = &cases[1].1;
+    let ch = channels(p, true);
+    let a = run_syn(&gpu, &two, &ch, &p.initial, &SynOptions::default()).unwrap();
+    let b = run_syn(&gpu, &two, &ch, &p.initial, &SynOptions::default()).unwrap();
+    assert_eq!(digest(&a), digest(&b));
+    let unmasked = SynRecipe {
+        fixed_mask: None,
+        moving_mask: None,
+        ..two.clone()
+    };
+    let u = run_syn(&gpu, &unmasked, &ch, &p.initial, &SynOptions::default()).unwrap();
+    assert_ne!(digest(&a), digest(&u), "the masks changed nothing");
+}
+
+#[test]
+fn a_mask_with_no_voxel_on_the_level_grid_is_an_error_not_nan() {
+    let Some(gpu) = backend() else { return };
+    let p = phantom(16, 2.0, 1.0);
+    let mut recipe = small_recipe(&[(1, 0.0, 3)], 2);
+    let far = Grid::new([4; 3], [2.0; 3], [200.0; 3], IDENTITY3).unwrap();
+    recipe.fixed_mask = Some(MaskVolume::from_volume(
+        Volume::from_vec(far, vec![1.0; far.num_voxels()]).unwrap(),
+    ));
+    let ch = channels(&p, false);
+    for name in ["gpu", "cpu"] {
+        let r = if name == "gpu" {
+            run_syn(&gpu, &recipe, &ch, &p.initial, &SynOptions::default())
+        } else {
+            run_syn(
+                &CpuBackend,
+                &recipe,
+                &ch,
+                &p.initial,
+                &SynOptions::default(),
+            )
+        };
+        let e = r.expect_err("a mask outside the grid is refused");
+        assert!(e.to_string().contains("mask"), "{name}: {e}");
+    }
+    recipe.fixed_mask = Some(MaskVolume::from_volume(Volume::zeros(p.grid)));
+    let e = run_syn(&gpu, &recipe, &ch, &p.initial, &SynOptions::default())
+        .expect_err("an all-zero mask is refused");
+    assert!(e.to_string().contains("fixed mask"), "{e}");
+}
+
+#[test]
 fn multispectral_syn_matches_the_cpu_reference() {
     let Some(gpu) = backend() else { return };
     let p = phantom(16, 2.0, 1.5);
@@ -317,11 +429,21 @@ fn gpu_syn_is_deterministic_with_smoothed_total_field_and_wide_kernels() {
 fn a_syn_iteration_reads_back_four_scalar_blocks_with_one_channel_and_five_with_two() {
     let Some(gpu) = backend() else { return };
     let p = phantom(16, 2.0, 1.5);
-    for (two, expected) in [(false, 4), (true, 5)] {
+    let mask = mask_without_ball(p.grid, [3.0, 0.0, 0.0], 5.0);
+    for (two, masked, expected) in [
+        (false, false, 4),
+        (true, false, 5),
+        (false, true, 4),
+        (true, true, 5),
+    ] {
         let readbacks = |iterations: u32| {
             let mut recipe = small_recipe(&[(1, 0.0, iterations)], 2);
             if two {
                 recipe.channel_weights = vec![0.5, 0.5];
+            }
+            if masked {
+                recipe.fixed_mask = Some(mask.clone());
+                recipe.moving_mask = Some(mask.clone());
             }
             recipe.convergence_threshold = -1.0;
             let before = gpu.stats().scalar_readbacks;
@@ -337,54 +459,85 @@ fn a_syn_iteration_reads_back_four_scalar_blocks_with_one_channel_and_five_with_
             gpu.stats().scalar_readbacks - before
         };
         let per_iteration = (readbacks(5) - readbacks(2)) / 3;
-        assert_eq!(per_iteration, expected, "two channels: {two}");
+        assert_eq!(
+            per_iteration, expected,
+            "two channels: {two}, masked: {masked}"
+        );
     }
 }
 
 fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, factors: &[u32], iterations: u32) {
+    capacity_plan_bounds_pool_peak_with(n, moving_n, factors, iterations, false);
+}
+
+fn capacity_plan_bounds_pool_peak_with(
+    n: usize,
+    moving_n: usize,
+    factors: &[u32],
+    iterations: u32,
+    masked: bool,
+) {
     let n_full = (n * n * n) as u64;
     let mut h = head([n, n, n], 2.0, 3.0);
     if moving_n != n {
         let spacing = (n - 1) as f64 * 2.0 / (moving_n - 1) as f64;
         h.moving = head([moving_n; 3], spacing, 3.0).moving;
     }
+    let mask_dims: Vec<[usize; 3]> = if masked {
+        vec![[n; 3], [moving_n; 3]]
+    } else {
+        Vec::new()
+    };
+    let caps = CapacityCaps {
+        max_storage_buffer_binding_size: u64::MAX,
+        memory_budget: u64::MAX,
+    };
     let mut failures = Vec::new();
     for channels in [1usize, 2, 3, 4] {
-        let Some(gpu) = backend() else { return };
-        let levels: Vec<(u32, f64, u32)> = factors
-            .iter()
-            .map(|&f| (f, if f > 1 { 1.0 } else { 0.0 }, iterations))
-            .collect();
-        let mut recipe = small_recipe(&levels, 2);
-        let mut ch = vec![SynChannel {
-            fixed: h.fixed.clone(),
-            moving: h.moving.clone(),
-        }];
-        let contrasts: [fn(f64) -> f64; 3] = [contrast2, contrast3, contrast4];
-        for contrast in contrasts.iter().take(channels - 1) {
-            ch.push(SynChannel {
-                fixed: remapped(&h.fixed, *contrast),
-                moving: remapped(&h.moving, *contrast),
-            });
-        }
-        recipe.channel_weights = vec![1.0 / channels as f64; channels];
-        recipe.convergence_threshold = -1.0;
-        run_syn(
-            &gpu,
-            &recipe,
-            &ch,
-            &AffineTransform::identity(),
-            &SynOptions::default(),
-        )
-        .unwrap();
-        let peak = gpu.peak_allocated_bytes();
-        let caps = CapacityCaps {
-            max_storage_buffer_binding_size: u64::MAX,
-            memory_budget: u64::MAX,
+        let peak_of = |with_masks: bool| -> Option<u64> {
+            let gpu = backend()?;
+            let levels: Vec<(u32, f64, u32)> = factors
+                .iter()
+                .map(|&f| (f, if f > 1 { 1.0 } else { 0.0 }, iterations))
+                .collect();
+            let mut recipe = small_recipe(&levels, 2);
+            let mut ch = vec![SynChannel {
+                fixed: h.fixed.clone(),
+                moving: h.moving.clone(),
+            }];
+            let contrasts: [fn(f64) -> f64; 3] = [contrast2, contrast3, contrast4];
+            for contrast in contrasts.iter().take(channels - 1) {
+                ch.push(SynChannel {
+                    fixed: remapped(&h.fixed, *contrast),
+                    moving: remapped(&h.moving, *contrast),
+                });
+            }
+            recipe.channel_weights = vec![1.0 / channels as f64; channels];
+            recipe.convergence_threshold = -1.0;
+            if with_masks {
+                recipe.fixed_mask = Some(mask_without_ball(h.grid, [20.0, 0.0, 10.0], 15.0));
+                recipe.moving_mask = Some(mask_without_ball(
+                    *h.moving.grid(),
+                    [-15.0, 10.0, 0.0],
+                    12.0,
+                ));
+            }
+            run_syn(
+                &gpu,
+                &recipe,
+                &ch,
+                &AffineTransform::identity(),
+                &SynOptions::default(),
+            )
+            .unwrap();
+            Some(gpu.peak_allocated_bytes())
         };
-        let plan = plan_capacity_syn([n; 3], [moving_n; 3], channels, factors, &caps).unwrap();
+        let Some(peak) = peak_of(masked) else { return };
+        let plan =
+            plan_capacity_syn_masked([n; 3], [moving_n; 3], channels, factors, &mask_dims, &caps)
+                .unwrap();
         eprintln!(
-            "{n}^3 {factors:?} channels {channels}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
+            "{n}^3 {factors:?} channels {channels} masked {masked}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
             peak as f64 / n_full as f64,
             plan.level_total_bytes,
             plan.level_total_bytes as f64 / n_full as f64
@@ -395,6 +548,23 @@ fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, factors: &[u32], it
                 plan.level_total_bytes
             )
         }));
+        if masked {
+            let Some(unmasked_peak) = peak_of(false) else {
+                return;
+            };
+            let unmasked =
+                plan_capacity_syn([n; 3], [moving_n; 3], channels, factors, &caps).unwrap();
+            let added = peak.saturating_sub(unmasked_peak);
+            let planned = plan.level_total_bytes - unmasked.level_total_bytes;
+            eprintln!(
+                "{n}^3 {factors:?} channels {channels}: the masks add {added} bytes = {:.1} B/voxel, planned {planned} bytes = {:.1} B/voxel",
+                added as f64 / n_full as f64,
+                planned as f64 / n_full as f64
+            );
+            failures.extend((added > planned).then(|| {
+                format!("channels {channels}: the masks add {added} bytes, planned {planned}")
+            }));
+        }
         if moving_n != n {
             let fixed_only = plan_capacity_syn([n; 3], [n; 3], channels, factors, &caps).unwrap();
             failures.extend((peak <= fixed_only.level_total_bytes).then(|| {
@@ -416,6 +586,16 @@ fn the_capacity_plan_bounds_the_pool_peak_of_a_two_level_run() {
 #[test]
 fn the_capacity_plan_bounds_the_pool_peak_with_a_finer_moving_grid() {
     capacity_plan_bounds_pool_peak(96, 191, &[2, 1], 1);
+}
+
+#[test]
+fn the_capacity_plan_bounds_the_pool_peak_of_a_masked_run() {
+    capacity_plan_bounds_pool_peak_with(96, 96, &[2, 1], 1, true);
+    capacity_plan_bounds_pool_peak_with(96, 191, &[2, 1], 1, true);
+    for n in [24, 33, 48] {
+        capacity_plan_bounds_pool_peak_with(n, n, &[8, 4, 2, 1], 1, true);
+        capacity_plan_bounds_pool_peak_with(n, n, &[2, 1], 1, true);
+    }
 }
 
 #[test]

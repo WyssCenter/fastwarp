@@ -45,6 +45,10 @@ use crate::linalg::Vec3;
 use crate::transform::TransformChain;
 use crate::volume::Volume;
 
+/// The message of a masked evaluation in which no voxel of the virtual grid is inside the masks.
+pub const NO_VOXEL_IN_MASKS: &str =
+    "no voxel of the registration level lies inside both the fixed and the moving mask";
+
 /// The neighbourhood radius in voxels (ANTs `CC[...,radius]` sets all three axes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CcMetric {
@@ -157,12 +161,32 @@ impl CcMetric {
     /// and its mapped moving point lie inside the respective image buffers; invalid voxels
     /// contribute nothing to any window sum. Fails when no voxel is valid.
     pub fn evaluate(&self, inp: &CcInputs<'_>, want_derivative: bool) -> Result<CcEvaluation> {
+        self.evaluate_masked(inp, None, want_derivative)
+    }
+
+    /// [`CcMetric::evaluate`] with image masks resolved on the virtual grid: a voxel is valid
+    /// only where `mask` (a volume on the virtual grid) is not zero as well, as ITK's metric
+    /// treats a point outside the fixed or the moving mask. Fails when no voxel is valid.
+    pub fn evaluate_masked(
+        &self,
+        inp: &CcInputs<'_>,
+        mask: Option<&Volume<f64>>,
+        want_derivative: bool,
+    ) -> Result<CcEvaluation> {
         let grid = inp.virtual_grid;
         let size = grid.size();
         let n = grid.num_voxels();
+        if let Some(m) = mask {
+            if m.grid() != grid {
+                return Err(invalid("cc metric", "the mask is not on the virtual grid"));
+            }
+        }
         let samples: Vec<Option<(f64, f64, Vec3)>> = (0..n)
             .into_par_iter()
             .map(|idx| {
+                if mask.is_some_and(|m| m.data()[idx] == 0.0) {
+                    return None;
+                }
                 let [i, j, k] = grid.ijk(idx);
                 let p = grid.index_to_point([i as f64, j as f64, k as f64]);
                 let fp = inp.fixed_transform.apply(p);
@@ -200,7 +224,11 @@ impl CcMetric {
         if num_valid == 0 {
             return Err(invalid(
                 "cc metric",
-                "no virtual voxel maps inside both image buffers",
+                if mask.is_some() {
+                    NO_VOXEL_IN_MASKS
+                } else {
+                    "no virtual voxel maps inside both image buffers"
+                },
             ));
         }
 
@@ -432,6 +460,108 @@ mod tests {
             }
         }
         assert!((e.value + sum / e.num_valid as f64).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_mask_restricts_window_sums_value_and_derivative_to_the_voxels_inside_it() {
+        let g = grid(9);
+        let f = noise(&g, 3);
+        let m = noise(&g, 11);
+        let id = TransformChain::new();
+        let inside = |idx: usize| {
+            let [i, j, k] = g.ijk(idx);
+            let d =
+                ((i as f64 - 4.0).powi(2) + (j as f64 - 3.5).powi(2) + (k as f64 - 5.0).powi(2))
+                    .sqrt();
+            !(d < 2.6 || i == 0 || (j == 8 && k > 4))
+        };
+        let mask = Volume::from_vec(
+            g,
+            (0..g.num_voxels())
+                .map(|idx| if inside(idx) { 3.0 } else { 0.0 })
+                .collect(),
+        )
+        .unwrap();
+        let run = |mv: &Volume<f64>, mask: &Volume<f64>| {
+            CcMetric::new(2)
+                .evaluate_masked(
+                    &CcInputs {
+                        virtual_grid: &g,
+                        fixed: &f,
+                        moving: mv,
+                        fixed_transform: &id,
+                        moving_transform: &id,
+                    },
+                    Some(mask),
+                    true,
+                )
+                .unwrap()
+        };
+        let e = run(&m, &mask);
+        let valid: Vec<bool> = (0..g.num_voxels()).map(inside).collect();
+        assert_eq!(e.valid, valid);
+        assert!(e.num_valid > 100 && e.num_valid < 700, "{}", e.num_valid);
+        let mut sum = 0.0;
+        for idx in 0..g.num_voxels() {
+            if valid[idx] {
+                let want = brute(&g, &f, &m, &valid, 2, idx);
+                assert!((e.local_cc[idx] - want).abs() < 1e-9, "voxel {idx}");
+                sum += want;
+            } else {
+                assert_eq!(e.local_cc[idx], 0.0);
+                assert_eq!(e.coefficient[idx], 0.0);
+                assert_eq!(e.derivative[idx], [0.0; 3]);
+            }
+        }
+        assert!((e.value + sum / e.num_valid as f64).abs() < 1e-12);
+        for [i, j, k] in [[4usize, 0, 5], [1, 3, 3], [7, 7, 4], [4, 7, 5]] {
+            let idx = g.linear_index(i, j, k);
+            assert!(valid[idx]);
+            let h = 1e-6;
+            let mut up = m.data().to_vec();
+            up[idx] += h;
+            let mut dn = m.data().to_vec();
+            dn[idx] -= h;
+            let up = run(&Volume::from_vec(g, up).unwrap(), &mask);
+            let dn = run(&Volume::from_vec(g, dn).unwrap(), &mask);
+            let fd = (up.local_cc[idx] - dn.local_cc[idx]) / (2.0 * h);
+            assert!(
+                (fd - e.coefficient[idx]).abs() < 1e-5 * (1.0 + fd.abs()),
+                "voxel {i},{j},{k}: {fd} vs {}",
+                e.coefficient[idx]
+            );
+        }
+        let ones = Volume::from_vec(g, vec![1.0; g.num_voxels()]).unwrap();
+        let all = run(&m, &ones);
+        let plain = CcMetric::new(2)
+            .evaluate(
+                &CcInputs {
+                    virtual_grid: &g,
+                    fixed: &f,
+                    moving: &m,
+                    fixed_transform: &id,
+                    moving_transform: &id,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(all.value.to_bits(), plain.value.to_bits());
+        assert_eq!(all.derivative, plain.derivative);
+        let zeros = Volume::<f64>::zeros(g);
+        let err = CcMetric::new(2)
+            .evaluate_masked(
+                &CcInputs {
+                    virtual_grid: &g,
+                    fixed: &f,
+                    moving: &m,
+                    fixed_transform: &id,
+                    moving_transform: &id,
+                },
+                Some(&zeros),
+                false,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains(NO_VOXEL_IN_MASKS), "{err}");
     }
 
     #[test]

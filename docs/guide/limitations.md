@@ -34,9 +34,12 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
   `--collapse-output-transforms 1`, not the per-stage files of `-z 0`. A SyN-only run without
   a start (ANTs' `0Warp.nii.gz` layout) is not produced: FastWarp always writes a
   `0GenericAffine.mat`.
-- **No moving-image mask.** A mask limits where the fixed image is sampled, as ANTs'
-  `--masks [fixed,NULL]` does; there is no mask for the moving image. {func}`~fastwarp.register_syn`
-  takes no mask at all; only the [linear fits](linear.md#masks) do.
+- **The moving-image mask applies to the SyN stage only.** {func}`~fastwarp.register_syn` takes a
+  fixed mask for every stage and a moving mask for the SyN stage (see
+  [Masks](normalization.md#masks)), as ANTs' `--masks [fixed,moving]`. The rigid and affine
+  stages do not use a moving mask; one given for them (`fastwarp ants-registration -x` on a
+  linear stage, or a `fastwarp.ants` call that would put it there) is refused. A moving mask on
+  the linear stages, and per-stage mask switches in recipes, will follow.
 - **One stage per linear fit.** A {class}`~fastwarp.LinearSession` fit runs one rigid or one
   affine stage; chain several fits yourself.
 - **No bias-field correction.** Run N4 (for example `ants.n4_bias_field_correction`) before

@@ -12,6 +12,20 @@
   voxel for every further channel, which bounded the measured peak for one to four channels.
 - Changed: `fastwarp register` no longer takes `--fixed2` and `--moving2`; `--fixed2 F2 --moving2 M2`
   becomes `--channel F2 M2`.
+- Masks in the SyN stage (cost-function masking), so that a lesion or a resection cavity does not
+  drive the deformation: `register_syn(fixed_mask=..., moving_mask=...)` and `fastwarp register
+  --mask FIXED_MASK --moving-mask MOVING_MASK`, on any grid. As in ITK's SyN with ANTs'
+  neighbourhood cross-correlation, every iteration resamples the fixed mask through the fixed-side
+  and the moving mask through the moving-side transform (nearest neighbour), and the metric of
+  every channel uses only the voxels inside both: window sums, value and gradient. The fixed mask
+  also applies to the linear stages; the moving mask applies to the SyN stage only for now, and a
+  recipe without a SyN stage refuses it. `fits_gpu` takes the masks for its memory plan (each
+  level about 13 bytes per voxel more, plus 4 bytes per mask voxel). `fastwarp ants-registration`
+  takes `-x [fixedMask,movingMask]` on the SyN stage and refuses a moving mask on a Rigid or
+  Affine stage; `fastwarp.ants.registration` takes `mask` and `moving_mask` for the SyN types as
+  ANTsPy applies them (the last stage, every stage with `mask_all_stages`) and refuses a moving
+  mask that ANTsPy would give to a linear stage. A level with no voxel inside both masks fails
+  with a clear error. Runs without masks are unchanged, bit for bit.
 
 ## 0.2.0 (2026-11-15)
 

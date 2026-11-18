@@ -74,18 +74,40 @@ impl MaskVolume {
     /// ITK `ImageMaskSpatialObject::IsInsideInWorldSpace` for a background-zero mask: the nearest
     /// voxel (round half up) of the mask image must be inside the buffer and non-zero.
     pub fn is_inside(&self, p: Vec3) -> bool {
-        let c = self.grid.point_to_index(p);
-        let size = self.grid.size();
-        let mut index = [0usize; 3];
-        for a in 0..3 {
-            let r = (c[a] + 0.5).floor();
-            if !(r >= 0.0 && r < size[a] as f64) {
-                return false;
-            }
-            index[a] = r as usize;
-        }
-        self.data[self.grid.linear_index(index[0], index[1], index[2])] != 0.0
+        nearest_voxel(&self.grid, p).is_some_and(|i| self.data[i] != 0.0)
     }
+
+    /// Whether any voxel is inside the mask (non-zero).
+    pub fn has_inside(&self) -> bool {
+        self.data.iter().any(|v| *v != 0.0)
+    }
+
+    /// The mask as a volume of zeros and ones (non-zero voxels become 1) on its grid.
+    pub fn to_binary_volume(&self) -> Result<Volume<f64>> {
+        let data = self
+            .data
+            .iter()
+            .map(|v| if *v != 0.0 { 1.0 } else { 0.0 })
+            .collect();
+        Volume::from_vec(self.grid, data)
+    }
+}
+
+/// The linear index of the voxel of `grid` nearest to the physical point `p`, rounding half up
+/// as ITK's `NearestNeighborInterpolateImageFunction` and `ImageMaskSpatialObject` do; `None`
+/// outside the buffer.
+pub fn nearest_voxel(grid: &Grid, p: Vec3) -> Option<usize> {
+    let c = grid.point_to_index(p);
+    let size = grid.size();
+    let mut index = [0usize; 3];
+    for a in 0..3 {
+        let r = (c[a] + 0.5).floor();
+        if !(r >= 0.0 && r < size[a] as f64) {
+            return None;
+        }
+        index[a] = r as usize;
+    }
+    Some(grid.linear_index(index[0], index[1], index[2]))
 }
 
 #[cfg(test)]

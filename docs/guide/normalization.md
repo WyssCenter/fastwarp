@@ -16,6 +16,8 @@ another start and other stages, for example only the linear ones. All parameters
 | `cancel` | `None` | A {class}`~fastwarp.CancelToken` to stop the run from another thread. |
 | `recipe` | `None` | The registration schedule; `None` uses the default. See [Recipes](recipes.md). |
 | `outputs` | `"composite"` | Which transform files to write: `"composite"`, `"split"` or `"both"`, one of {data}`~fastwarp.OUTPUT_LAYOUTS`. See [Output files](outputs.md). |
+| `fixed_mask` | `None` | A mask in the fixed image's space; every stage uses only the voxels inside it (see [Masks](#masks)). |
+| `moving_mask` | `None` | A mask in the moving image's space; the SyN stage uses only the voxels inside it (see [Masks](#masks)). |
 
 ## What happens in a run
 
@@ -156,6 +158,58 @@ channel; SyN uses all of them, each with the weight in `channel_weights` (`1 / c
 default). The further moving images must already be aligned to the first one, for example by a
 rigid fit with {func}`~fastwarp.linear_session`. Every channel needs more GPU memory, which is the
 only limit on their number; pass all lists to {func}`~fastwarp.fits_gpu` to check.
+
+## Masks
+
+A lesion, a tumour or a resection cavity has no counterpart in the other image. Without a mask
+the {term}`cross-correlation` of the SyN stage tries to match it anyway: it shrinks or stretches
+the tissue around it, and the deformation near it is wrong, sometimes by millimetres.
+`fixed_mask` and `moving_mask` leave such regions out of the metric, as
+`antsRegistration --masks [fixedMask,movingMask]` does ({term}`cost-function masking`). The
+deformation there is then filled in smoothly from the tissue around it.
+
+```python
+import ants
+import fastwarp
+
+template = ants.image_read(ants.get_ants_data("mni"))
+subject = ants.image_read("sub-01_T1w.nii.gz")
+cavity = ants.image_read("sub-01_cavity.nii.gz")
+info = fastwarp.register_syn(template, subject, "out/sub-01_", moving_mask=cavity == 0)
+```
+
+The file names are placeholders for your own images. A mask can be an `ANTsImage` or a tuple
+`(array, spacing, origin, direction)`, on any grid; its non-zero voxels are inside.
+
+- `moving_mask` is in the space of the moving image, for example the subject's scan without its
+  cavity (`cavity == 0`, everything but the cavity). The SyN stage uses it; the rigid and affine
+  stages do not, and a recipe without a SyN stage refuses it. A moving mask for the linear stages
+  will follow.
+- `fixed_mask` is in the space of the fixed image, for example the template's brain. Every stage
+  uses it: the linear stages sample only inside it, as a [linear fit](linear.md#masks) does, and
+  the SyN stage uses only the voxels inside it.
+- In every SyN iteration, the fixed mask is resampled onto the level's grid through the same
+  transform as the fixed image, and the moving mask through the same transform as the moving
+  image, with nearest-neighbour interpolation. A voxel counts only where both masks are inside:
+  the cross-correlation windows sum only these voxels, a voxel outside has no metric value and
+  no gradient, and the metric value is the mean over the voxels inside. This is what ITK's
+  `SyNImageRegistrationMethod` and ANTs' neighbourhood cross-correlation do with masks. With
+  several channels the masks apply to every channel.
+- Make a mask generous, a few millimetres larger than the lesion: the gradient of the voxels
+  next to it still reads the lesion's edge. Do not make it so large that a coarse level keeps no
+  voxel inside both masks; that run fails with {class}`~fastwarp.RegistrationError` (ANTs warns
+  and goes on without an update at such a level). A mask with no voxel inside at all raises
+  `ValueError` before any work.
+- Where a level's voxel centre lies exactly halfway between two mask voxels (a mask on the fixed
+  image's grid at an even shrink factor), the GPU's 32-bit arithmetic can pick the other voxel
+  than ANTs' 64-bit arithmetic does, so the mask's edge can move by one mask voxel in places.
+- Masks need more GPU memory: each mask is kept on its own grid (4 bytes per mask voxel), and
+  each level needs about 13 bytes more per voxel (see [GPU and memory](gpu.md#what-fits)). Pass
+  the masks to {func}`~fastwarp.fits_gpu` to check.
+
+The command line takes the same masks as `fastwarp register --mask FIXED_MASK --moving-mask
+MOVING_MASK`, and [`fastwarp.ants.registration`](ants.md) takes ANTsPy's `mask` and
+`moving_mask`.
 
 ## Cancelling a run
 
