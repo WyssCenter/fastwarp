@@ -24,18 +24,18 @@
 // (`TransformAndEvaluateFixedPoint`: a fixed point outside the fixed mask contributes nothing).
 // See `docs/THIRD_PARTY_PORTS.md`.
 
-//! Fixed-image registration masks with ITK `ImageMaskSpatialObject` semantics.
+//! Fixed- and moving-image registration masks with ITK `ImageMaskSpatialObject` semantics.
 
 use crate::error::{RegError, Result};
 use crate::grid::Grid;
 use crate::linalg::Vec3;
 use crate::volume::Volume;
 
-/// A fixed-image mask: the inside test of ITK's `ImageMaskSpatialObject` on a background-zero
-/// mask image, evaluated in physical (LPS mm) space.
+/// A registration mask, fixed or moving: the inside test of ITK's `ImageMaskSpatialObject` on a
+/// background-zero mask image, evaluated in physical (LPS mm) space.
 ///
 /// The mask grid need not be the fixed image grid; the point is mapped through each grid on its
-/// own, exactly as ANTs attaches the `--masks [fixed,NULL]` image through a spatial object.
+/// own, exactly as ANTs attaches a `--masks [fixed,moving]` image through a spatial object.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaskVolume {
     grid: Grid,

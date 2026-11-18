@@ -35,7 +35,10 @@ const MOVING_IMAGE_BYTES_PER_VOXEL: u64 = 4;
 /// `wgpu_backend.rs`, `cc_evaluate_masked`): the image of valid voxels and the sixth window
 /// plane with its sum (12 B/voxel), and the per-workgroup counts of valid voxels, rounded up.
 /// Both masks on a 96^3 run added 21.5 B/voxel to the pool peak, the two masks' own 8 B/voxel
-/// included (`tests/syn_parity.rs`, `the_capacity_plan_bounds_the_pool_peak_of_a_masked_run`).
+/// included, so 13.5 B/voxel for the level itself; the 0.5 B/voxel above this constant is
+/// covered by the slack of the per-level figures (188 against 180.2 measured for two channels,
+/// 168 against 165.7 for one), which the plan adds for every kept level
+/// (`tests/syn_parity.rs`, `the_capacity_plan_bounds_the_pool_peak_of_a_masked_run`).
 const MASK_BYTES_PER_VOXEL: u64 = 13;
 /// A mask stays on its own grid for the whole stage, one `f32` per voxel.
 const MASK_IMAGE_BYTES_PER_VOXEL: u64 = 4;
@@ -45,10 +48,10 @@ const SYN_WORKGROUP: [u64; 3] = [8, 8, 4];
 const SYN_REDUCTION_GROUP: u64 = 256;
 const SYN_REDUCTION_MAX_GROUPS_X: u64 = 32768;
 
-/// Bytes the device self-test of `WgpuBackend::new` leaves idle in the buffer pool (581,040 on
-/// every adapter measured; `tests/syn_parity.rs` checks the bound). Each buffer is below
+/// Bytes the device self-test of `WgpuBackend::new` leaves idle in the buffer pool (614,032 on
+/// the adapter measured; `tests/syn_parity.rs` checks the bound). Each buffer is below
 /// [`RETAIN_FLOOR_BYTES`], so no level transition frees them.
-pub const SELFTEST_POOL_BYTES: u64 = 600 << 10;
+pub const SELFTEST_POOL_BYTES: u64 = 640 << 10;
 
 /// Environment override of the device memory budget, in mebibytes.
 pub const MEMORY_BUDGET_ENV: &str = "FASTWARP_GPU_MEMORY_BUDGET_MB";
@@ -1073,7 +1076,7 @@ mod tests {
             .to_string();
         assert_eq!(
             text,
-            "the SyN stage on the registration grid [197, 233, 189] needs 1658214780 bytes of device \
+            "the SyN stage on the registration grid [197, 233, 189] needs 1658255740 bytes of device \
              memory, but the budget is 1073741824 bytes"
         );
     }

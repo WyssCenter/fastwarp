@@ -380,7 +380,7 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
         eprintln!("{label}: {inside} of {n} voxels inside, {wrong} differ from the CPU");
         assert!(gpu.iter().all(|v| *v == 0.0 || *v == 1.0));
         assert!(inside > n / 10 && inside < 9 * n / 10, "{label}: {inside}");
-        assert!(wrong * 500 <= n, "{label}: {wrong} of {n} voxels differ");
+        assert_eq!(wrong, 0, "{label}: {wrong} of {n} voxels differ");
     }
     let level = Grid::new([12, 10, 9], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
     let coarse = Grid::new([6, 5, 5], [2.0; 3], [0.0; 3], IDENTITY3).unwrap();
@@ -434,7 +434,7 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
     );
     assert!(inside > 500, "{inside}");
     assert!(
-        wrong * 5 <= inside,
+        wrong * 100 <= inside * 12,
         "{wrong} of {inside} mask voxels round differently"
     );
     let [nx, ny, nz] = coarse.size();
@@ -544,7 +544,7 @@ fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair(
                 }
             }
             eprintln!("{dims:?}: masked derivative max diff {worst:.3e} of {range:.3e}");
-            assert!(worst < 1e-3 * range, "masked derivative {worst} of {range}");
+            assert!(worst < 2e-4 * range, "masked derivative {worst} of {range}");
         }
         let ones = b
             .upload_image(&Volume::from_vec(grid, vec![1.0; n]).unwrap())

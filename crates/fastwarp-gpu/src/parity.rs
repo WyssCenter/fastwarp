@@ -439,6 +439,86 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
         note: "bit-identical values and fields in both directions".to_string(),
     });
 
+    let valid = Volume::from_vec(
+        grid,
+        (0..n)
+            .map(|idx| {
+                let [i, j, k] = grid.ijk(idx);
+                f64::from(u8::from(i >= 1 && !((3..6).contains(&j) && k < 4)))
+            })
+            .collect(),
+    )?;
+    let g_valid = gpu.upload_image(&valid)?;
+    let c_valid = cpu.upload_image(&valid)?;
+    let ((mv_a, md_a), (mv_b, md_b)) =
+        gpu.cc_value_derivative_pair_masked(&g_fix, &g_mov, &g_valid, case.radius)?;
+    let ((cmv_a, cmd_a), (cmv_b, cmd_b)) =
+        cpu.cc_value_derivative_pair_masked(&c_fix, &c_mov, &c_valid, case.radius)?;
+    let md_a = gpu.download_field(&md_a)?;
+    let md_b = gpu.download_field(&md_b)?;
+    for (label, gv, cv, gd, cd) in [
+        ("first", mv_a, cmv_a, &md_a, &cmd_a),
+        ("second", mv_b, cmv_b, &md_b, &cmd_b),
+    ] {
+        let (mut gi, mut ci) = (Vec::new(), Vec::new());
+        let mut outside_zero = true;
+        for (idx, (g, c)) in gd.data().iter().zip(cd.data()).enumerate() {
+            if valid.data()[idx] == 0.0 {
+                outside_zero &= *g == [0.0; 3];
+            } else if is_interior(&grid, idx, 1) {
+                gi.extend_from_slice(g);
+                ci.extend_from_slice(c);
+            }
+        }
+        let value_err = (gv - cv).abs() / cv.abs().max(1e-12);
+        out.push(OpResult {
+            op: format!("cc_value masked {label}"),
+            max_abs: (gv - cv).abs(),
+            range: cv.abs(),
+            rel: value_err,
+            tol: tol::CC_VALUE,
+            ok: value_err <= tol::CC_VALUE,
+            note: format!("gpu {gv:.8}, cpu {cv:.8}"),
+        });
+        let mut r = compare(
+            &format!("cc_derivative masked {label} (interior)"),
+            &gi,
+            &ci,
+            tol::CC_DERIVATIVE,
+            String::new(),
+        );
+        r.ok = r.ok && outside_zero;
+        r.note = format!("zero outside the mask: {outside_zero}");
+        out.push(r);
+    }
+
+    let mask_src = Volume::from_vec(
+        other,
+        image(&other, case.seed + 4, 0.0)
+            .data()
+            .iter()
+            .map(|v| f64::from(u8::from(*v > 0.5)))
+            .collect(),
+    )?;
+    let g_mask = gpu.upload_image(&mask_src)?;
+    let g_warped = gpu
+        .warp_mask_through_field(&g_mask, &gf, Some(&affine), None)
+        .map_err(|e| mismatch("warp_mask_through_field", e))?;
+    let c_warped = cpu.warp_mask_through_field(&mask_src, &cf, Some(&affine), None)?;
+    let got = gpu.download_image(&g_warped)?;
+    let want = c_warped.data();
+    let wrong = got.iter().zip(want).filter(|(a, b)| a != b).count();
+    let inside = want.iter().filter(|v| **v == 1.0).count();
+    let mut r = compare(
+        "warp_mask_through_field+affine",
+        &got,
+        want,
+        0.0,
+        format!("{wrong} of {n} voxels differ, {inside} inside"),
+    );
+    r.ok = r.ok || (got.iter().all(|v| *v == 0.0 || *v == 1.0) && wrong <= 1 + n / 500);
+    out.push(r);
+
     for variance in [3.0, 0.3, 0.8, 14.0] {
         let g = gpu.smooth_field(gpu.copy_field(&gf)?, variance)?;
         let c = cpu.smooth_field(cpu.copy_field(&cf)?, variance)?;
