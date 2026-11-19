@@ -56,6 +56,8 @@ COHORT_ARGV = [
     "1",
     "--random-seed",
     "20260910",
+    "--verbose",
+    "1",
 ]
 
 
@@ -142,10 +144,25 @@ def test_engine_done_needs_ok_status_and_both_composites(tmp_path):
 
 
 def test_plan_counts_what_is_left(tmp_path):
-    p = run.plan(work=tmp_path, keys=["mindboggle"], recipe_name="cohort", pairs=None, quick=True)
+    p = run.plan(
+        work=tmp_path,
+        keys=["mindboggle"],
+        recipe_name="cohort",
+        pairs=None,
+        quick=True,
+        linear_keys=["snsx"],
+    )
     d = p["datasets"]["mindboggle"]
     assert d["pairs"] == 1 and d["to_run"] == {"fastwarp": 1, "ants": 1}
+    assert p["post"]["mindboggle"]["to_run"] == 1
+    assert p["linear"]["snsx"]["to_run"] == {"fastwarp": 1, "ants": 1}
     assert p["total_s"] == pytest.approx(sum(run.DEFAULT_SECONDS.values()))
+    without = run.plan(
+        work=tmp_path, keys=["mindboggle"], recipe_name="cohort", pairs=None, quick=True, post=False
+    )
+    assert without["post"] == {} and without["linear"] == {}
+    s = run.DEFAULT_SECONDS
+    assert without["total_s"] == pytest.approx(s["ants"] + s["fastwarp"] + s["evaluate"])
 
 
 def test_the_run_lock_refuses_a_second_run(tmp_path):

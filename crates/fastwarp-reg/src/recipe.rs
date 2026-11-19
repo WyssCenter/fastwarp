@@ -76,6 +76,30 @@ impl SynRecipe {
         }
     }
 
+    /// The cohort stage for `channels` channels: the same, with `channels` `CC` metrics of weight
+    /// `1 / channels` (1 and 2 give `[1.0]` and `[0.5, 0.5]`).
+    pub fn cohort_channels(channels: usize) -> Self {
+        Self {
+            channel_weights: vec![1.0 / channels.max(1) as f64; channels.max(1)],
+            ..Self::cohort()
+        }
+    }
+
+    /// [`SynRecipe::cohort_channels`] for a channel count that comes from the user: fails instead
+    /// of aborting when the weight list cannot be allocated.
+    pub fn try_cohort_channels(channels: usize) -> Result<Self> {
+        let n = channels.max(1);
+        let mut channel_weights = Vec::new();
+        channel_weights
+            .try_reserve_exact(n)
+            .map_err(|_| invalid("syn recipe", "too many channels to allocate their weights"))?;
+        channel_weights.resize(n, 1.0 / n as f64);
+        Ok(Self {
+            channel_weights,
+            ..Self::cohort()
+        })
+    }
+
     /// Number of resolution levels.
     pub fn levels(&self) -> usize {
         self.iterations.len()
@@ -216,6 +240,22 @@ mod tests {
         assert_eq!(args[5], "CC[/t2.nii.gz,/m2.nii.gz,0.5,4]");
         assert_eq!(args[6], "--convergence");
         assert_eq!(args.len(), 12);
+    }
+
+    #[test]
+    fn channel_weights_are_one_over_the_channel_count() {
+        assert_eq!(SynRecipe::cohort_channels(1), SynRecipe::cohort());
+        assert_eq!(
+            SynRecipe::cohort_channels(2),
+            SynRecipe::cohort_multispectral()
+        );
+        assert_eq!(
+            SynRecipe::cohort_channels(3).channel_weights,
+            vec![1.0 / 3.0; 3]
+        );
+        assert_eq!(SynRecipe::cohort_channels(4).channel_weights, vec![0.25; 4]);
+        assert_eq!(SynRecipe::cohort_channels(5).channel_weights, vec![0.2; 5]);
+        assert!(SynRecipe::cohort_channels(5).validate().is_ok());
     }
 
     #[test]

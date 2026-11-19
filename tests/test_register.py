@@ -47,10 +47,8 @@ def phantom(shift_mm=(0.0, 0.0, 0.0)) -> tuple:
 
 
 @pytest.fixture(scope="module")
-def result(tmp_path_factory):
-    out = tmp_path_factory.mktemp("reg") / "sub_"
-    info = g.register_syn(phantom(), phantom(SHIFT_MM), out, iso_mm=SPACING, write_warped=True)
-    return out, info
+def result(baseline):
+    return baseline
 
 
 @needs_gpu
@@ -80,6 +78,24 @@ def test_two_channels(tmp_path):
     info = g.register_syn(fixed, moving, tmp_path / "mc_", iso_mm=SPACING)
     assert Path(f"{tmp_path}/mc_Composite.h5").is_file()
     np.testing.assert_allclose(np.asarray(info["affine_parameters"])[9:], SHIFT_MM, atol=0.3)
+
+
+@needs_gpu
+def test_three_channels(tmp_path):
+    fixed = [phantom(), phantom(), phantom()]
+    moving = [phantom(SHIFT_MM), phantom(SHIFT_MM), phantom(SHIFT_MM)]
+    info = g.register_syn(fixed, moving, tmp_path / "mc3_", iso_mm=SPACING)
+    assert Path(f"{tmp_path}/mc3_Composite.h5").is_file()
+    assert info["recipe"]["syn"]["channel_weights"] == [1.0 / 3.0] * 3
+    np.testing.assert_allclose(np.asarray(info["affine_parameters"])[9:], SHIFT_MM, atol=0.3)
+
+
+def test_no_channels_or_unequal_channel_counts_are_refused(tmp_path):
+    p = phantom()
+    for fixed, moving in (([], []), ([p, p], [p])):
+        with pytest.raises(ValueError, match="at least one fixed image|as many moving"):
+            g.register_syn(fixed, moving, tmp_path / "x_", iso_mm=SPACING)
+    assert not any(tmp_path.iterdir())
 
 
 @needs_gpu
@@ -118,6 +134,81 @@ def test_capacity_refused_before_work(tmp_path, monkeypatch):
     with pytest.raises(g.GpuCapacityError):
         g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "cap_", iso_mm=SPACING)
     assert not Path(f"{tmp_path}/cap_Composite.h5").exists()
+
+
+def blank(shape, spacing=SPACING):
+    return (np.zeros(shape), (spacing,) * 3, (0.0,) * 3, np.eye(3))
+
+
+def test_fits_gpu_rejects_an_empty_moving_list():
+    with pytest.raises(ValueError):
+        g.fits_gpu(phantom(), [], iso_mm=SPACING)
+
+
+def test_fits_gpu_without_a_gpu_is_false(monkeypatch):
+    monkeypatch.setattr(
+        "fastwarp._api._fits_gpu", lambda *a: (_ for _ in ()).throw(g.GpuUnavailableError("x"))
+    )
+    assert not g.fits_gpu(phantom(), phantom(), iso_mm=SPACING)
+    assert not g.fits_gpu([phantom()], [phantom()], iso_mm=SPACING)
+
+
+def test_fits_gpu_passes_the_largest_moving_grid(monkeypatch):
+    seen = []
+    monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a) or True)
+    g.fits_gpu(phantom(), iso_mm=SPACING)
+    g.fits_gpu([phantom(), phantom()], [blank((10, 10, 10)), blank((90, 20, 20))], iso_mm=SPACING)
+    assert seen[0] == (SHAPE, 1, None, None, None)
+    assert seen[1] == (SHAPE, 2, None, (90, 20, 20), None)
+
+
+def test_fits_gpu_validates_arguments():
+    p = phantom()
+    for call in (
+        lambda: g.fits_gpu([]),
+        lambda: g.fits_gpu(p, [p, p]),
+        lambda: g.fits_gpu([p, p], p),
+        lambda: g.fits_gpu([p, p], channels=1),
+        lambda: g.fits_gpu(p, channels=0),
+        lambda: g.fits_gpu(p, iso_mm=-1.0),
+        lambda: g.fits_gpu(p, iso_mm=float("nan")),
+    ):
+        with pytest.raises(ValueError):
+            call()
+
+
+def test_fits_gpu_channels_follow_the_fixed_images(monkeypatch):
+    seen = []
+    monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a[1]) or True)
+    p = phantom()
+    g.fits_gpu(p)
+    g.fits_gpu([p, p], [p, p])
+    g.fits_gpu(p, channels=2)
+    g.fits_gpu([p, p, p], [p, p, p])
+    g.fits_gpu(p, channels=3)
+    g.fits_gpu(p, channels=4)
+    g.fits_gpu([p] * 5, [p] * 5)
+    g.fits_gpu(p, channels=6)
+    assert seen == [1, 2, 2, 3, 3, 4, 5, 6]
+
+
+@needs_gpu
+def test_fits_gpu_counts_both_channels(monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "34")
+    p = phantom()
+    assert g.fits_gpu(p, iso_mm=SPACING)
+    assert not g.fits_gpu([p, p], [p, p], iso_mm=SPACING)
+
+
+@needs_gpu
+def test_fits_gpu_checks_the_moving_grid(tmp_path, monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "40")
+    big = blank((SHAPE[0] * 4, SHAPE[1] * 4, SHAPE[2] * 4))
+    assert g.fits_gpu(phantom(), iso_mm=SPACING)
+    assert not g.fits_gpu(phantom(), big, iso_mm=SPACING)
+    with pytest.raises(g.GpuCapacityError):
+        g.register_syn(phantom(), big, tmp_path / "big_", iso_mm=SPACING)
+    assert g.fits_gpu(phantom(), phantom(), iso_mm=SPACING)
 
 
 @needs_gpu
@@ -168,10 +259,9 @@ def _hashes(prefix: Path) -> tuple[str, str]:
 
 
 @needs_gpu
-def test_runs_are_deterministic(tmp_path):
-    g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "a_", iso_mm=SPACING)
+def test_runs_are_deterministic(tmp_path, baseline):
     g.register_syn(phantom(), phantom(SHIFT_MM), tmp_path / "b_", iso_mm=SPACING)
-    assert _hashes(tmp_path / "a_") == _hashes(tmp_path / "b_")
+    assert _hashes(baseline[0]) == _hashes(tmp_path / "b_")
 
 
 @needs_gpu

@@ -24,20 +24,25 @@ def _digest(prefix: Path) -> str:
 
 def test_cohort_recipe_has_every_field():
     one, two = g.cohort_recipe(1), g.cohort_recipe(2)
+    three, four = g.cohort_recipe(3), g.cohort_recipe(4)
     assert set(one) == {"rigid", "affine", "syn"}
     assert one["syn"]["channel_weights"] == [1.0]
     assert two["syn"]["channel_weights"] == [0.5, 0.5]
+    assert three["syn"]["channel_weights"] == [1.0 / 3.0] * 3
+    assert four["syn"]["channel_weights"] == [0.25] * 4
     assert one["rigid"]["iterations"] == [1000, 500, 250, 100]
     assert one["syn"]["iterations"] == [100, 70, 50, 20]
     assert one["syn"]["cc_radius"] == 4 and one["rigid"]["bins"] == 32
-    with pytest.raises(ValueError):
-        g.cohort_recipe(3)
+    assert g.cohort_recipe(5)["syn"]["channel_weights"] == [0.2] * 5
+    with pytest.raises(ValueError, match="channels must be at least 1"):
+        g.cohort_recipe(0)
+    with pytest.raises(ValueError, match="too many channels"):
+        g.cohort_recipe(2**62)
 
 
 @needs_gpu
-def test_the_explicit_cohort_recipe_is_the_default_bit_for_bit(tmp_path):
-    a, b = tmp_path / "default_", tmp_path / "explicit_"
-    info = g.register_syn(phantom(), phantom(SHIFT_MM), a, iso_mm=SPACING)
+def test_the_explicit_cohort_recipe_is_the_default_bit_for_bit(tmp_path, baseline):
+    (a, info), b = baseline, tmp_path / "explicit_"
     g.register_syn(phantom(), phantom(SHIFT_MM), b, iso_mm=SPACING, recipe=g.cohort_recipe(1))
     assert _digest(a) == _digest(b)
     assert info["recipe"] == g.cohort_recipe(1)
@@ -91,7 +96,7 @@ def _bad(**stages):
         (_bad(syn={"sigma_units": "px"}), "'vox' or 'mm'"),
         (_bad(rigid={"sampling_percentage": 1.5}), "sampling percentage"),
         (_bad(syn={"gradient_step": 0.0}), "gradient step"),
-        (_bad(syn={"smoothing_sigmas": [3.0, 2.0, float("nan"), 0.0]}), "smoothing sigmas"),
+        (_bad(syn={"smoothing_sigmas": [3.0, 2.0, float("nan"), 0.0]}), "smoothing_sigmas.*finite"),
         (_bad(affine={"convergence_window": 1}), "window"),
     ],
 )

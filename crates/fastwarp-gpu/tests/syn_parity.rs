@@ -7,7 +7,8 @@ mod common;
 use std::time::Instant;
 
 use common::*;
-use fastwarp_gpu::{plan_capacity, plan_capacity_pair, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::capacity::SELFTEST_POOL_BYTES;
+use fastwarp_gpu::{plan_capacity_syn, CapacityCaps, WgpuBackend};
 use fastwarp_reg::apply::{apply_chain, Interpolation};
 use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
@@ -15,18 +16,47 @@ use fastwarp_reg::recipe::SynRecipe;
 use fastwarp_reg::syn::{run_syn, SynChannel, SynOptions, SynResult};
 use fastwarp_reg::{AffineTransform, Volume};
 
-fn channels(p: &Phantom, two: bool) -> Vec<SynChannel> {
+fn contrast3(v: f64) -> f64 {
+    (1.5 * v).sin()
+}
+
+fn contrast4(v: f64) -> f64 {
+    (v - 0.5).abs()
+}
+
+fn remapped(v: &Volume<f64>, f: fn(f64) -> f64) -> Volume<f64> {
+    Volume::from_vec(*v.grid(), v.data().iter().map(|x| f(*x)).collect()).unwrap()
+}
+
+fn channels_n(p: &Phantom, n: usize) -> Vec<SynChannel> {
     let mut c = vec![SynChannel {
         fixed: p.fixed.clone(),
         moving: p.moving.clone(),
     }];
-    if two {
+    if n >= 2 {
         c.push(SynChannel {
             fixed: p.fixed2.clone(),
             moving: p.moving2.clone(),
         });
     }
+    if n >= 3 {
+        c.push(SynChannel {
+            fixed: remapped(&p.fixed, contrast3),
+            moving: remapped(&p.moving, contrast3),
+        });
+    }
+    if n >= 4 {
+        c.push(SynChannel {
+            fixed: remapped(&p.fixed, contrast4),
+            moving: remapped(&p.moving, contrast4),
+        });
+    }
+    assert_eq!(c.len(), n);
     c
+}
+
+fn channels(p: &Phantom, two: bool) -> Vec<SynChannel> {
+    channels_n(p, if two { 2 } else { 1 })
 }
 
 struct Comparison {
@@ -82,7 +112,17 @@ fn compare(
     two: bool,
     options: &SynOptions,
 ) -> Comparison {
-    let ch = channels(p, two);
+    compare_n(gpu, p, recipe, if two { 2 } else { 1 }, options)
+}
+
+fn compare_n(
+    gpu: &WgpuBackend,
+    p: &Phantom,
+    recipe: &SynRecipe,
+    n: usize,
+    options: &SynOptions,
+) -> Comparison {
+    let ch = channels_n(p, n);
     let t = Instant::now();
     let cpu = run_syn(&CpuBackend, recipe, &ch, &p.initial, options).unwrap();
     let cpu_seconds = t.elapsed().as_secs_f64();
@@ -199,6 +239,20 @@ fn multispectral_syn_matches_the_cpu_reference() {
 }
 
 #[test]
+fn three_channel_syn_matches_the_cpu_reference() {
+    let Some(gpu) = backend() else { return };
+    let p = phantom(16, 2.0, 1.5);
+    let mut recipe = small_recipe(&[(2, 1.0, 12), (1, 0.0, 6)], 2);
+    recipe.channel_weights = vec![1.0 / 3.0; 3];
+    recipe.convergence_threshold = -1.0;
+    let c = compare_n(&gpu, &p, &recipe, 3, &SynOptions::default());
+    report("blob 16^3 three channels", &c);
+    assert!(c.warp_rms_diff / c.warp_rms < 0.05);
+    assert!((c.ncc_cpu - c.ncc_gpu).abs() < 2e-3);
+    assert!(c.max_energy_diff < 2e-3);
+}
+
+#[test]
 fn the_convergence_monitor_stops_the_same_levels() {
     let Some(gpu) = backend() else { return };
     let p = phantom(16, 2.0, 1.0);
@@ -287,31 +341,33 @@ fn a_syn_iteration_reads_back_four_scalar_blocks_with_one_channel_and_five_with_
     }
 }
 
-fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, iterations: u32) {
+fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, factors: &[u32], iterations: u32) {
     let n_full = (n * n * n) as u64;
     let mut h = head([n, n, n], 2.0, 3.0);
     if moving_n != n {
         let spacing = (n - 1) as f64 * 2.0 / (moving_n - 1) as f64;
         h.moving = head([moving_n; 3], spacing, 3.0).moving;
     }
-    let contrast = |v: &Volume<f64>| {
-        Volume::from_vec(*v.grid(), v.data().iter().map(|x| contrast2(*x)).collect()).unwrap()
-    };
     let mut failures = Vec::new();
-    for channels in [1usize, 2] {
+    for channels in [1usize, 2, 3, 4] {
         let Some(gpu) = backend() else { return };
-        let mut recipe = small_recipe(&[(2, 1.0, iterations), (1, 0.0, iterations)], 2);
+        let levels: Vec<(u32, f64, u32)> = factors
+            .iter()
+            .map(|&f| (f, if f > 1 { 1.0 } else { 0.0 }, iterations))
+            .collect();
+        let mut recipe = small_recipe(&levels, 2);
         let mut ch = vec![SynChannel {
             fixed: h.fixed.clone(),
             moving: h.moving.clone(),
         }];
-        if channels == 2 {
-            recipe.channel_weights = vec![0.5, 0.5];
+        let contrasts: [fn(f64) -> f64; 3] = [contrast2, contrast3, contrast4];
+        for contrast in contrasts.iter().take(channels - 1) {
             ch.push(SynChannel {
-                fixed: contrast(&h.fixed),
-                moving: contrast(&h.moving),
+                fixed: remapped(&h.fixed, *contrast),
+                moving: remapped(&h.moving, *contrast),
             });
         }
+        recipe.channel_weights = vec![1.0 / channels as f64; channels];
         recipe.convergence_threshold = -1.0;
         run_syn(
             &gpu,
@@ -326,29 +382,27 @@ fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, iterations: u32) {
             max_storage_buffer_binding_size: u64::MAX,
             memory_budget: u64::MAX,
         };
-        let plan = plan_capacity_pair([n; 3], [moving_n; 3], channels, &caps).unwrap();
+        let plan = plan_capacity_syn([n; 3], [moving_n; 3], channels, factors, &caps).unwrap();
         eprintln!(
-            "channels {channels}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
+            "{n}^3 {factors:?} channels {channels}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
             peak as f64 / n_full as f64,
             plan.level_total_bytes,
             plan.level_total_bytes as f64 / n_full as f64
         );
-        failures.extend((peak > plan.level_total_bytes + 16 * n_full).then(|| {
+        failures.extend((peak > plan.level_total_bytes).then(|| {
             format!(
-                "channels {channels}: peak {peak} above plan {} + 16 n",
+                "{n}^3 {factors:?} channels {channels}: peak {peak} above plan {}",
                 plan.level_total_bytes
             )
         }));
         if moving_n != n {
-            let fixed_only = plan_capacity([n; 3], channels, &caps).unwrap();
-            failures.extend(
-                (peak <= fixed_only.level_total_bytes + 16 * n_full).then(|| {
-                    format!(
-                        "channels {channels}: peak {peak} within the fixed-only plan {} + 16 n",
-                        fixed_only.level_total_bytes
-                    )
-                }),
-            );
+            let fixed_only = plan_capacity_syn([n; 3], [n; 3], channels, factors, &caps).unwrap();
+            failures.extend((peak <= fixed_only.level_total_bytes).then(|| {
+                format!(
+                    "channels {channels}: peak {peak} within the fixed-only plan {}",
+                    fixed_only.level_total_bytes
+                )
+            }));
         }
     }
     assert!(failures.is_empty(), "{failures:?}");
@@ -356,18 +410,39 @@ fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, iterations: u32) {
 
 #[test]
 fn the_capacity_plan_bounds_the_pool_peak_of_a_two_level_run() {
-    capacity_plan_bounds_pool_peak(96, 96, 1);
+    capacity_plan_bounds_pool_peak(96, 96, &[2, 1], 1);
 }
 
 #[test]
 fn the_capacity_plan_bounds_the_pool_peak_with_a_finer_moving_grid() {
-    capacity_plan_bounds_pool_peak(96, 191, 1);
+    capacity_plan_bounds_pool_peak(96, 191, &[2, 1], 1);
 }
 
 #[test]
 #[ignore = "recalibration at 128^3; run with --ignored --release"]
 fn the_capacity_plan_bounds_the_pool_peak_of_a_two_level_run_at_128() {
-    capacity_plan_bounds_pool_peak(128, 128, 3);
+    capacity_plan_bounds_pool_peak(128, 128, &[2, 1], 3);
+    capacity_plan_bounds_pool_peak(128, 128, &[8, 4, 2, 1], 1);
+}
+
+#[test]
+fn the_capacity_plan_bounds_the_pool_peak_of_small_grids() {
+    for n in [24, 33, 48] {
+        capacity_plan_bounds_pool_peak(n, n, &[8, 4, 2, 1], 1);
+        capacity_plan_bounds_pool_peak(n, n, &[2, 1], 1);
+    }
+}
+
+#[test]
+fn the_device_self_test_leaves_no_more_than_its_planned_pool_bytes() {
+    let Some(gpu) = backend() else { return };
+    let peak = gpu.peak_allocated_bytes();
+    eprintln!("self-test pool peak {peak} bytes, planned {SELFTEST_POOL_BYTES}");
+    assert!(peak > 0);
+    assert!(
+        peak <= SELFTEST_POOL_BYTES,
+        "{peak} > {SELFTEST_POOL_BYTES}"
+    );
 }
 
 #[test]

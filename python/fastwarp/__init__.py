@@ -6,7 +6,8 @@ as the registration engine of Wyss DBS Localizer.
 
 The engine is a wgpu port of ANTs/ITK's SyN with the CC and Mattes MI metrics (Vulkan, Metal,
 DX12). :func:`register_syn` runs the dbs-localizer cohort recipe (centre of mass, Rigid,
-Affine, SyN on an isotropic grid) and writes ANTs-compatible composite transforms.
+Affine, SyN on an isotropic grid), or any start, linear stages and optional SyN stage a
+stage-list recipe names, and writes ANTs-compatible transforms.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from importlib.metadata import PackageNotFoundError, version
 from ._api import (
     CITATION,
     INTERPOLATORS,
+    OUTPUT_LAYOUTS,
     LinearSession,
     apply_transforms,
     cohort_recipe,
@@ -47,6 +49,7 @@ __all__ = [
     "CancelToken",
     "GpuCapacityError",
     "INTERPOLATORS",
+    "OUTPUT_LAYOUTS",
     "GpuUnavailableError",
     "RegistrationCancelled",
     "RegistrationError",
