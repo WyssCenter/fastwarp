@@ -37,6 +37,11 @@ Composite transform
   One file that holds a chain of transforms applied in order. FastWarp writes
   `Composite.h5`, an {term}`affine` followed by a {term}`displacement field`, and its inverse.
 
+Cost-function masking
+  Leaving a region out of a registration's metric with a mask: voxels outside the mask add no
+  value and no gradient, so a lesion or a resection cavity does not drive the deformation. ANTs
+  takes the masks as `--masks [fixedMask,movingMask]`. See [Masks](guide/normalization.md#masks).
+
 Cross-correlation
   The similarity measure of the {term}`SyN` stage: the correlation of the two images'
   intensities in a small window around each voxel. It works when both images have the same

@@ -110,7 +110,8 @@ print(f"best coarse metric {best['metric']:.4f}, final {final['metric']:.4f}")
 
 A mask limits the samples of the metric to part of the fixed image, as
 `antsRegistration --masks [fixed_mask,NULL]` does. It is an image on any grid; its non-zero
-voxels are inside. There is no mask for the moving image.
+voxels are inside. A linear fit has no mask for the moving image; the SyN stage of
+{func}`~fastwarp.register_syn` takes one (see [Masks](normalization.md#masks)).
 
 - `fixed_mask` on the session applies to every fit with `use_mask=True` (the default) that
   brings no `mask` of its own.

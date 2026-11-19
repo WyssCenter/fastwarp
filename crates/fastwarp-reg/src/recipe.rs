@@ -9,6 +9,7 @@
 //! argument list a caller builds.
 
 use crate::error::{invalid, Result};
+use crate::mask::MaskVolume;
 use crate::pyramid::SigmaUnits;
 
 /// Gradient step of `SyN[0.1,3,0]`: the largest voxel step of one update.
@@ -47,6 +48,15 @@ pub struct SynRecipe {
     pub smoothing_sigmas: Vec<f64>,
     /// Unit suffix of the sigmas (`vox` or `mm`).
     pub sigma_units: SigmaUnits,
+    /// Fixed-image mask (`--masks [fixed,...]`), on any grid; its non-zero voxels are inside.
+    /// Every iteration it is resampled onto the level grid through the fixed-side transform
+    /// (nearest neighbour), and the CC metric of every channel uses only the voxels inside it.
+    /// `None` uses the whole level grid.
+    pub fixed_mask: Option<MaskVolume>,
+    /// Moving-image mask (`--masks [...,moving]`), on any grid, resampled through the
+    /// moving-side transform (the initial affine after the moving-side field). Voxels count
+    /// only where both masks are inside.
+    pub moving_mask: Option<MaskVolume>,
 }
 
 impl SynRecipe {
@@ -65,6 +75,8 @@ impl SynRecipe {
             shrink_factors: vec![8, 4, 2, 1],
             smoothing_sigmas: vec![3.0, 2.0, 1.0, 0.0],
             sigma_units: SigmaUnits::Voxels,
+            fixed_mask: None,
+            moving_mask: None,
         }
     }
 
@@ -159,6 +171,14 @@ impl SynRecipe {
         }
         if self.cc_radius == 0 {
             return Err(invalid("syn recipe", "CC radius must be positive"));
+        }
+        for (mask, name) in [(&self.fixed_mask, "fixed"), (&self.moving_mask, "moving")] {
+            if mask.as_ref().is_some_and(|m| !m.has_inside()) {
+                return Err(invalid(
+                    "syn recipe",
+                    format!("the {name} mask has no voxel inside (every voxel is zero)"),
+                ));
+            }
         }
         Ok(())
     }

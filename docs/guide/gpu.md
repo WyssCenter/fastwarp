@@ -138,6 +138,13 @@ per voxel of the grid for each, about 0.14 GiB at 1 mm and 1.1 GiB at 0.5 mm. Th
 from the model, not measurements per grid; the GPU test suite checks that the plan stays above
 the measured peak for one to four channels.
 
+[Masks](normalization.md#masks) add to a SyN stage: each mask stays on its own grid, at 4 bytes
+per mask voxel, and each level needs the image of the voxels inside both masks and one more
+window plane with its sum, which the plan counts as 13 bytes per voxel of the grid. With both
+masks on the grid of a 96³ test run, the measured peak grew by 21.5 bytes per voxel (8 of them the
+two masks), and the plan by 22.6. At 1 mm on this template, two masks on the template's grid add
+about 0.14 GiB.
+
 With the 1 GiB reserve, a 1 mm registration of one channel on this template needs a discrete
 GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
 [Performance](../performance.md#earlier-measurements-on-non-public-data) page used a different

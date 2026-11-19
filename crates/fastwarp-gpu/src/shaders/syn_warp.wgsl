@@ -1,5 +1,26 @@
+// SPDX-FileCopyrightText: 1999-2019 Insight Software Consortium
+// SPDX-FileCopyrightText: 2020-present NumFOCUS
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
+//
+// Copyright NumFOCUS (Insight Software Consortium)
+// Copyright 2026 Wyss Center for Bio and Neuroengineering
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Portions derived from ITK `itkNearestNeighborInterpolateImageFunction.h` and
+// `itkImageFunction.hxx` (the nearest-neighbour branch: the buffer test, then the index rounded
+// half up). See `docs/THIRD_PARTY_PORTS.md`.
 
 struct P {
     nx: u32,
@@ -44,6 +65,21 @@ fn k_warp(@builtin(global_invocation_id) id: vec3<u32>) {
         c = c + vec3<f32>(dot(p.l0.xyz, u), dot(p.l1.xyz, u), dot(p.l2.xyz, u));
     }
     let ok = inside(c, p.snx, p.sny, p.snz);
+    if ((p.flags & 2u) != 0u) {
+        var v = 0.0;
+        if (ok) {
+            let hi = vec3<f32>(f32(p.snx - 1u), f32(p.sny - 1u), f32(p.snz - 1u));
+            let r = vec3<u32>(clamp(floor(c + vec3<f32>(0.5)), vec3<f32>(0.0), hi));
+            if (src[r.x + p.snx * (r.y + p.sny * r.z)] != 0.0) {
+                v = 1.0;
+            }
+        }
+        if ((p.flags & 4u) != 0u) {
+            v = v * dst[i];
+        }
+        dst[i] = v;
+        return;
+    }
     for (var k = 0u; k < p.nplanes; k = k + 1u) {
         var v = 0.0;
         if (ok) {

@@ -10,13 +10,14 @@
 use rayon::prelude::*;
 
 use crate::backend::Backend;
-use crate::error::Result;
+use crate::error::{invalid, Result};
 use crate::field_ops::{
     compose_displacement_fields, gaussian_smooth_displacement_field, invert_displacement_field,
     resample_field, InvertParams, InvertStats, VectorField,
 };
 use crate::grid::Grid;
 use crate::interp::linear_at_point;
+use crate::mask::nearest_voxel;
 use crate::metric::cc::{CcInputs, CcMetric};
 use crate::transform::{AffineTransform, TransformChain};
 use crate::volume::Volume;
@@ -83,6 +84,77 @@ impl Backend for CpuBackend {
             })
             .collect();
         Volume::from_vec(grid, data)
+    }
+
+    fn warp_mask_through_field(
+        &self,
+        mask: &Self::Image,
+        field: &Self::Field,
+        affine: Option<&AffineTransform>,
+        product: Option<Self::Image>,
+    ) -> Result<Self::Image> {
+        let grid = *field.grid();
+        if let Some(p) = &product {
+            if p.grid() != &grid {
+                return Err(invalid(
+                    "warp mask",
+                    "the product image is not on the grid of the field",
+                ));
+            }
+        }
+        let mut data: Vec<f64> = field
+            .data()
+            .par_iter()
+            .enumerate()
+            .map(|(idx, u)| {
+                let [i, j, k] = grid.ijk(idx);
+                let x = grid.index_to_point([i as f64, j as f64, k as f64]);
+                let mut p = [x[0] + u[0], x[1] + u[1], x[2] + u[2]];
+                if let Some(a) = affine {
+                    p = a.apply(p);
+                }
+                match nearest_voxel(mask.grid(), p) {
+                    Some(v) if mask.data()[v] != 0.0 => 1.0,
+                    _ => 0.0,
+                }
+            })
+            .collect();
+        if let Some(p) = product {
+            for (d, q) in data.iter_mut().zip(p.data()) {
+                *d *= q;
+            }
+        }
+        Volume::from_vec(grid, data)
+    }
+
+    fn cc_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        valid: &Self::Image,
+        radius: usize,
+    ) -> Result<crate::backend::MetricPair<Self::Field>> {
+        let identity = TransformChain::new();
+        let grid = *fixed.grid();
+        let metric = CcMetric::new(radius);
+        let mut out = Vec::with_capacity(2);
+        for (a, b) in [(fixed, moving), (moving, fixed)] {
+            let e = metric.evaluate_masked(
+                &CcInputs {
+                    virtual_grid: &grid,
+                    fixed: a,
+                    moving: b,
+                    fixed_transform: &identity,
+                    moving_transform: &identity,
+                },
+                Some(valid),
+                true,
+            )?;
+            out.push((e.value, VectorField::from_vec(grid, e.derivative)?));
+        }
+        let second = out.pop().ok_or_else(|| invalid("cc metric", "no result"))?;
+        let first = out.pop().ok_or_else(|| invalid("cc metric", "no result"))?;
+        Ok((first, second))
     }
 
     fn cc_value_derivative(

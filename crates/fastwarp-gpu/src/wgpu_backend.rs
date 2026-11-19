@@ -43,6 +43,7 @@ use fastwarp_reg::field_ops::{
 };
 use fastwarp_reg::grid::Grid;
 use fastwarp_reg::linalg::{mat3_inverse, mat3_mul, mat3_mul_vec, Mat3, Vec3, IDENTITY3};
+use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
 use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::volume::Volume;
 
@@ -57,7 +58,7 @@ pub use mi::GpuMiLevel;
 
 use crate::syn_kernels::{
     CcFinalU, CcPlanesU, ComposeU, ElementU, GaussU, InvBeginU, InvReduceU, InvResidualU,
-    InvUpdateU, NormU, ReduceU, SynKernels, WarpU,
+    InvUpdateU, NormU, ReduceU, SynKernels, WarpU, WARP_MULTIPLY, WARP_NEAREST,
 };
 
 const SLOT_BYTES: u64 = 256;
@@ -914,21 +915,9 @@ impl WgpuBackend {
         norms: bool,
     ) -> RegResult<(Vec<MetricEvaluation<GpuField>>, Vec<f64>)> {
         self.require_same_grid("cc", &fixed.grid, &moving.grid)?;
-        if radius == 0 || radius > BOX_RADIUS_MAX as usize {
-            return Err(bad(format!(
-                "cc radius {radius} outside 1..={BOX_RADIUS_MAX}"
-            )));
-        }
-        if self.ctx.caps.max_storage_buffers_per_shader_stage < CC_DERIV_STORAGE_BUFFERS {
-            return Err(bad(format!(
-                "the CC derivative kernel binds {CC_DERIV_STORAGE_BUFFERS} storage buffers, the \
-                 device allows {}",
-                self.ctx.caps.max_storage_buffers_per_shader_stage
-            )));
-        }
+        self.check_cc(radius)?;
         let grid = fixed.grid;
         let n = grid.num_voxels();
-        let [nx, ny, nz] = grid.size();
         let plane_bytes = n as u64 * 4;
         let planes = [
             self.acquire("cc plane a", plane_bytes)?,
@@ -963,23 +952,8 @@ impl WgpuBackend {
         } else {
             None
         };
-        let ifo = index_from_offset(&grid)?;
-        let spacing = grid.spacing();
-        let mut offsets = [[0.0f32; 4]; 3];
-        for d in 0..3 {
-            for r in 0..3 {
-                offsets[d][r] = (0.5 * spacing[d] * ifo[r][d]) as f32;
-            }
-        }
         let r = radius as u32;
-        let uniform = CcFinalU {
-            dims: [nx as u32, ny as u32, nz as u32, n as u32],
-            radius: r,
-            part_base: 0,
-            pad: [0; 2],
-            o: offsets,
-            sp: spacing4(&grid),
-        };
+        let uniform = cc_uniform(&grid, r)?;
         let label = if swapped {
             "cc_value_derivative_pair"
         } else {
@@ -1084,6 +1058,217 @@ impl WgpuBackend {
             .map(|(buf, part)| {
                 let total: f64 = part.iter().map(|v| f64::from(*v)).sum();
                 (total / n as f64, GpuField { buf, grid })
+            })
+            .collect();
+        let norms = squared_norms.iter().map(|v| f64::from(*v).sqrt()).collect();
+        Ok((evaluations, norms))
+    }
+
+    fn check_cc(&self, radius: usize) -> RegResult<()> {
+        if radius == 0 || radius > BOX_RADIUS_MAX as usize {
+            return Err(bad(format!(
+                "cc radius {radius} outside 1..={BOX_RADIUS_MAX}"
+            )));
+        }
+        if self.ctx.caps.max_storage_buffers_per_shader_stage < CC_DERIV_STORAGE_BUFFERS {
+            return Err(bad(format!(
+                "the CC derivative kernel binds {CC_DERIV_STORAGE_BUFFERS} storage buffers, the \
+                 device allows {}",
+                self.ctx.caps.max_storage_buffers_per_shader_stage
+            )));
+        }
+        Ok(())
+    }
+
+    /// [`Backend::cc_value_derivative_pair_masked`], both directions from one set of window sums.
+    /// The five planes are zeroed outside `valid`, and `valid` itself is box-summed as a sixth
+    /// plane (the number of valid voxels in each window). `k_cc_stats_masked` turns the sums
+    /// into the per-voxel means and centred moments in place (zero moments where the centre is
+    /// not valid), so the masked derivative kernel binds as many storage buffers as the unmasked
+    /// one. The value kernel also counts the valid voxels of each workgroup, read back with the
+    /// value partials; each value is the mean over the valid voxels.
+    fn cc_evaluate_masked(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        valid: &GpuImage,
+        radius: usize,
+        norms: bool,
+    ) -> RegResult<(Vec<MetricEvaluation<GpuField>>, Vec<f64>)> {
+        self.require_same_grid("cc", &fixed.grid, &moving.grid)?;
+        self.require_same_grid("cc mask", &fixed.grid, &valid.grid)?;
+        self.check_cc(radius)?;
+        let grid = fixed.grid;
+        let n = grid.num_voxels();
+        let plane_bytes = n as u64 * 4;
+        let planes = [
+            self.acquire("cc plane a", plane_bytes)?,
+            self.acquire("cc plane b", plane_bytes)?,
+            self.acquire("cc plane aa", plane_bytes)?,
+            self.acquire("cc plane bb", plane_bytes)?,
+            self.acquire("cc plane ab", plane_bytes)?,
+            self.acquire("cc plane count", plane_bytes)?,
+        ];
+        let sums = [
+            self.acquire("cc sum a", plane_bytes)?,
+            self.acquire("cc sum b", plane_bytes)?,
+            self.acquire("cc sum aa", plane_bytes)?,
+            self.acquire("cc sum bb", plane_bytes)?,
+            self.acquire("cc sum ab", plane_bytes)?,
+            self.acquire("cc sum count", plane_bytes)?,
+        ];
+        let g3 = self.groups_3d(&grid);
+        let count = g3[0] * g3[1] * g3[2];
+        let outs = [self.field_buffer(&grid)?, self.field_buffer(&grid)?];
+        let parts_bytes = u64::from(count) * 2 * 4;
+        let parts = self.acquire("cc partials", parts_bytes)?;
+        let valid_parts_bytes = u64::from(count) * 4;
+        let valid_parts = self.acquire("cc valid partials", valid_parts_bytes)?;
+        let reduction = if norms {
+            let part = self.reduction_partials(&grid)?;
+            let scalars = [
+                self.acquire("reduction scalar", 16)?,
+                self.acquire("reduction scalar", 16)?,
+            ];
+            Some((part, scalars))
+        } else {
+            None
+        };
+        let r = radius as u32;
+        let uniform = cc_uniform(&grid, r)?;
+        let elementwise = CcPlanesU {
+            n: n as u32,
+            pad: [0; 3],
+        };
+        let groups = self.groups_1d(n as u64)?;
+        self.run_pass("cc_value_derivative_pair_masked", |pass| {
+            self.launch(
+                pass,
+                &self.kernels.cc_planes_masked,
+                &[
+                    fixed.buf.buffer(),
+                    moving.buf.buffer(),
+                    valid.buf.buffer(),
+                    planes[0].buffer(),
+                    planes[1].buffer(),
+                    planes[2].buffer(),
+                    planes[3].buffer(),
+                    planes[4].buffer(),
+                ],
+                &elementwise,
+                groups,
+            )?;
+            for (p, sum) in sums.iter().enumerate() {
+                let src = if p == 5 {
+                    valid.buf.buffer()
+                } else {
+                    planes[p].buffer()
+                };
+                self.box_pass(pass, src, sum.buffer(), &grid, 0, r)?;
+            }
+            for (sum, plane) in sums.iter().zip(&planes) {
+                self.box_pass(pass, sum.buffer(), plane.buffer(), &grid, 1, r)?;
+            }
+            for (plane, sum) in planes.iter().zip(&sums) {
+                self.box_pass(pass, plane.buffer(), sum.buffer(), &grid, 2, r)?;
+            }
+            self.launch(
+                pass,
+                &self.kernels.cc_stats_masked,
+                &[
+                    sums[0].buffer(),
+                    sums[1].buffer(),
+                    sums[2].buffer(),
+                    sums[3].buffer(),
+                    sums[4].buffer(),
+                    sums[5].buffer(),
+                    valid.buf.buffer(),
+                ],
+                &elementwise,
+                groups,
+            )?;
+            for (d, out) in outs.iter().enumerate() {
+                let order = if d == 0 {
+                    [0, 1, 2, 3, 4]
+                } else {
+                    [1, 0, 3, 2, 4]
+                };
+                let (src_fixed, src_moving) = if d == 0 {
+                    (fixed.buf.buffer(), moving.buf.buffer())
+                } else {
+                    (moving.buf.buffer(), fixed.buf.buffer())
+                };
+                self.launch(
+                    pass,
+                    &self.kernels.cc_deriv_masked,
+                    &[
+                        sums[order[0]].buffer(),
+                        sums[order[1]].buffer(),
+                        sums[order[2]].buffer(),
+                        sums[order[3]].buffer(),
+                        sums[order[4]].buffer(),
+                        src_fixed,
+                        src_moving,
+                        out.buffer(),
+                    ],
+                    &uniform,
+                    g3,
+                )?;
+                self.launch(
+                    pass,
+                    &self.kernels.cc_value_masked,
+                    &[
+                        sums[order[2]].buffer(),
+                        sums[order[3]].buffer(),
+                        sums[order[4]].buffer(),
+                        valid.buf.buffer(),
+                        parts.buffer(),
+                        valid_parts.buffer(),
+                    ],
+                    &CcFinalU {
+                        part_base: d as u32 * count,
+                        ..uniform
+                    },
+                    g3,
+                )?;
+            }
+            if let Some((part, scalars)) = &reduction {
+                for (out, scalar) in outs.iter().zip(scalars) {
+                    self.encode_reduce(
+                        pass,
+                        out.buffer(),
+                        &grid,
+                        1,
+                        part.buffer(),
+                        scalar.buffer(),
+                    )?;
+                }
+            }
+            Ok(())
+        })?;
+        let mut sources = vec![
+            (parts.buffer(), parts_bytes),
+            (valid_parts.buffer(), valid_parts_bytes),
+        ];
+        if let Some((_, scalars)) = &reduction {
+            sources.extend(scalars.iter().map(|s| (s.buffer(), 4)));
+        }
+        let values: Vec<f32> = bytemuck::pod_collect_to_vec(&self.read_sources(&sources)?);
+        let (partials, rest) = values.split_at(count as usize * 2);
+        let (valid_partials, squared_norms) = rest.split_at(count as usize);
+        let valid_voxels: f64 = valid_partials.iter().map(|v| f64::from(*v)).sum();
+        if valid_voxels <= 0.0 {
+            return Err(RegError::Invalid {
+                what: "cc metric",
+                message: NO_VOXEL_IN_MASKS.to_string(),
+            });
+        }
+        let evaluations = outs
+            .into_iter()
+            .zip(partials.chunks(count as usize))
+            .map(|(buf, part)| {
+                let total: f64 = part.iter().map(|v| f64::from(*v)).sum();
+                (total / valid_voxels, GpuField { buf, grid })
             })
             .collect();
         let norms = squared_norms.iter().map(|v| f64::from(*v).sqrt()).collect();
@@ -1336,6 +1521,60 @@ impl Backend for WgpuBackend {
             )
         })?;
         Ok(GpuImage { buf: out, grid })
+    }
+
+    fn warp_mask_through_field(
+        &self,
+        mask: &GpuImage,
+        field: &GpuField,
+        affine: Option<&AffineTransform>,
+        product: Option<GpuImage>,
+    ) -> RegResult<GpuImage> {
+        let grid = field.grid;
+        let (out, flags) = match product {
+            Some(p) => {
+                self.require_same_grid("warp mask product", &grid, &p.grid)?;
+                (p.buf, WARP_NEAREST | WARP_MULTIPLY)
+            }
+            None => (self.image_buffer(&grid)?, WARP_NEAREST),
+        };
+        let mut uniform = warp_uniform(&grid, &mask.grid, affine, true, 1)?;
+        uniform.flags |= flags;
+        self.run_pass("warp_mask", |pass| {
+            self.launch(
+                pass,
+                &self.kernels.warp,
+                &[mask.buf.buffer(), field.buf.buffer(), out.buffer()],
+                &uniform,
+                self.groups_3d(&grid),
+            )
+        })?;
+        Ok(GpuImage { buf: out, grid })
+    }
+
+    fn cc_value_derivative_pair_masked(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        valid: &GpuImage,
+        radius: usize,
+    ) -> RegResult<MetricPair<GpuField>> {
+        let (out, _) = self.cc_evaluate_masked(fixed, moving, valid, radius, false)?;
+        cc_pair(out)
+    }
+
+    fn cc_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        valid: &GpuImage,
+        radius: usize,
+    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
+        let (out, norms) = self.cc_evaluate_masked(fixed, moving, valid, radius, true)?;
+        let norms: [f64; 2] = norms
+            .try_into()
+            .map_err(|_| bad("cc pair produced fewer than two norms"))?;
+        Ok((cc_pair(out)?, norms))
     }
 
     fn cc_value_derivative(
@@ -1633,6 +1872,28 @@ impl WgpuBackend {
         }
         Ok((psi, (params.max_iterations > 0).then_some(state)))
     }
+}
+
+/// The uniform of the CC derivative and value kernels on `grid`: the central-difference probe
+/// offsets (half a voxel along each axis, in continuous-index units) and the spacing.
+fn cc_uniform(grid: &Grid, radius: u32) -> RegResult<CcFinalU> {
+    let ifo = index_from_offset(grid)?;
+    let spacing = grid.spacing();
+    let mut offsets = [[0.0f32; 4]; 3];
+    for d in 0..3 {
+        for r in 0..3 {
+            offsets[d][r] = (0.5 * spacing[d] * ifo[r][d]) as f32;
+        }
+    }
+    let [nx, ny, nz] = grid.size();
+    Ok(CcFinalU {
+        dims: [nx as u32, ny as u32, nz as u32, grid.num_voxels() as u32],
+        radius,
+        part_base: 0,
+        pad: [0; 2],
+        o: offsets,
+        sp: spacing4(grid),
+    })
 }
 
 fn cc_pair(mut out: Vec<MetricEvaluation<GpuField>>) -> RegResult<MetricPair<GpuField>> {

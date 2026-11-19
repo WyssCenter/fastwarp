@@ -275,6 +275,18 @@ fn refusals_exit_2_before_reading_or_writing_anything() {
             .concat(),
             "fastwarp: error: ants-registration: fixed image",
         ),
+        (
+            [
+                com(&f, &m),
+                linear_stages(&f, &m),
+                syn_stage(&f, &m),
+                argv(&["-o", &prefix, "-x", &format!("[{},{}]", s(&f), s(&m))]),
+            ]
+            .concat(),
+            "fastwarp: error: ants-registration: a moving-image mask on the Rigid stage \
+             (--masks) is not supported: FastWarp applies a moving-image mask to the SyN stage \
+             only; give NULL as the moving mask of that stage.",
+        ),
     ];
     for (i, (mut args, want)) in cases.into_iter().enumerate() {
         args.insert(0, "ants-registration".into());
@@ -590,6 +602,34 @@ fn registration_writes_the_files_ants_writes() {
         params[0], params[1],
         "the mask did not reach the linear stages"
     );
+    let mut warps = Vec::new();
+    for (name, x) in [
+        ("syn_unmasked", "[NULL,NULL]".to_string()),
+        ("syn_masked", format!("[{},{}]", s(&mask), s(&mask))),
+        ("syn_moving_masked", format!("[NULL,{}]", s(&mask))),
+    ] {
+        let dir = d.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let o = register(
+            [
+                syn_stage(&f, &m),
+                argv(&["-o", &s(&dir.join("o_")), "-x", &x]),
+            ]
+            .concat(),
+        );
+        ok(&o, name);
+        assert_eq!(
+            files_in(&dir),
+            names(&["o_0InverseWarp.nii.gz", "o_0Warp.nii.gz"])
+        );
+        warps.push(std::fs::read(dir.join("o_0Warp.nii.gz")).unwrap());
+    }
+    assert_ne!(warps[0], warps[1], "the masks did not reach the SyN stage");
+    assert_ne!(
+        warps[0], warps[2],
+        "the moving mask did not reach the SyN stage"
+    );
+    assert_ne!(warps[1], warps[2]);
 }
 
 fn ants_program(name: &str) -> PathBuf {
@@ -1088,6 +1128,156 @@ fn registrations_agree_with_ants() {
             "{name}: forward map {full_err} mm, ANTs affine alone {warp_noop}"
         );
     }
+}
+
+/// The pair of [`moved_pair`] with a cavity in the moving image (intensity 0 in a ball of 5 mm
+/// on the second blob), a binary fixed mask of the object, a moving mask without a ball of 7 mm
+/// at the cavity, and the cavity's centre. ANTs reads masks as `unsigned char`, so both are 0 or 1.
+fn cavity_pair(dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf, [f64; 3]) {
+    let (f, m) = moved_pair(dir, [24; 3], [2.0; 3]);
+    let fixed = load(&f);
+    let object: Vec<f32> = fixed
+        .data()
+        .iter()
+        .map(|v| if *v > 0.05 { 1.0 } else { 0.0 })
+        .collect();
+    let fixed_mask = dir.join("f_mask.nii.gz");
+    Volume::from_vec(*fixed.grid(), object)
+        .unwrap()
+        .save_nifti(&fixed_mask)
+        .unwrap();
+    let centre = [11.0, 32.0, 21.0];
+    let moving = load(&m);
+    let g = *moving.grid();
+    let within = |idx: usize, r: f64| {
+        let [i, j, k] = g.ijk(idx);
+        dist(g.index_to_point([i as f64, j as f64, k as f64]), centre) < r
+    };
+    let lesioned: Vec<f32> = (0..g.num_voxels())
+        .map(|idx| {
+            if within(idx, 5.0) {
+                0.0
+            } else {
+                moving.data()[idx] as f32
+            }
+        })
+        .collect();
+    let cavity = dir.join("m_cavity.nii.gz");
+    Volume::from_vec(g, lesioned)
+        .unwrap()
+        .save_nifti(&cavity)
+        .unwrap();
+    let keep: Vec<f32> = (0..g.num_voxels())
+        .map(|idx| if within(idx, 7.0) { 0.0 } else { 1.0 })
+        .collect();
+    let mask = dir.join("m_mask.nii.gz");
+    Volume::from_vec(g, keep)
+        .unwrap()
+        .save_nifti(&mask)
+        .unwrap();
+    (f, cavity, fixed_mask, mask, centre)
+}
+
+#[test]
+#[ignore = "runs antsRegistration and antsApplyTransforms from FASTWARP_ANTS_DIR and needs a GPU; \
+            run with --ignored"]
+fn syn_masks_agree_with_ants() {
+    let reg = ants_program("antsRegistration");
+    let apply = ants_program("antsApplyTransforms");
+    require_gpu();
+    let d = tmp("syn_masks");
+    let (f, m, fixed_mask, mask, centre) = cavity_pair(&d);
+    let chain = [com(&f, &m), stages(&f, &m, &["SyN"])].concat();
+    let masks = argv(&["-x", &format!("[{},{}]", s(&fixed_mask), s(&mask))]);
+    let mut runs = Vec::new();
+    for (name, extra) in [("masked", masks), ("unmasked", Vec::new())] {
+        let case = d.join(name);
+        let (theirs, mine) = run_both(&reg, &case, name, &|o| {
+            [chain.clone(), extra.clone(), both_outputs(o)].concat()
+        });
+        let w = ncc(
+            &load(&mine.join("W.nii.gz")),
+            &load(&theirs.join("W.nii.gz")),
+        );
+        let w0 = ncc(
+            &on_grid(&m, &f, &mine.join("m_on_f.nii.gz")),
+            &load(&theirs.join("W.nii.gz")),
+        );
+        eprintln!("{name}: NCC with ANTs W {w:.4} (unregistered {w0:.4})");
+        assert!(
+            w > 0.95 && w - w0 > 0.05,
+            "{name}: W {w} vs unregistered {w0}"
+        );
+        let check = mine.join("check.nii.gz");
+        let mut a = argv(&[
+            "-d",
+            "3",
+            "-i",
+            &s(&m),
+            "-r",
+            &s(&f),
+            "-o",
+            &s(&check),
+            "-n",
+            "Linear",
+        ]);
+        for t in forward_transforms(&mine, &files_in(&mine)) {
+            a.extend(["-t".to_string(), t]);
+        }
+        ok(
+            &run_ants(&apply, &a),
+            &format!("{name}: antsApplyTransforms"),
+        );
+        let diff = max_abs_diff(&load(&check), &load(&mine.join("W.nii.gz")));
+        assert!(
+            diff < 1e-4,
+            "{name}: ANTs reads FastWarp's transforms: {diff}"
+        );
+        runs.push((maps(&theirs), maps(&mine)));
+    }
+    let [((ants_masked, ants_linear), (mine_masked, _)), ((ants_unmasked, ants_unmasked_linear), (mine_unmasked, _))] =
+        runs.try_into().ok().unwrap();
+    let fixed = load(&f);
+    let inside = object_points(&fixed);
+    let near: Vec<[f64; 3]> = inside
+        .iter()
+        .copied()
+        .filter(|p| dist(ants_masked.apply(*p), centre) < 8.0)
+        .collect();
+    let masked_err = rms_dist(&mine_masked, &ants_masked, &inside);
+    let masked_warp = rms_dist(&ants_linear, &ants_masked, &inside);
+    let unmasked_err = rms_dist(&mine_unmasked, &ants_unmasked, &inside);
+    let unmasked_warp = rms_dist(&ants_unmasked_linear, &ants_unmasked, &inside);
+    let near_err = rms_dist(&mine_masked, &ants_masked, &near);
+    let near_unmasked = rms_dist(&mine_masked, &ants_unmasked, &near);
+    let ants_effect = rms_dist(&ants_masked, &ants_unmasked, &near);
+    let fastwarp_effect = rms_dist(&mine_masked, &mine_unmasked, &near);
+    eprintln!(
+        "forward map RMS in the object, FastWarp against ANTs: masked {masked_err:.2e} mm (ANTs' \
+         warp {masked_warp:.3}), unmasked {unmasked_err:.2e} mm (ANTs' warp {unmasked_warp:.3}); \
+         near the cavity FastWarp's masked run is {near_err:.2e} mm from ANTs' masked run and \
+         {near_unmasked:.3} mm from its unmasked run; the masks move ANTs by {ants_effect:.3} mm \
+         and FastWarp by {fastwarp_effect:.3} mm there; {} and {} points",
+        inside.len(),
+        near.len()
+    );
+    assert!(near.len() > 20, "{} points near the cavity", near.len());
+    assert!(
+        masked_err < 0.1 && masked_err < 0.1 * masked_warp,
+        "masked forward map {masked_err} mm from ANTs', ANTs' warp {masked_warp} mm"
+    );
+    assert!(
+        unmasked_err < 0.1,
+        "unmasked forward map {unmasked_err} mm from ANTs'"
+    );
+    assert!(
+        near_err < 0.1 * near_unmasked,
+        "near the cavity: {near_err} mm from ANTs' masked run, {near_unmasked} from its unmasked one"
+    );
+    assert!(
+        (fastwarp_effect - ants_effect).abs() < 0.1 * ants_effect,
+        "near the cavity the masks move FastWarp by {fastwarp_effect} mm, ANTs by {ants_effect} mm"
+    );
 }
 
 #[test]

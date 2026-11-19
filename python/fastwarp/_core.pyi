@@ -81,6 +81,8 @@ def register_syn(
     cancel: CancelToken | None = None,
     recipe: dict[str, Any] | None = None,
     outputs: str = "composite",
+    fixed_mask: _Image | None = None,
+    moving_mask: _Image | None = None,
 ) -> dict[str, Any]: ...
 def gpu_info(adapter: str | None = None) -> dict[str, Any]:
     """Open the GPU that FastWarp would use and describe it.
@@ -112,6 +114,8 @@ def fits_gpu(
     adapter: str | None = None,
     moving_dims: tuple[int, int, int] | None = None,
     recipe: dict[str, Any] | None = None,
+    fixed_mask_dims: tuple[int, int, int] | None = None,
+    moving_mask_dims: tuple[int, int, int] | None = None,
 ) -> bool: ...
 def compose_field(
     transforms: list[str],

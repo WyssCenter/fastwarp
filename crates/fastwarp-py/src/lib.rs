@@ -138,10 +138,11 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
 /// (default: the dbs-localizer cohort chain) and writes the transforms under `out_prefix` in the `outputs`
 /// layout (`"composite"`: `Composite.h5`, `InverseComposite.h5`, `0GenericAffine.mat`;
 /// `"split"`: `0GenericAffine.mat` and, after a SyN stage, `1Warp.nii.gz` / `1InverseWarp.nii.gz`;
-/// `"both"`), and with `write_warped` `<out_prefix>_Warped.nii.gz`. Returns a dict of timings and
-/// diagnostics. The GIL is released while it runs.
+/// `"both"`), and with `write_warped` `<out_prefix>_Warped.nii.gz`. `fixed_mask` (every stage) and
+/// `moving_mask` (the SyN stage) restrict the metrics to their non-zero voxels. Returns a dict of
+/// timings and diagnostics. The GIL is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None, outputs="composite"))]
+#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None, outputs="composite", fixed_mask=None, moving_mask=None))]
 #[allow(clippy::too_many_arguments)]
 fn register_syn<'py>(
     py: Python<'py>,
@@ -154,10 +155,17 @@ fn register_syn<'py>(
     cancel: Option<PyRef<'py, CancelToken>>,
     recipe: Option<Bound<'py, PyDict>>,
     outputs: &str,
+    fixed_mask: Option<ImageArgs<'py>>,
+    moving_mask: Option<ImageArgs<'py>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     engine::check_channels(fixed.len(), moving.len()).map_err(py_err)?;
     // Checked before any work, like everything a caller can get wrong.
-    let recipe = recipe::from_dict(recipe.as_ref(), fixed.len())?;
+    let mut recipe = recipe::from_dict(recipe.as_ref(), fixed.len())?;
+    let mask = |m: Option<ImageArgs<'py>>| {
+        m.map(|m| to_volume(&m).map(MaskVolume::from_volume))
+            .transpose()
+    };
+    engine::apply_masks(&mut recipe, mask(fixed_mask)?, mask(moving_mask)?).map_err(py_err)?;
     let layout = engine::output_layout(outputs).map_err(py_err)?;
     engine::check_iso_mm(iso_mm).map_err(py_err)?;
     // Checked up front: otherwise a missing folder only shows when the outputs are written.
@@ -240,10 +248,11 @@ fn gpu_info<'py>(py: Python<'py>, adapter: Option<String>) -> PyResult<Bound<'py
 }
 
 /// Whether a registration of a `dims` fixed grid and a `moving_dims` moving grid (default: the
-/// fixed grid) with `channels` channels and `recipe` (default: the cohort chain) fits the GPU, as
-/// `register_syn` checks it.
+/// fixed grid) with `channels` channels, `recipe` (default: the cohort chain) and masks of
+/// `fixed_mask_dims` / `moving_mask_dims` voxels fits the GPU, as `register_syn` checks it.
 #[pyfunction]
-#[pyo3(signature = (dims, channels, adapter=None, moving_dims=None, recipe=None))]
+#[pyo3(signature = (dims, channels, adapter=None, moving_dims=None, recipe=None, fixed_mask_dims=None, moving_mask_dims=None))]
+#[allow(clippy::too_many_arguments)]
 fn fits_gpu(
     py: Python<'_>,
     dims: [usize; 3],
@@ -251,12 +260,18 @@ fn fits_gpu(
     adapter: Option<String>,
     moving_dims: Option<[usize; 3]>,
     recipe: Option<Bound<'_, PyDict>>,
+    fixed_mask_dims: Option<[usize; 3]>,
+    moving_mask_dims: Option<[usize; 3]>,
 ) -> PyResult<bool> {
     if channels == 0 {
         return Err(PyValueError::new_err("channels must be at least 1"));
     }
     let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
-    py.detach(move || engine::fits(dims, moving_dims, channels, adapter, &recipe))
+    let masks = engine::MaskDims {
+        fixed: fixed_mask_dims,
+        moving: moving_mask_dims,
+    };
+    py.detach(move || engine::fits(dims, moving_dims, channels, adapter, &recipe, &masks))
         .map_err(py_err)
 }
 

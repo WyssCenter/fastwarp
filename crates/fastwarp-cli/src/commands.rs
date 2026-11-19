@@ -148,12 +148,18 @@ fn register(
         engine::check_iso_mm(mm)?;
     }
     let pairs = a.channel_pairs();
-    let recipe = load_recipe(a.recipe.as_deref(), pairs.len())?;
+    let mut recipe = load_recipe(a.recipe.as_deref(), pairs.len())?;
     for (f, _, fixed_role, _) in &pairs {
         image::check_nifti_name(f, fixed_role)?;
     }
     for (_, m, _, moving_role) in &pairs {
         image::check_nifti_name(m, moving_role)?;
+    }
+    let masks = [(&a.mask, "--mask"), (&a.moving_mask, "--moving-mask")];
+    for (path, role) in masks {
+        if let Some(p) = path {
+            image::check_nifti_name(p, role)?;
+        }
     }
     let fixed = pairs
         .iter()
@@ -163,6 +169,12 @@ fn register(
         .iter()
         .map(|(_, p, _, role)| image::load(p, role))
         .collect::<Result<Vec<_>, _>>()?;
+    let [fixed_mask, moving_mask] = masks.map(|(path, role)| {
+        path.as_deref()
+            .map(|p| image::load(p, role).map(MaskVolume::from_volume))
+            .transpose()
+    });
+    engine::apply_masks(&mut recipe, fixed_mask?, moving_mask?)?;
     let outputs_layout = engine::output_layout(a.outputs.name())?;
     prepare_prefix(&a.output)?;
     engine::check_out_folder(&a.output)?;
@@ -425,6 +437,7 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         channels,
         a.common.adapter.clone(),
         &recipe,
+        &engine::MaskDims::default(),
     )?;
     if a.common.json {
         print_json(
