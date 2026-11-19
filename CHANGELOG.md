@@ -25,7 +25,10 @@
   Affine stage; `fastwarp.ants.registration` takes `mask` and `moving_mask` for the SyN types as
   ANTsPy applies them (the last stage, every stage with `mask_all_stages`) and refuses a moving
   mask that ANTsPy would give to a linear stage. A level with no voxel inside both masks fails
-  with a clear error. Runs without masks are unchanged, bit for bit.
+  with a clear error. Runs without masks are unchanged, bit for bit. With one mask, or with two
+  or more levels, `antsRegistration` 2.6.5 reuses masks it warped earlier in the run; FastWarp
+  does not, so masked results differ slightly from ANTs' there (see the differences listed under
+  `fastwarp ants-registration`).
 - Several SyN stages in one registration, for example a whole-brain SyN followed by a SyN that
   only a subcortical region of the template drives ("subcortical refine"). A stage-list recipe
   (`register_syn(recipe=...)`, `fastwarp register --recipe`) takes any number of `syn` stages

@@ -650,6 +650,15 @@ map by less than 0.006 mm.
 - Masks: FastWarp counts every non-zero mask voxel as inside. ANTs reads a mask file as
   `unsigned char`, so a mask stored as floating point with values between 0 and 1 is empty in
   ANTs (and 1.5 counts as 1). Store masks as 0 and 1, as ANTsPy does (`mask != 0`).
+- Masks during a run: FastWarp resamples the original masks in every iteration, as ITK's SyN
+  intends, and with one mask counts every voxel of the other side as inside. `antsRegistration`
+  2.6.5 keeps the masks in its metric, which changes two cases. With one mask (`-x
+  [fixedMask,NULL]` or `-x [NULL,movingMask]`), that mask, warped in the update before, also
+  masks the other side. With two or more levels, every level from the second on resamples the
+  masks as warped at the end of the level before, in place of the originals (two masks come back
+  swapped, one mask on both sides). FastWarp does not copy this. In a one-off measurement on a
+  small test pair over two levels, the maps differed from ANTs' by an RMS of 0.01 mm with a fixed
+  mask only, 0.002 mm with a moving mask only and 0.003 mm without masks.
 
 - N1, registration grid: FastWarp registers on an isotropic grid at the fixed image's smallest
   voxel spacing. For an isotropic fixed image this is the fixed grid itself, as in ANTs. For an
