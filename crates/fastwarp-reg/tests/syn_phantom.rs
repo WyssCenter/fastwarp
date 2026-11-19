@@ -11,7 +11,7 @@ use fastwarp_reg::field_ops::VectorField;
 use fastwarp_reg::linalg::{Vec3, IDENTITY3};
 use fastwarp_reg::recipe::SynRecipe;
 use fastwarp_reg::syn::{run_syn, SynChannel, SynOptions, SynResult};
-use fastwarp_reg::{AffineTransform, Grid, Volume};
+use fastwarp_reg::{AffineTransform, Grid, MaskVolume, Volume};
 
 struct Blob {
     centre: Vec3,
@@ -271,6 +271,114 @@ fn inverse_consistency(p: &Phantom, result: &SynResult) -> f64 {
         worst = worst.max(d / g.spacing()[0]);
     }
     worst
+}
+
+fn ball(grid: &Grid, centre: Vec3, radius: f64) -> Vec<bool> {
+    (0..grid.num_voxels())
+        .map(|idx| {
+            let [i, j, k] = grid.ijk(idx);
+            let p = grid.index_to_point([i as f64, j as f64, k as f64]);
+            (0..3).map(|a| (p[a] - centre[a]).powi(2)).sum::<f64>() < radius * radius
+        })
+        .collect()
+}
+
+fn dist(a: Vec3, b: Vec3) -> f64 {
+    (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f64>().sqrt()
+}
+
+#[test]
+fn a_moving_mask_keeps_a_cavity_from_driving_the_deformation() {
+    let p = phantom(24, 2.0, 2.0);
+    let mut recipe = small_recipe(&[(2, 1.0, 25), (1, 0.0, 15)], 2);
+    recipe.convergence_threshold = -1.0;
+    let cavity_centre = [9.0, 3.0, -2.0];
+    let inside = ball(&p.grid, cavity_centre, 6.0);
+    let mut lesioned = p.moving.clone();
+    for (v, c) in lesioned.data_mut().iter_mut().zip(&inside) {
+        if *c {
+            *v = 0.05;
+        }
+    }
+    let cavity = Phantom {
+        moving: lesioned,
+        ..phantom(24, 2.0, 2.0)
+    };
+    let mask_grid = Grid::new([31; 3], [1.6; 3], [-24.0; 3], IDENTITY3).unwrap();
+    let keep: Vec<f64> = ball(&mask_grid, cavity_centre, 8.0)
+        .into_iter()
+        .map(|c| if c { 0.0 } else { 1.0 })
+        .collect();
+    let masked_recipe = SynRecipe {
+        moving_mask: Some(MaskVolume::from_volume(
+            Volume::from_vec(mask_grid, keep).unwrap(),
+        )),
+        ..recipe.clone()
+    };
+    let clean = run(&p, &recipe, false, &SynOptions::default());
+    let unmasked = run(&cavity, &recipe, false, &SynOptions::default());
+    let masked = run(&cavity, &masked_recipe, false, &SynOptions::default());
+    let g = p.grid;
+    let (mut near, mut far) = (Vec::new(), Vec::new());
+    for idx in 0..g.num_voxels() {
+        let [i, j, k] = g.ijk(idx);
+        let x = g.index_to_point([i as f64, j as f64, k as f64]);
+        let at = clean.pair.forward.apply(x);
+        let d = dist(at, cavity_centre);
+        let dev = |r: &SynResult| dist(r.pair.forward.apply(x), at);
+        let [nx, ny, nz] = g.size();
+        let interior = i >= 3 && j >= 3 && k >= 3 && i + 3 < nx && j + 3 < ny && k + 3 < nz;
+        if d < 9.0 {
+            near.push((dev(&unmasked), dev(&masked)));
+        } else if d > 15.0 && interior {
+            far.push((
+                dev(&unmasked),
+                dev(&masked),
+                dist(masked.pair.forward.apply(x), unmasked.pair.forward.apply(x)),
+            ));
+        }
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let near_unmasked = mean(&near.iter().map(|n| n.0).collect::<Vec<_>>());
+    let near_masked = mean(&near.iter().map(|n| n.1).collect::<Vec<_>>());
+    let far_unmasked = mean(&far.iter().map(|f| f.0).collect::<Vec<_>>());
+    let far_masked = mean(&far.iter().map(|f| f.1).collect::<Vec<_>>());
+    let far_between = mean(&far.iter().map(|f| f.2).collect::<Vec<_>>());
+    eprintln!(
+        "cavity: distance from the run without the cavity near it: unmasked {near_unmasked:.3} mm, masked {near_masked:.3} mm ({} voxels); far from it: unmasked {far_unmasked:.3} mm, masked {far_masked:.3} mm, between them {far_between:.3} mm ({} voxels)",
+        near.len(),
+        far.len()
+    );
+    assert!(near.len() > 100 && far.len() > 500);
+    assert!(
+        near_unmasked > 0.3,
+        "the cavity barely moved the unmasked run"
+    );
+    assert!(
+        near_masked < 0.3 * near_unmasked,
+        "near the cavity: masked {near_masked} mm, unmasked {near_unmasked} mm"
+    );
+    assert!(
+        far_masked < 0.15 && far_masked < far_unmasked,
+        "far from the cavity: masked {far_masked} mm, unmasked {far_unmasked} mm"
+    );
+    let empty = SynRecipe {
+        fixed_mask: Some(MaskVolume::from_volume(Volume::zeros(g))),
+        ..recipe
+    };
+    let channels = [SynChannel {
+        fixed: p.fixed.clone(),
+        moving: p.moving.clone(),
+    }];
+    let err = run_syn(
+        &CpuBackend,
+        &empty,
+        &channels,
+        &p.initial,
+        &SynOptions::default(),
+    )
+    .expect_err("an all-zero mask is refused");
+    assert!(err.to_string().contains("fixed mask"), "{err}");
 }
 
 #[test]

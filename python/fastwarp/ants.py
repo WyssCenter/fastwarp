@@ -168,6 +168,7 @@ _MOVING = "<moving>.nii"
 _WARPED_MOVING = "<warpedmovout>.nii"
 _WARPED_FIXED = "<warpedfixout>.nii"
 _MASK = "<mask>.nii"
+_MOVING_MASK = "<moving_mask>.nii"
 _EXTRA_NAME = re.compile(r"<extra_(fixed|moving)_(\d+)>\.nii")
 
 _LABELS = {
@@ -176,6 +177,7 @@ _LABELS = {
     _WARPED_MOVING: "warpedmovout",
     _WARPED_FIXED: "warpedfixout",
     _MASK: "mask",
+    _MOVING_MASK: "moving_mask",
     "--initial-moving-transform": "initial_transform",
 }
 
@@ -193,6 +195,7 @@ def _registration_names(extras: int) -> dict[str, str]:
         "warpedmovout": _WARPED_MOVING,
         "warpedfixout": _WARPED_FIXED,
         "mask": _MASK,
+        "moving_mask": _MOVING_MASK,
         **{
             f"extra_{kind}{f'_{i}' if i else ''}": _extra_name(kind, i)
             for i in range(extras)
@@ -490,12 +493,14 @@ def _linear_schedule(a: dict[str, Any]) -> tuple[Any, Any, Any]:
 def _registration_argv(t: str, a: dict[str, Any], names: dict[str, str]) -> list[str]:
     """The ``antsRegistration`` argument list ANTsPy 0.6.3 builds for a type FastWarp runs, with
     ``names`` for its image pointers (``fixed``, ``moving``, ``warpedmovout``,
-    ``warpedfixout``, ``mask``, ``extra_fixed``, ``extra_moving``, and ``extra_fixed_1``,
-    ``extra_moving_1`` and so on for further extras) and ``a`` the arguments."""
+    ``warpedfixout``, ``mask``, ``moving_mask``, ``extra_fixed``, ``extra_moving``, and
+    ``extra_fixed_1``, ``extra_moving_1`` and so on for further extras) and ``a`` the
+    arguments."""
     f = names["fixed"]
     m = names["moving"]
     fmask = names["mask"] if a["mask"] is not None else "NA"
-    maskopt = f"[{fmask},NA]"
+    mmask = names["moving_mask"] if a["moving_mask"] is not None else "NA"
+    maskopt = f"[{fmask},{mmask}]"
     earlymaskopt = maskopt if a["mask_all_stages"] else "[NA,NA]"
     initial = a["initial_transform"]
     if isinstance(initial, str):
@@ -758,10 +763,13 @@ def _uses_extras(t: str, script: dict[str, Any] | None) -> bool:
     return t == "SyNOnly" or (script is not None and script["subtype"] in ("s", "sr", "so"))
 
 
-def _last_stage_is_syn(t: str, script: dict[str, Any] | None) -> bool:
+def _moving_mask_on_linear_stage(t: str, script: dict[str, Any] | None, a: dict[str, Any]) -> bool:
+    """Whether ANTsPy gives the moving mask to a Rigid or Affine stage: the one ``-x`` of an
+    ``antsRegistrationSyN[...]`` type reaches every stage, the last stage of a linear type is
+    linear, and ``mask_all_stages`` gives the masks to the early linear stages as well."""
     if script is not None:
-        return script["subtype"] in ("s", "sr", "so")
-    return t not in _LINEAR
+        return script["subtype"] != "so"
+    return t in _LINEAR or (bool(a["mask_all_stages"]) and t in _EARLY_MASKS)
 
 
 def _validate(ants: Any, a: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
@@ -835,21 +843,21 @@ def _validate(ants: Any, a: dict[str, Any]) -> tuple[str, dict[str, Any] | None]
                 "a displacement field cannot start the registration; FastWarp starts from one "
                 "affine transform file",
             )
-    if a["mask"] is not None:
-        if not ants.is_image(a["mask"]):
-            raise ValueError("fastwarp.ants.registration: mask must be an ANTsImage")
-        _check_image(a["mask"], "mask")
-        if _last_stage_is_syn(t, script):
-            raise _unsupported(
-                _REG,
-                "mask",
-                a["mask"],
-                f"with type_of_transform={t!r} ANTsPy applies the mask to the SyN stage, and "
-                "FastWarp's SyN stage has no mask",
-            )
-    if a["moving_mask"] is not None:
+    for key in ("mask", "moving_mask"):
+        if a[key] is not None:
+            if not ants.is_image(a[key]):
+                raise ValueError(f"fastwarp.ants.registration: {key} must be an ANTsImage")
+            _check_image(a[key], key)
+    if a["moving_mask"] is not None and _moving_mask_on_linear_stage(t, script, a):
+        when = f"type_of_transform={t!r}"
+        if script is None and t not in _LINEAR:
+            when += " and mask_all_stages=True"
         raise _unsupported(
-            _REG, "moving_mask", a["moving_mask"], "FastWarp has no moving-image mask"
+            _REG,
+            "moving_mask",
+            a["moving_mask"],
+            f"with {when} ANTsPy applies the moving mask to a Rigid or Affine stage, and "
+            "FastWarp applies a moving mask to SyN stages only",
         )
     restrict = a["restrict_transformation"]
     if restrict is not None and not (
@@ -1059,11 +1067,16 @@ def registration(
         when missing. ``""`` makes a new private temporary folder (``tempfile.mkdtemp``) with
         the prefix ``fw_`` in it, where ANTsPy uses ``tempfile.mktemp``.
     mask : ANTsImage, optional
-        Fixed-image mask (non-zero voxels inside), for types whose last stage is linear.
-    moving_mask : None
-        Not supported.
+        Fixed-image mask (non-zero voxels inside), on any grid. As in ANTsPy it applies to the last
+        stage, and to the earlier stages too with ``mask_all_stages`` (the one mask option of an
+        ``antsRegistrationSyN[...]`` type reaches every stage).
+    moving_mask : ANTsImage, optional
+        Moving-image mask (non-zero voxels inside), on any grid, applied as ``mask`` is. FastWarp
+        applies a moving mask to SyN stages only, so it is refused where ANTsPy would give it to a
+        Rigid or Affine stage: with a linear type, with ``mask_all_stages=True``, and with
+        ``antsRegistrationSyN[...]`` types other than ``[so]``.
     mask_all_stages : bool, default False
-        As in ANTsPy; with a mask only the linear types run, so it changes nothing.
+        As in ANTsPy: apply the masks to every stage, not only to the last one.
     grad_step, flow_sigma, total_sigma : float
         The SyN stage's gradient step, update-field and total-field variance (voxels²), for the
         types that take them.
@@ -1221,9 +1234,10 @@ def registration(
     )
     argv = _registration_argv(t, a, names)
     images = [(_FIXED, _image_args(fixed)), (_MOVING, _image_args(moving))]
-    if mask is not None:
-        binary = (mask.numpy() != 0).astype(np.float32)
-        images.append((_MASK, _image_args((binary, mask.spacing, mask.origin, mask.direction))))
+    for name, m in ((_MASK, mask), (_MOVING_MASK, moving_mask)):
+        if m is not None:
+            binary = (m.numpy() != 0).astype(np.float32)
+            images.append((name, _image_args((binary, m.spacing, m.origin, m.direction))))
     if multivariate_extras is not None and _uses_extras(t, script):
         for i, (_, f2, m2, _, _) in enumerate(multivariate_extras):
             suffix = f"_{i}" if i else ""

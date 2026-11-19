@@ -275,6 +275,18 @@ fn refusals_exit_2_before_reading_or_writing_anything() {
             .concat(),
             "fastwarp: error: ants-registration: fixed image",
         ),
+        (
+            [
+                com(&f, &m),
+                linear_stages(&f, &m),
+                syn_stage(&f, &m),
+                argv(&["-o", &prefix, "-x", &format!("[{},{}]", s(&f), s(&m))]),
+            ]
+            .concat(),
+            "fastwarp: error: ants-registration: a moving-image mask on the Rigid stage \
+             (--masks) is not supported: FastWarp applies a moving-image mask to SyN stages \
+             only; give NULL as the moving mask of that stage.",
+        ),
     ];
     for (i, (mut args, want)) in cases.into_iter().enumerate() {
         args.insert(0, "ants-registration".into());
@@ -590,6 +602,34 @@ fn registration_writes_the_files_ants_writes() {
         params[0], params[1],
         "the mask did not reach the linear stages"
     );
+    let mut warps = Vec::new();
+    for (name, x) in [
+        ("syn_unmasked", "[NULL,NULL]".to_string()),
+        ("syn_masked", format!("[{},{}]", s(&mask), s(&mask))),
+        ("syn_moving_masked", format!("[NULL,{}]", s(&mask))),
+    ] {
+        let dir = d.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let o = register(
+            [
+                syn_stage(&f, &m),
+                argv(&["-o", &s(&dir.join("o_")), "-x", &x]),
+            ]
+            .concat(),
+        );
+        ok(&o, name);
+        assert_eq!(
+            files_in(&dir),
+            names(&["o_0InverseWarp.nii.gz", "o_0Warp.nii.gz"])
+        );
+        warps.push(std::fs::read(dir.join("o_0Warp.nii.gz")).unwrap());
+    }
+    assert_ne!(warps[0], warps[1], "the masks did not reach the SyN stage");
+    assert_ne!(
+        warps[0], warps[2],
+        "the moving mask did not reach the SyN stage"
+    );
+    assert_ne!(warps[1], warps[2]);
 }
 
 fn ants_program(name: &str) -> PathBuf {
@@ -1086,6 +1126,314 @@ fn registrations_agree_with_ants() {
         assert!(
             full_err < 0.5 && full_err < map_ratio * warp_noop,
             "{name}: forward map {full_err} mm, ANTs affine alone {warp_noop}"
+        );
+    }
+}
+
+/// The pair of [`moved_pair`] with a cavity in the moving image (intensity 0 in a ball of 5 mm
+/// on the second blob), a binary fixed mask of the object, a moving mask without a ball of 7 mm
+/// at the cavity, and the cavity's centre. ANTs reads masks as `unsigned char`, so both are 0 or 1.
+fn cavity_pair(dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf, [f64; 3]) {
+    let (f, m) = moved_pair(dir, [24; 3], [2.0; 3]);
+    let fixed = load(&f);
+    let object: Vec<f32> = fixed
+        .data()
+        .iter()
+        .map(|v| if *v > 0.05 { 1.0 } else { 0.0 })
+        .collect();
+    let fixed_mask = dir.join("f_mask.nii.gz");
+    Volume::from_vec(*fixed.grid(), object)
+        .unwrap()
+        .save_nifti(&fixed_mask)
+        .unwrap();
+    let centre = [11.0, 32.0, 21.0];
+    let moving = load(&m);
+    let g = *moving.grid();
+    let within = |idx: usize, r: f64| {
+        let [i, j, k] = g.ijk(idx);
+        dist(g.index_to_point([i as f64, j as f64, k as f64]), centre) < r
+    };
+    let lesioned: Vec<f32> = (0..g.num_voxels())
+        .map(|idx| {
+            if within(idx, 5.0) {
+                0.0
+            } else {
+                moving.data()[idx] as f32
+            }
+        })
+        .collect();
+    let cavity = dir.join("m_cavity.nii.gz");
+    Volume::from_vec(g, lesioned)
+        .unwrap()
+        .save_nifti(&cavity)
+        .unwrap();
+    let keep: Vec<f32> = (0..g.num_voxels())
+        .map(|idx| if within(idx, 7.0) { 0.0 } else { 1.0 })
+        .collect();
+    let mask = dir.join("m_mask.nii.gz");
+    Volume::from_vec(g, keep)
+        .unwrap()
+        .save_nifti(&mask)
+        .unwrap();
+    (f, cavity, fixed_mask, mask, centre)
+}
+
+#[test]
+#[ignore = "runs antsRegistration and antsApplyTransforms from FASTWARP_ANTS_DIR and needs a GPU; \
+            run with --ignored"]
+fn syn_masks_agree_with_ants() {
+    let reg = ants_program("antsRegistration");
+    let apply = ants_program("antsApplyTransforms");
+    require_gpu();
+    let d = tmp("syn_masks");
+    let (f, m, fixed_mask, mask, centre) = cavity_pair(&d);
+    let chain = [com(&f, &m), stages(&f, &m, &["SyN"])].concat();
+    let masks = argv(&["-x", &format!("[{},{}]", s(&fixed_mask), s(&mask))]);
+    let mut runs = Vec::new();
+    for (name, extra) in [("masked", masks), ("unmasked", Vec::new())] {
+        let case = d.join(name);
+        let (theirs, mine) = run_both(&reg, &case, name, &|o| {
+            [chain.clone(), extra.clone(), both_outputs(o)].concat()
+        });
+        let w = ncc(
+            &load(&mine.join("W.nii.gz")),
+            &load(&theirs.join("W.nii.gz")),
+        );
+        let w0 = ncc(
+            &on_grid(&m, &f, &mine.join("m_on_f.nii.gz")),
+            &load(&theirs.join("W.nii.gz")),
+        );
+        eprintln!("{name}: NCC with ANTs W {w:.4} (unregistered {w0:.4})");
+        assert!(
+            w > 0.95 && w - w0 > 0.05,
+            "{name}: W {w} vs unregistered {w0}"
+        );
+        let check = mine.join("check.nii.gz");
+        let mut a = argv(&[
+            "-d",
+            "3",
+            "-i",
+            &s(&m),
+            "-r",
+            &s(&f),
+            "-o",
+            &s(&check),
+            "-n",
+            "Linear",
+        ]);
+        for t in forward_transforms(&mine, &files_in(&mine)) {
+            a.extend(["-t".to_string(), t]);
+        }
+        ok(
+            &run_ants(&apply, &a),
+            &format!("{name}: antsApplyTransforms"),
+        );
+        let diff = max_abs_diff(&load(&check), &load(&mine.join("W.nii.gz")));
+        assert!(
+            diff < 1e-4,
+            "{name}: ANTs reads FastWarp's transforms: {diff}"
+        );
+        runs.push((maps(&theirs), maps(&mine)));
+    }
+    let [((ants_masked, ants_linear), (mine_masked, _)), ((ants_unmasked, ants_unmasked_linear), (mine_unmasked, _))] =
+        runs.try_into().ok().unwrap();
+    let fixed = load(&f);
+    let inside = object_points(&fixed);
+    let near: Vec<[f64; 3]> = inside
+        .iter()
+        .copied()
+        .filter(|p| dist(ants_masked.apply(*p), centre) < 8.0)
+        .collect();
+    let masked_err = rms_dist(&mine_masked, &ants_masked, &inside);
+    let masked_warp = rms_dist(&ants_linear, &ants_masked, &inside);
+    let unmasked_err = rms_dist(&mine_unmasked, &ants_unmasked, &inside);
+    let unmasked_warp = rms_dist(&ants_unmasked_linear, &ants_unmasked, &inside);
+    let near_err = rms_dist(&mine_masked, &ants_masked, &near);
+    let near_unmasked = rms_dist(&mine_masked, &ants_unmasked, &near);
+    let ants_effect = rms_dist(&ants_masked, &ants_unmasked, &near);
+    let fastwarp_effect = rms_dist(&mine_masked, &mine_unmasked, &near);
+    eprintln!(
+        "forward map RMS in the object, FastWarp against ANTs: masked {masked_err:.2e} mm (ANTs' \
+         warp {masked_warp:.3}), unmasked {unmasked_err:.2e} mm (ANTs' warp {unmasked_warp:.3}); \
+         near the cavity FastWarp's masked run is {near_err:.2e} mm from ANTs' masked run and \
+         {near_unmasked:.3} mm from its unmasked run; the masks move ANTs by {ants_effect:.3} mm \
+         and FastWarp by {fastwarp_effect:.3} mm there; {} and {} points",
+        inside.len(),
+        near.len()
+    );
+    assert!(near.len() > 20, "{} points near the cavity", near.len());
+    assert!(
+        masked_err < 0.1 && masked_err < 0.1 * masked_warp,
+        "masked forward map {masked_err} mm from ANTs', ANTs' warp {masked_warp} mm"
+    );
+    assert!(
+        unmasked_err < 0.1,
+        "unmasked forward map {unmasked_err} mm from ANTs'"
+    );
+    assert!(
+        near_err < 0.1 * near_unmasked,
+        "near the cavity: {near_err} mm from ANTs' masked run, {near_unmasked} from its unmasked one"
+    );
+    assert!(
+        (fastwarp_effect - ants_effect).abs() < 0.1 * ants_effect,
+        "near the cavity the masks move FastWarp by {fastwarp_effect} mm, ANTs by {ants_effect} mm"
+    );
+}
+
+/// A binary mask on a grid of 1.7 mm whose origin is off the 2 mm grids of the images, so that
+/// no level's voxel centre falls halfway between two mask voxels (where FastWarp's 32-bit
+/// arithmetic may round otherwise than ANTs'): 1 within `radius` of `centre` when `inside`, else
+/// 1 outside it.
+fn off_grid_ball(path: &Path, centre: [f64; 3], radius: f64, inside: bool) {
+    let g = Grid::new([29; 3], [1.7; 3], [-0.37, -0.41, -0.29], IDENTITY3).unwrap();
+    let data: Vec<f32> = (0..g.num_voxels())
+        .map(|idx| {
+            let [i, j, k] = g.ijk(idx);
+            let near = dist(g.index_to_point([i as f64, j as f64, k as f64]), centre) < radius;
+            if near == inside {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    Volume::from_vec(g, data).unwrap().save_nifti(path).unwrap();
+}
+
+#[test]
+#[ignore = "runs antsRegistration from FASTWARP_ANTS_DIR and needs a GPU; run with --ignored"]
+fn two_syn_stages_with_per_stage_masks_agree_with_ants() {
+    let reg = ants_program("antsRegistration");
+    require_gpu();
+    let d = tmp("two_syn");
+    let (f, m, _, _, cavity) = cavity_pair(&d);
+    let refine_centre = [30.0, 17.0, 28.0];
+    let refine = d.join("f_refine.nii.gz");
+    off_grid_ball(&refine, refine_centre, 9.0, true);
+    let lesion = d.join("m_lesion.nii.gz");
+    off_grid_ball(&lesion, cavity, 7.0, false);
+    let second = argv(&[
+        "-t",
+        "SyN[0.3,3,0]",
+        "-m",
+        &format!("CC[{},{},1,2]", s(&f), s(&m)),
+        "-c",
+        "[15,1e-6,10]",
+        "-f",
+        "1",
+        "-s",
+        "0vox",
+    ]);
+    let one_stage = [com(&f, &m), stages(&f, &m, &["SyN"])].concat();
+    let two_stages = [one_stage.clone(), second].concat();
+    let x = |fixed: Option<&Path>, moving: Option<&Path>| {
+        let name = |p: Option<&Path>| p.map_or("NULL".to_string(), s);
+        argv(&["-x", &format!("[{},{}]", name(fixed), name(moving))])
+    };
+    let cases = [
+        ("one SyN stage", one_stage.clone(), Vec::new()),
+        ("two SyN stages", two_stages.clone(), Vec::new()),
+        (
+            "two SyN stages, refine mask on the second",
+            two_stages.clone(),
+            [x(None, None), x(Some(&refine), None)].concat(),
+        ),
+        (
+            "one SyN stage, lesion mask",
+            one_stage,
+            x(None, Some(&lesion)),
+        ),
+        (
+            "two SyN stages, lesion mask on both, refine mask on the second",
+            two_stages,
+            [x(None, Some(&lesion)), x(Some(&refine), Some(&lesion))].concat(),
+        ),
+    ];
+    let mut runs = Vec::new();
+    for (name, chain, masks) in &cases {
+        let case = d.join(name.replace([' ', ','], "_"));
+        let (theirs, mine) = run_both(&reg, &case, name, &|o| {
+            [chain.clone(), masks.clone(), both_outputs(o)].concat()
+        });
+        let w = ncc(
+            &load(&mine.join("W.nii.gz")),
+            &load(&theirs.join("W.nii.gz")),
+        );
+        eprintln!("{name}: NCC of the warped images with ANTs' {w:.5}");
+        assert!(w > 0.99, "{name}: W {w}");
+        runs.push((maps(&theirs), maps(&mine)));
+    }
+    let fixed = load(&f);
+    let inside = object_points(&fixed);
+    let near: Vec<[f64; 3]> = inside
+        .iter()
+        .copied()
+        .filter(|p| dist(*p, refine_centre) < 9.0)
+        .collect();
+    let far: Vec<[f64; 3]> = inside
+        .iter()
+        .copied()
+        .filter(|p| dist(*p, refine_centre) > 18.0)
+        .collect();
+    assert!(
+        near.len() > 20 && far.len() > 20,
+        "{} {}",
+        near.len(),
+        far.len()
+    );
+    let ((ants_plain, ants_plain_linear), (mine_plain, _)) = &runs[1];
+    let plain_err = rms_dist(mine_plain, ants_plain, &inside);
+    let plain_warp = rms_dist(ants_plain_linear, ants_plain, &inside);
+    let plain_effect = rms_dist(ants_plain, &runs[0].0 .0, &inside);
+    let plain_mine_effect = rms_dist(mine_plain, &runs[0].1 .0, &inside);
+    eprintln!(
+        "no masks: forward map RMS in the object, FastWarp against ANTs: two SyN stages \
+         {plain_err:.2e} mm (ANTs' warp {plain_warp:.3} mm, the second stage moves it by \
+         {plain_effect:.3} mm, FastWarp's by {plain_mine_effect:.3} mm)"
+    );
+    assert!(
+        plain_err < 1e-3 && plain_err < 1e-2 * plain_effect,
+        "no masks: two SyN stages {plain_err} mm from ANTs', second stage {plain_effect} mm"
+    );
+    for (one, two, label) in [(0, 2, "no lesion mask"), (3, 4, "lesion mask")] {
+        let ((ants_one, _), (mine_one, _)) = &runs[one];
+        let ((ants_two, ants_linear), (mine_two, _)) = &runs[two];
+        let one_err = rms_dist(mine_one, ants_one, &inside);
+        let two_err = rms_dist(mine_two, ants_two, &inside);
+        let ants_warp = rms_dist(ants_linear, ants_two, &inside);
+        let near_err = rms_dist(mine_two, ants_two, &near);
+        let ants_effect = rms_dist(ants_two, ants_one, &near);
+        let fastwarp_effect = rms_dist(mine_two, mine_one, &near);
+        let ants_far = rms_dist(ants_two, ants_one, &far);
+        let fastwarp_far = rms_dist(mine_two, mine_one, &far);
+        eprintln!(
+            "{label}: forward map RMS in the object, FastWarp against ANTs: one SyN stage \
+             {one_err:.2e} mm, two SyN stages {two_err:.2e} mm (ANTs' warp {ants_warp:.3} mm), \
+             inside the refine mask {near_err:.2e} mm; the second stage moves ANTs by \
+             {ants_effect:.3} mm and FastWarp by {fastwarp_effect:.3} mm inside the refine mask, \
+             {ants_far:.2e} and {fastwarp_far:.2e} mm far from it; {} points, {} inside, {} far",
+            inside.len(),
+            near.len(),
+            far.len()
+        );
+        assert!(
+            ants_effect > 0.05,
+            "{label}: the second stage barely moves ANTs: {ants_effect} mm"
+        );
+        assert!(
+            fastwarp_far < 0.2 * fastwarp_effect && ants_far < 0.2 * ants_effect,
+            "{label}: far from the refine mask the second stage moves FastWarp by \
+             {fastwarp_far} mm and ANTs by {ants_far} mm"
+        );
+        assert!(
+            two_err < 0.1 * ants_warp && two_err < one_err + 0.05,
+            "{label}: forward map {two_err} mm from ANTs' (one stage {one_err}), ANTs' warp \
+             {ants_warp} mm"
+        );
+        assert!(
+            (fastwarp_effect - ants_effect).abs() < 0.25 * ants_effect,
+            "{label}: inside the refine mask the second stage moves FastWarp by \
+             {fastwarp_effect} mm, ANTs by {ants_effect} mm"
         );
     }
 }

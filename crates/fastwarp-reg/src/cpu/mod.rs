@@ -10,13 +10,14 @@
 use rayon::prelude::*;
 
 use crate::backend::Backend;
-use crate::error::Result;
+use crate::error::{invalid, Result};
 use crate::field_ops::{
     compose_displacement_fields, gaussian_smooth_displacement_field, invert_displacement_field,
     resample_field, InvertParams, InvertStats, VectorField,
 };
 use crate::grid::Grid;
 use crate::interp::linear_at_point;
+use crate::mask::nearest_voxel;
 use crate::metric::cc::{CcInputs, CcMetric};
 use crate::transform::{AffineTransform, TransformChain};
 use crate::volume::Volume;
@@ -65,6 +66,7 @@ impl Backend for CpuBackend {
         &self,
         source: &Self::Image,
         field: &Self::Field,
+        pre: Option<&Self::Field>,
         affine: Option<&AffineTransform>,
     ) -> Result<Self::Image> {
         let grid = *field.grid();
@@ -76,6 +78,9 @@ impl Backend for CpuBackend {
                 let [i, j, k] = grid.ijk(idx);
                 let x = grid.index_to_point([i as f64, j as f64, k as f64]);
                 let mut p = [x[0] + u[0], x[1] + u[1], x[2] + u[2]];
+                if let Some(d) = pre.and_then(|w| w.interpolate(p)) {
+                    p = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+                }
                 if let Some(a) = affine {
                     p = a.apply(p);
                 }
@@ -83,6 +88,81 @@ impl Backend for CpuBackend {
             })
             .collect();
         Volume::from_vec(grid, data)
+    }
+
+    fn warp_mask_through_field(
+        &self,
+        mask: &Self::Image,
+        field: &Self::Field,
+        pre: Option<&Self::Field>,
+        affine: Option<&AffineTransform>,
+        product: Option<Self::Image>,
+    ) -> Result<Self::Image> {
+        let grid = *field.grid();
+        if let Some(p) = &product {
+            if p.grid() != &grid {
+                return Err(invalid(
+                    "warp mask",
+                    "the product image is not on the grid of the field",
+                ));
+            }
+        }
+        let mut data: Vec<f64> = field
+            .data()
+            .par_iter()
+            .enumerate()
+            .map(|(idx, u)| {
+                let [i, j, k] = grid.ijk(idx);
+                let x = grid.index_to_point([i as f64, j as f64, k as f64]);
+                let mut p = [x[0] + u[0], x[1] + u[1], x[2] + u[2]];
+                if let Some(d) = pre.and_then(|w| w.interpolate(p)) {
+                    p = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+                }
+                if let Some(a) = affine {
+                    p = a.apply(p);
+                }
+                match nearest_voxel(mask.grid(), p) {
+                    Some(v) if mask.data()[v] != 0.0 => 1.0,
+                    _ => 0.0,
+                }
+            })
+            .collect();
+        if let Some(p) = product {
+            for (d, q) in data.iter_mut().zip(p.data()) {
+                *d *= q;
+            }
+        }
+        Volume::from_vec(grid, data)
+    }
+
+    fn cc_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        valid: &Self::Image,
+        radius: usize,
+    ) -> Result<crate::backend::MetricPair<Self::Field>> {
+        let identity = TransformChain::new();
+        let grid = *fixed.grid();
+        let metric = CcMetric::new(radius);
+        let mut out = Vec::with_capacity(2);
+        for (a, b) in [(fixed, moving), (moving, fixed)] {
+            let e = metric.evaluate_masked(
+                &CcInputs {
+                    virtual_grid: &grid,
+                    fixed: a,
+                    moving: b,
+                    fixed_transform: &identity,
+                    moving_transform: &identity,
+                },
+                Some(valid),
+                true,
+            )?;
+            out.push((e.value, VectorField::from_vec(grid, e.derivative)?));
+        }
+        let second = out.pop().ok_or_else(|| invalid("cc metric", "no result"))?;
+        let first = out.pop().ok_or_else(|| invalid("cc metric", "no result"))?;
+        Ok((first, second))
     }
 
     fn cc_value_derivative(
@@ -177,12 +257,12 @@ mod tests {
         let g = grid();
         let v = ramp(g);
         let zero = b.zero_field(&g).unwrap();
-        let same = b.warp_through_field(&v, &zero, None).unwrap();
+        let same = b.warp_through_field(&v, &zero, None, None).unwrap();
         for (a, c) in same.data().iter().zip(v.data()) {
             assert!((a - c).abs() < 1e-12);
         }
         let shift = AffineTransform::from_translation([3.0, 0.0, 0.0]);
-        let moved = b.warp_through_field(&v, &zero, Some(&shift)).unwrap();
+        let moved = b.warp_through_field(&v, &zero, None, Some(&shift)).unwrap();
         let at = |i, j, k| moved.data()[g.linear_index(i, j, k)];
         assert!((at(2, 3, 2) - (2.0 * 4.0 + 15.0 - 2.0)).abs() < 1e-12);
         assert_eq!(at(7, 3, 2), 0.0);
@@ -199,7 +279,7 @@ mod tests {
             [0.0; 3],
         );
         let f = b.upload_field(&field).unwrap();
-        let out = b.warp_through_field(&v, &f, Some(&scale)).unwrap();
+        let out = b.warp_through_field(&v, &f, None, Some(&scale)).unwrap();
         let x = g.index_to_point([1.0, 2.0, 2.0]);
         let q = [0.5 * (x[0] + 3.0), x[1], x[2]];
         let got = out.data()[g.linear_index(1, 2, 2)];
@@ -209,6 +289,44 @@ mod tests {
         }
         let swapped = linear_at_point(&v, [0.5 * x[0] + 3.0, x[1], x[2]]);
         assert_ne!(swapped, linear_at_point(&v, q));
+    }
+
+    #[test]
+    fn warp_applies_an_earlier_field_between_the_field_and_the_affine() {
+        let b = CpuBackend;
+        let g = grid();
+        let v = ramp(g);
+        let field = VectorField::from_fn(g, |_| [1.5, 0.0, 0.0]);
+        let pre_grid = Grid::new([4, 7, 6], [1.5, 1.5, 2.0], [-3.0, 2.0, 1.0], IDENTITY3).unwrap();
+        let pre = VectorField::from_fn(pre_grid, |_| [0.0, 1.5, 0.0]);
+        let scale = AffineTransform::from_offset(
+            [[0.5, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        );
+        let out = b
+            .warp_through_field(&v, &field, Some(&pre), Some(&scale))
+            .unwrap();
+        let ones = Volume::from_vec(g, vec![1.0; g.num_voxels()]).unwrap();
+        let mask = b
+            .warp_mask_through_field(&ones, &field, Some(&pre), Some(&scale), None)
+            .unwrap();
+        for (i, in_pre) in [(0usize, true), (6, false)] {
+            let x = g.index_to_point([i as f64, 2.0, 2.0]);
+            let q = [x[0] + 1.5, x[1], x[2]];
+            assert_eq!(
+                pre_grid.contains_continuous_index(pre_grid.point_to_index(q)),
+                in_pre
+            );
+            let r = if in_pre { [q[0], q[1] + 1.5, q[2]] } else { q };
+            let s = [0.5 * r[0], r[1], r[2]];
+            let want = linear_at_point(&v, s).unwrap_or(0.0);
+            assert!((out.data()[g.linear_index(i, 2, 2)] - want).abs() < 1e-12);
+            let inside = nearest_voxel(&g, s).is_some();
+            assert_eq!(
+                mask.data()[g.linear_index(i, 2, 2)],
+                f64::from(u8::from(inside))
+            );
+        }
     }
 
     #[test]

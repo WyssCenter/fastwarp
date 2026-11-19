@@ -32,6 +32,7 @@ use crate::error::GpuResult;
 
 const SAMPLE: &str = include_str!("shaders/syn_sample.wgsl");
 const WARP: &str = include_str!("shaders/syn_warp.wgsl");
+const WARP_PRE: &str = include_str!("shaders/syn_warp_pre.wgsl");
 const COMPOSE: &str = include_str!("shaders/syn_compose.wgsl");
 const INV_RESIDUAL: &str = include_str!("shaders/syn_inv_residual.wgsl");
 const INV_BEGIN: &str = include_str!("shaders/syn_inv_begin.wgsl");
@@ -40,12 +41,22 @@ const INV_UPDATE: &str = include_str!("shaders/syn_inv_update.wgsl");
 const CC_PLANES: &str = include_str!("shaders/syn_cc_planes.wgsl");
 const CC_DERIV: &str = include_str!("shaders/syn_cc_deriv.wgsl");
 const CC_VALUE: &str = include_str!("shaders/syn_cc_value.wgsl");
+const CC_PLANES_MASKED: &str = include_str!("shaders/syn_cc_planes_masked.wgsl");
+const CC_STATS_MASKED: &str = include_str!("shaders/syn_cc_stats_masked.wgsl");
+const CC_DERIV_MASKED: &str = include_str!("shaders/syn_cc_deriv_masked.wgsl");
+const CC_VALUE_MASKED: &str = include_str!("shaders/syn_cc_value_masked.wgsl");
 const GAUSS: &str = include_str!("shaders/syn_gauss.wgsl");
 const NORM_PARTIAL: &str = include_str!("shaders/syn_norm_partial.wgsl");
 const REDUCE_SCALAR: &str = include_str!("shaders/syn_reduce_scalar.wgsl");
 const SCALE: &str = include_str!("shaders/syn_scale.wgsl");
 const AXPY: &str = include_str!("shaders/syn_axpy.wgsl");
 const BOX: &str = include_str!("shaders/box.wgsl");
+
+/// `WarpU::flags` bit: nearest-neighbour lookup of a mask (output 1 where the nearest source
+/// voxel is not zero, 0 elsewhere and outside), one plane.
+pub const WARP_NEAREST: u32 = 2;
+/// `WarpU::flags` bit, with [`WARP_NEAREST`]: multiply the result into the destination.
+pub const WARP_MULTIPLY: u32 = 4;
 
 /// Uniform of `k_warp`.
 #[repr(C)]
@@ -58,6 +69,24 @@ pub struct WarpU {
     pub pad: [u32; 2],
     pub mi: [[f32; 4]; 3],
     pub l: [[f32; 4]; 3],
+}
+
+/// Uniform of `k_warp_pre`: `mp` / `lp` map a destination voxel index and its field vector to
+/// a continuous index of the earlier field, `ms` / `ls` map that index and the earlier field's
+/// vector to a continuous index of the source.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct WarpPreU {
+    pub dims: [u32; 4],
+    pub pre_dims: [u32; 4],
+    pub src_dims: [u32; 4],
+    pub flags: u32,
+    pub nplanes: u32,
+    pub pad: [u32; 2],
+    pub mp: [[f32; 4]; 3],
+    pub lp: [[f32; 4]; 3],
+    pub ms: [[f32; 4]; 3],
+    pub ls: [[f32; 4]; 3],
 }
 
 /// Uniform of `k_compose`.
@@ -106,7 +135,7 @@ pub struct InvUpdateU {
     pub pad: [u32; 2],
 }
 
-/// Uniform of `k_cc_planes`.
+/// Uniform of `k_cc_planes`, `k_cc_planes_masked` and `k_cc_stats_masked`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct CcPlanesU {
@@ -114,7 +143,8 @@ pub struct CcPlanesU {
     pub pad: [u32; 3],
 }
 
-/// Uniform of the CC derivative and value kernels (`k_cc_deriv`, `k_cc_value`).
+/// Uniform of the CC derivative and value kernels (`k_cc_deriv`, `k_cc_value` and their masked
+/// forms).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct CcFinalU {
@@ -176,6 +206,7 @@ pub struct ElementU {
 /// The compiled SyN pipelines.
 pub struct SynKernels {
     pub warp: wgpu::ComputePipeline,
+    pub warp_pre: wgpu::ComputePipeline,
     pub compose: wgpu::ComputePipeline,
     pub inv_residual: wgpu::ComputePipeline,
     pub inv_begin: wgpu::ComputePipeline,
@@ -184,6 +215,10 @@ pub struct SynKernels {
     pub cc_planes: wgpu::ComputePipeline,
     pub cc_deriv: wgpu::ComputePipeline,
     pub cc_value: wgpu::ComputePipeline,
+    pub cc_planes_masked: wgpu::ComputePipeline,
+    pub cc_stats_masked: wgpu::ComputePipeline,
+    pub cc_deriv_masked: wgpu::ComputePipeline,
+    pub cc_value_masked: wgpu::ComputePipeline,
     pub box_x: wgpu::ComputePipeline,
     pub box_yz: wgpu::ComputePipeline,
     pub gauss: wgpu::ComputePipeline,
@@ -201,6 +236,7 @@ impl SynKernels {
         let with_sample = |body: &str| format!("{SAMPLE}\n{body}");
         Ok(SynKernels {
             warp: ctx.compile("k_warp", &with_sample(WARP), "k_warp")?,
+            warp_pre: ctx.compile("k_warp_pre", &with_sample(WARP_PRE), "k_warp_pre")?,
             compose: ctx.compile("k_compose", &with_sample(COMPOSE), "k_compose")?,
             inv_residual: ctx.compile(
                 "k_inv_residual",
@@ -213,6 +249,26 @@ impl SynKernels {
             cc_planes: ctx.compile("k_cc_planes", CC_PLANES, "k_cc_planes")?,
             cc_deriv: ctx.compile("k_cc_deriv", &with_sample(CC_DERIV), "k_cc_deriv")?,
             cc_value: ctx.compile("k_cc_value", CC_VALUE, "k_cc_value")?,
+            cc_planes_masked: ctx.compile(
+                "k_cc_planes_masked",
+                CC_PLANES_MASKED,
+                "k_cc_planes_masked",
+            )?,
+            cc_stats_masked: ctx.compile(
+                "k_cc_stats_masked",
+                CC_STATS_MASKED,
+                "k_cc_stats_masked",
+            )?,
+            cc_deriv_masked: ctx.compile(
+                "k_cc_deriv_masked",
+                &with_sample(CC_DERIV_MASKED),
+                "k_cc_deriv_masked",
+            )?,
+            cc_value_masked: ctx.compile(
+                "k_cc_value_masked",
+                CC_VALUE_MASKED,
+                "k_cc_value_masked",
+            )?,
             box_x: ctx.compile("k_box_x", BOX, "k_box_x")?,
             box_yz: ctx.compile("k_box_yz", BOX, "k_box_yz")?,
             gauss: ctx.compile("k_gauss_axis", GAUSS, "k_gauss_axis")?,

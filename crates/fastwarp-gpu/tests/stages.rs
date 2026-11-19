@@ -92,7 +92,7 @@ fn the_linear_capacity_plan_bounds_the_pool_peak_of_a_linear_only_chain() {
     let plan = StagePlan {
         initial: InitialTransform::CentreOfMass,
         linear: stages.clone(),
-        syn: None,
+        syn: Vec::new(),
         winsorize: None,
     };
     let Some(gpu) = backend() else { return };
@@ -145,7 +145,7 @@ fn a_linear_then_syn_chain_peaks_no_higher_than_its_linear_plan_or_the_syn_stage
     let plan = StagePlan {
         initial: InitialTransform::CentreOfMass,
         linear: stages.clone(),
-        syn: Some(small_recipe(&[(2, 1.0, 3), (1, 0.0, 2)], 2)),
+        syn: vec![small_recipe(&[(2, 1.0, 3), (1, 0.0, 2)], 2)],
         winsorize: None,
     };
     let Some(gpu) = backend() else { return };
@@ -165,14 +165,9 @@ fn a_linear_then_syn_chain_peaks_no_higher_than_its_linear_plan_or_the_syn_stage
         memory_budget: u64::MAX,
     };
     let linear = plan_capacity_linear([48; 3], [48; 3], &stages, &caps).unwrap();
-    let syn = fastwarp_gpu::plan_capacity_syn(
-        [48; 3],
-        [48; 3],
-        1,
-        &plan.syn.as_ref().unwrap().shrink_factors,
-        &caps,
-    )
-    .unwrap();
+    let syn =
+        fastwarp_gpu::plan_capacity_syn([48; 3], [48; 3], 1, &plan.syn[0].shrink_factors, &caps)
+            .unwrap();
     eprintln!(
         "linear + SyN: peak {peak}, linear plan {}, SyN plan {}",
         linear.level_total_bytes, syn.level_total_bytes
@@ -212,7 +207,7 @@ fn a_syn_only_plan_from_the_identity_runs_on_the_gpu() {
     let plan = StagePlan {
         initial: InitialTransform::Identity,
         linear: Vec::new(),
-        syn: Some(small_recipe(&[(2, 1.0, 6), (1, 0.0, 4)], 2)),
+        syn: vec![small_recipe(&[(2, 1.0, 6), (1, 0.0, 4)], 2)],
         winsorize: None,
     };
     let Some(gpu) = backend() else { return };

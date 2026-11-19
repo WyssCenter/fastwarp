@@ -61,6 +61,11 @@ Three rules hold for every argument:
 
 Any other name raises ANTsPy's `ValueError("... does not exist")`.
 
+No ANTsPy type runs more than one SyN stage. For several SyN stages, for example a whole-brain
+SyN followed by one restricted to a region of the template, use a stage-list recipe with
+{func}`~fastwarp.register_syn` (see [Several SyN stages](recipes.md#several-syn-stages)) or
+`fastwarp ants-registration` with several `-t SyN[...]` stages and one `-x` per stage.
+
 ## Arguments of `registration`
 
 | Argument | In FastWarp |
@@ -68,9 +73,9 @@ Any other name raises ANTsPy's `ValueError("... does not exist")`.
 | `fixed`, `moving` | `ANTsImage`, 3-D and scalar; other dimensions or vector images are refused. ANTsPy's own checks (NaN voxels, different dimensions) raise ANTsPy's messages. |
 | `initial_transform` | `None` (centres of intensity mass, or the identity for `SyNOnly` and `antsRegistrationSyN[so]`), `"Identity"`, or one file holding one affine transform (`.mat`, `.txt`, or an `.h5` such as the `Composite.h5` of a linear run; also as `"[file,1]"` for its inverse). A displacement field, more than one file, or ANTs' `"[fixed,moving,feature]"` form with file names is refused. |
 | `outprefix` | Text joined to the file names, as in ANTsPy; the folder is created when missing. `""` makes a private temporary folder (`tempfile.mkdtemp`) and the prefix `fw_` in it, where ANTsPy uses the race-prone `tempfile.mktemp`. |
-| `mask` | A fixed-image mask (non-zero voxels inside) for types whose last stage is linear. ANTsPy puts the mask on the last stage, so with a SyN stage it is refused: FastWarp's SyN stage has no mask. |
-| `moving_mask` | Refused. |
-| `mask_all_stages` | As in ANTsPy (with a mask only linear types run, where it changes nothing). |
+| `mask` | A fixed-image mask (non-zero voxels inside), on any grid. As in ANTsPy it applies to the last stage, and with `mask_all_stages` to every stage; the one mask option of an `antsRegistrationSyN[...]` type reaches every stage. See [Masks](normalization.md#masks). |
+| `moving_mask` | A moving-image mask (non-zero voxels inside), on any grid, applied as `mask` is. FastWarp applies a moving mask to SyN stages only, so it is refused where ANTsPy would give it to a Rigid or Affine stage: with a linear type, with `mask_all_stages=True` on a type with linear stages, and with the `antsRegistrationSyN[...]` types other than `[so]`. |
+| `mask_all_stages` | As in ANTsPy: the masks apply to every stage, not only to the last one. |
 | `grad_step`, `flow_sigma`, `total_sigma` | The SyN stage's step and field variances, for the types that use them. |
 | `aff_metric` | `"mattes"` (or `"MI"`); `"GC"` and `"meansquares"` are refused. |
 | `aff_sampling` | `32` only (the GPU's histogram bins). |

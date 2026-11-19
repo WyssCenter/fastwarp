@@ -31,6 +31,7 @@ NAMES = {
     "warpedmovout": "WM",
     "warpedfixout": "WF",
     "mask": "MASK",
+    "moving_mask": "MMASK",
     "extra_fixed": "F2",
     "extra_moving": "M2",
     "extra_fixed_1": "F3",
@@ -84,7 +85,8 @@ def test_without_antspy_argument_lists_run_and_images_need_it():
 
 
 def _antspy_argv(monkeypatch, R, fixed, moving, t, kw):
-    labels = iter(["F", "M", "WF", "WM", "MASK"])
+    masks = [label for key, label in (("mask", "MASK"), ("moving_mask", "MMASK")) if kw.get(key)]
+    labels = iter(["F", "M", "WF", "WM", *masks])
     by_id = {}
     for i, extra in enumerate(kw.get("multivariate_extras") or []):
         by_id[id(extra[1])] = f"F{i + 2}"
@@ -172,15 +174,25 @@ T1_CASES = [
     ("antsRegistrationSyNQuick[a]", {}),
     ("antsRegistrationSyN[s]", {"multivariate_extras": "EXTRAS"}),
     ("antsRegistrationSyN[a]", {"mask": "MASK"}),
+    ("antsRegistrationSyN[s]", {"mask": "MASK"}),
+    ("antsRegistrationSyN[so]", {"mask": "MASK", "moving_mask": "MMASK"}),
+    ("antsRegistrationSyN[so]", {"moving_mask": "MMASK"}),
+    ("SyNCC", {"mask": "MASK"}),
+    ("SyNCC", {"mask": "MASK", "moving_mask": "MMASK"}),
+    ("SyNCC", {"mask": "MASK", "mask_all_stages": True}),
+    ("SyNRA", {**CC4, "moving_mask": "MMASK"}),
+    ("SyNOnly", {**CC4, "mask": "MASK", "moving_mask": "MMASK", "mask_all_stages": True}),
     ("antsRegistrationSyN[s]", {"multivariate_extras": "EXTRAS3"}),
     ("SyNOnly", {"syn_metric": "CC", "syn_sampling": 2, "multivariate_extras": "EXTRAS2"}),
 ]
 
 
-def _resolve(ants, kw, fixed):
+def _resolve(ants, kw, fixed, moving=None):
     out = dict(kw)
     if out.get("mask") == "MASK":
         out["mask"] = fixed
+    if out.get("moving_mask") == "MMASK":
+        out["moving_mask"] = fixed if moving is None else moving
     if out.get("multivariate_extras") == "EXTRAS":
         out["multivariate_extras"] = [("CC", _img(ants, seed=2), _img(ants, seed=3), 0.5, 2)]
     for key, n in (("EXTRAS2", 2), ("EXTRAS3", 3)):
@@ -197,14 +209,27 @@ def _resolve(ants, kw, fixed):
 )
 def test_t1_argument_list_is_antspys(ants, R, pair, monkeypatch, t, kw):
     fixed, moving = pair
-    kw = _resolve(ants, kw, fixed)
+    kw = _resolve(ants, kw, fixed, moving)
     theirs = _antspy_argv(monkeypatch, R, fixed, moving, t, kw)
     mine = _fastwarp_argv(ants, fixed, moving, t, kw, NAMES)
     assert mine == theirs
     real = _fastwarp_argv(ants, fixed, moving, t, kw, fa._registration_names(3))
     parsed = g._core.ants_parse_registration(real)
     assert parsed["kind"] == "run"
-    assert len(parsed["plan"]["recipe"]["stages"]) == real.count("--transform")
+    plan = parsed["plan"]
+    assert len(plan["recipe"]["stages"]) == real.count("--transform")
+    fixed_mask, moving_mask = kw.get("mask") is not None, kw.get("moving_mask") is not None
+    has_syn = any(s["transform"] == "syn" for s in plan["recipe"]["stages"])
+    assert len(plan["syn_masks"]) == int(has_syn)
+    if has_syn:
+        assert (plan["syn_masks"][0]["fixed"] is not None) == fixed_mask
+        assert (plan["syn_masks"][0]["moving"] is not None) == moving_mask
+    every_stage = (
+        bool(kw.get("mask_all_stages")) or t.startswith("antsRegistrationSyN") or not has_syn
+    )
+    assert [m is not None for m in plan["fixed_masks"]] == [fixed_mask and every_stage] * len(
+        plan["fixed_masks"]
+    )
 
 
 def test_t1_random_seed_follows_ants_config(ants, R, pair, monkeypatch):
@@ -320,18 +345,22 @@ REFUSALS = [
         PREFIX + "aff_sampling=64 is not supported: the GPU Mattes kernels use 32 histogram bins.",
     ),
     (
-        {"type_of_transform": "SyNCC", "mask": "MASK"},
-        PREFIX + "mask={mask!r} is not supported: with type_of_transform='SyNCC' ANTsPy applies "
-        "the mask to the SyN stage, and FastWarp's SyN stage has no mask.",
-    ),
-    (
-        {"type_of_transform": "antsRegistrationSyN[s]", "mask": "MASK"},
-        PREFIX + "mask={mask!r} is not supported: with type_of_transform='antsRegistrationSyN[s]' "
-        "ANTsPy applies the mask to the SyN stage, and FastWarp's SyN stage has no mask.",
-    ),
-    (
         {"type_of_transform": "Rigid", "moving_mask": "MASK"},
-        PREFIX + "moving_mask={mask!r} is not supported: FastWarp has no moving-image mask.",
+        PREFIX + "moving_mask={mask!r} is not supported: with type_of_transform='Rigid' ANTsPy "
+        "applies the moving mask to a Rigid or Affine stage, and FastWarp applies a moving mask "
+        "to SyN stages only.",
+    ),
+    (
+        {"type_of_transform": "SyNCC", "moving_mask": "MASK", "mask_all_stages": True},
+        PREFIX + "moving_mask={mask!r} is not supported: with type_of_transform='SyNCC' and "
+        "mask_all_stages=True ANTsPy applies the moving mask to a Rigid or Affine stage, and "
+        "FastWarp applies a moving mask to SyN stages only.",
+    ),
+    (
+        {"type_of_transform": "antsRegistrationSyN[s]", "moving_mask": "MASK"},
+        PREFIX + "moving_mask={mask!r} is not supported: with "
+        "type_of_transform='antsRegistrationSyN[s]' ANTsPy applies the moving mask to a Rigid or "
+        "Affine stage, and FastWarp applies a moving mask to SyN stages only.",
     ),
     (
         {"type_of_transform": "Rigid", "restrict_transformation": (1, 0, 1, 1, 1, 1)},
@@ -583,6 +612,7 @@ def test_memory_images_reach_the_runner(ants, pair, monkeypatch, tmp_path):
         ("antsRegistrationSyN[s]", {"multivariate_extras": extras}),
         ("antsRegistrationSyN[s]", {"multivariate_extras": three}),
         ("antsRegistrationSyN[s]", {"multivariate_extras": three + extras}),
+        ("SyNCC", {"mask": fixed, "moving_mask": moving}),
     ):
         with pytest.raises(KeyError):
             fa.registration(fixed, moving, t, outprefix=str(tmp_path / "o_"), **kw)
@@ -604,6 +634,7 @@ def test_memory_images_reach_the_runner(ants, pair, monkeypatch, tmp_path):
             "<fixed>.nii",
             "<moving>.nii",
         ],
+        ["<fixed>.nii", "<mask>.nii", "<moving>.nii", "<moving_mask>.nii"],
     ]
 
 
@@ -787,6 +818,11 @@ T4_CASES = [
     ("Rigid", {}, "unsigned char"),
     ("Rigid", {"mask": "MASK"}, "float"),
     ("antsRegistrationSyN[a]", {"mask": "MASK"}, "float"),
+    (
+        "SyNOnly",
+        {**CC4, "reg_iterations": (20, 10), "mask": "MASK", "moving_mask": "MMASK"},
+        "float",
+    ),
     ("antsRegistrationSyN[s]", {"multivariate_extras": "EXTRAS"}, "float"),
     ("Rigid", {"write_composite_transform": True}, "float"),
     ("antsRegistrationSyN[s]", {}, "float"),
@@ -811,6 +847,8 @@ def test_t4_return_dict_is_antspys(ants, tmp_path, monkeypatch, t, kw, pixeltype
     masked = kw.get("mask") == "MASK"
     if masked:
         kw = {**kw, "mask": ants.threshold_image(fixed.clone("float"), 0.15, 1e9)}
+    if kw.get("moving_mask") == "MMASK":
+        kw = {**kw, "moving_mask": ants.threshold_image(moving.clone("float"), 0.15, 1e9)}
     if kw.get("multivariate_extras") == "EXTRAS":
         kw = {**kw, "multivariate_extras": [("CC", fixed * 2.0, moving * 2.0, 0.5, 2)]}
     theirs = ants.registration(fixed, moving, t, outprefix=str(tmp_path / "a_"), **kw)
@@ -818,7 +856,7 @@ def test_t4_return_dict_is_antspys(ants, tmp_path, monkeypatch, t, kw, pixeltype
         warnings.simplefilter("always")
         mine = fa.registration(fixed, moving, t, outprefix=str(tmp_path / "f_"), **kw)
     skipped = [str(w.message) for w in caught if "was skipped" in str(w.message)]
-    if masked:
+    if masked and t != "SyNOnly":
         assert skipped, "the coarse masked levels have too few samples and are skipped"
         assert all("level" in w and "candidate points" in w for w in skipped)
     assert set(mine) == set(theirs)

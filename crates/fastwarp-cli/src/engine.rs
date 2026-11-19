@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use fastwarp_gpu::{
-    plan_capacity_linear, plan_capacity_syn, BackendSelect, CapacityCaps, CapacityError,
-    WgpuBackend,
+    plan_capacity_linear, plan_capacity_syn_stages, BackendSelect, CapacityCaps, CapacityError,
+    SynStageCapacity, WgpuBackend,
 };
 use fastwarp_reg::init::{initial_transform, InitFeature};
 use fastwarp_reg::mask::MaskVolume;
@@ -200,9 +200,11 @@ pub struct StageSummary {
     pub metric: Option<f64>,
 }
 
-/// One SyN level of a run: level, grid, iterations, converged, last energy.
+/// One SyN level of a run: its SyN stage (counted from 0 among the SyN stages), level, grid,
+/// iterations, converged, last energy.
 #[derive(Clone, Debug)]
 pub struct LevelSummary {
+    pub stage: usize,
     pub level: usize,
     pub grid_size: [usize; 3],
     pub iterations: usize,
@@ -220,7 +222,7 @@ pub struct SynRun {
     pub total_s: f64,
     pub write_s: f64,
     pub timings: RegisterTimings,
-    /// SyN levels; empty without a SyN stage.
+    /// The levels of every SyN stage, the stages one after the other; empty without a SyN stage.
     pub levels: Vec<LevelSummary>,
     /// The collapsed affine (start and linear stages), what `0GenericAffine.mat` holds.
     pub affine_parameters: [f64; 12],
@@ -241,22 +243,135 @@ pub struct SynRun {
     pub memory_budget_bytes: u64,
 }
 
+/// The grid sizes of the masks of a run, for the capacity check: each mask stays on its own grid
+/// on the GPU during the SyN stages that use it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MaskDims {
+    /// Voxels per axis of the fixed-image mask.
+    pub fixed: Option<[usize; 3]>,
+    /// Voxels per axis of the moving-image mask.
+    pub moving: Option<[usize; 3]>,
+}
+
+impl MaskDims {
+    /// The grid sizes of the masks each SyN stage of `recipe` uses, as its switches select them.
+    pub fn per_syn_stage(&self, recipe: &Recipe) -> Vec<Vec<[usize; 3]>> {
+        (0..recipe.plan.syn.len())
+            .map(|i| {
+                let s = recipe.syn_switches(i);
+                let fixed = self.fixed.filter(|_| s.fixed);
+                let moving = self.moving.filter(|_| s.moving);
+                fixed.into_iter().chain(moving).collect()
+            })
+            .collect()
+    }
+}
+
+/// The grid sizes of the masks each SyN stage of `plan` holds.
+pub fn syn_stage_mask_dims(plan: &StagePlan) -> Vec<Vec<[usize; 3]>> {
+    let size = |m: &Option<MaskVolume>| m.as_ref().map(|m| m.grid().size());
+    plan.syn
+        .iter()
+        .map(|s| {
+            size(&s.fixed_mask)
+                .into_iter()
+                .chain(size(&s.moving_mask))
+                .collect()
+        })
+        .collect()
+}
+
+/// Refuses a mask that no stage of `recipe` would use: a moving mask without a SyN stage
+/// (FastWarp applies the moving mask to SyN stages only), or a mask whose switch is off on every
+/// stage it is allowed on.
+fn check_masks_used(recipe: &Recipe, fixed: bool, moving: bool) -> Result<(), Failure> {
+    let plan = &recipe.plan;
+    if moving && plan.syn.is_empty() {
+        return Err(Failure::Invalid(
+            "a moving mask needs a SyN stage: FastWarp applies the moving mask to SyN stages only"
+                .into(),
+        ));
+    }
+    if moving && (0..plan.syn.len()).all(|i| !recipe.syn_switches(i).moving) {
+        return Err(Failure::Invalid(
+            "a moving mask is given, but every SyN stage of the recipe switches it off \
+             (\"moving_mask\": false); leave the mask out or switch it on for a stage"
+                .into(),
+        ));
+    }
+    let fixed_used = (0..plan.linear.len()).any(|i| recipe.linear_switches(i).fixed)
+        || (0..plan.syn.len()).any(|i| recipe.syn_switches(i).fixed);
+    if fixed && !fixed_used {
+        return Err(Failure::Invalid(
+            "a fixed mask is given, but every stage of the recipe switches it off \
+             (\"fixed_mask\": false); leave the mask out or switch it on for a stage"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Puts the masks of a run into `recipe`, as its switches select them (all on by default): the
+/// fixed mask into the linear and SyN stages, the moving mask into the SyN stages. A mask that no
+/// stage would use (a moving mask without a SyN stage, or a mask switched off on every stage) and
+/// a mask with no voxel inside (every voxel zero) are refused.
+pub fn apply_masks(
+    recipe: &mut Recipe,
+    fixed_mask: Option<MaskVolume>,
+    moving_mask: Option<MaskVolume>,
+) -> Result<(), Failure> {
+    check_masks_used(recipe, fixed_mask.is_some(), moving_mask.is_some())?;
+    for (mask, name) in [(&fixed_mask, "fixed"), (&moving_mask, "moving")] {
+        if mask.as_ref().is_some_and(|m| !m.has_inside()) {
+            return Err(Failure::Invalid(format!(
+                "the {name} mask has no voxel inside (every voxel is zero)"
+            )));
+        }
+    }
+    let linear: Vec<bool> = (0..recipe.plan.linear.len())
+        .map(|i| recipe.linear_switches(i).fixed)
+        .collect();
+    let syn: Vec<_> = (0..recipe.plan.syn.len())
+        .map(|i| recipe.syn_switches(i))
+        .collect();
+    for (stage, on) in recipe.plan.linear.iter_mut().zip(linear) {
+        stage.mask = fixed_mask.clone().filter(|_| on);
+    }
+    for (stage, s) in recipe.plan.syn.iter_mut().zip(syn) {
+        stage.fixed_mask = fixed_mask.clone().filter(|_| s.fixed);
+        stage.moving_mask = moving_mask.clone().filter(|_| s.moving);
+    }
+    Ok(())
+}
+
 /// The pre-flight capacity check of every stage of `plan` for a `dims` registration grid and a
-/// `moving_dims` moving grid: the linear stages (their sample buffers summed over the chain) and,
-/// when there is one, the SyN stage. The idle linear buffers are freed before the SyN stage, so the
-/// two are separate checks.
+/// `moving_dims` moving grid: the linear stages (their sample buffers summed over the chain) and
+/// the SyN stages, each with the grid sizes of its masks (`syn_masks`, one list per SyN stage,
+/// none where it is missing). The idle buffers are freed before each SyN stage, so the linear
+/// stages and each SyN stage are separate checks; a SyN stage after another one also holds the
+/// collapsed field of the earlier ones.
 pub fn check_plan_capacity(
     plan: &StagePlan,
     dims: [usize; 3],
     moving_dims: [usize; 3],
     channels: usize,
+    syn_masks: &[Vec<[usize; 3]>],
     caps: &CapacityCaps,
 ) -> Result<(), CapacityError> {
     if !plan.linear.is_empty() {
         plan_capacity_linear(dims, moving_dims, &plan.linear, caps)?;
     }
-    if let Some(syn) = &plan.syn {
-        plan_capacity_syn(dims, moving_dims, channels, &syn.shrink_factors, caps)?;
+    if !plan.syn.is_empty() {
+        let stages: Vec<SynStageCapacity<'_>> = plan
+            .syn
+            .iter()
+            .enumerate()
+            .map(|(i, s)| SynStageCapacity {
+                shrink_factors: &s.shrink_factors,
+                mask_dims: syn_masks.get(i).map(Vec::as_slice).unwrap_or(&[]),
+            })
+            .collect();
+        plan_capacity_syn_stages(dims, moving_dims, channels, &stages, caps)?;
     }
     Ok(())
 }
@@ -322,7 +437,8 @@ where
             .map(|m| iso_dims(m.grid(), iso_mm))
             .max_by_key(|d| d.iter().map(|n| *n as u128).product::<u128>())
             .unwrap_or(dims);
-        check_plan_capacity(&recipe.plan, dims, moving_dims, fixed.len(), &caps)
+        let masks = syn_stage_mask_dims(&recipe.plan);
+        check_plan_capacity(&recipe.plan, dims, moving_dims, fixed.len(), &masks, &caps)
             .map_err(|e| Failure::GpuCapacity(format!("{e} (at {iso_mm} mm)")))?;
         let options = SynOptions {
             cancel: cancel.as_deref(),
@@ -367,14 +483,18 @@ where
             write_s,
             timings: out.timings,
             levels: out
-                .levels
+                .syn_levels
                 .iter()
-                .map(|l| LevelSummary {
-                    level: l.level,
-                    grid_size: l.grid_size,
-                    iterations: l.iterations.len(),
-                    converged: l.converged,
-                    energy: l.iterations.last().map(|i| i.energy).unwrap_or(0.0),
+                .enumerate()
+                .flat_map(|(stage, levels)| {
+                    levels.iter().map(move |l| LevelSummary {
+                        stage,
+                        level: l.level,
+                        grid_size: l.grid_size,
+                        iterations: l.iterations.len(),
+                        converged: l.converged,
+                        energy: l.iterations.last().map(|i| i.energy).unwrap_or(0.0),
+                    })
                 })
                 .collect(),
             affine_parameters: out.total.parameters(),
@@ -389,6 +509,15 @@ where
             memory_budget_bytes: caps.memory_budget,
         })
     })
+}
+
+impl SynRun {
+    /// The SyN levels grouped by SyN stage, one list per SyN stage of the recipe, in order.
+    pub fn syn_stages(&self) -> Vec<Vec<&LevelSummary>> {
+        (0..self.recipe.plan.syn.len())
+            .map(|s| self.levels.iter().filter(|l| l.stage == s).collect())
+            .collect()
+    }
 }
 
 /// The GPU the engine would use.
@@ -416,7 +545,7 @@ pub fn gpu_info(adapter: Option<String>) -> Result<GpuInfo, Failure> {
 }
 
 /// Whether a registration of a `dims` fixed grid and a `moving_dims` moving grid (default: the
-/// fixed grid) with `channels` channels and the stages of `recipe` fits the GPU, as
+/// fixed grid) with `channels` channels, the stages of `recipe` and `masks` fits the GPU, as
 /// [`register_syn`] checks it.
 pub fn fits(
     dims: [usize; 3],
@@ -424,8 +553,9 @@ pub fn fits(
     channels: usize,
     adapter: Option<String>,
     recipe: &Recipe,
+    masks: &MaskDims,
 ) -> Result<bool, Failure> {
-    Ok(capacity_check(dims, moving_dims, channels, adapter, recipe)?.is_ok())
+    Ok(capacity_check(dims, moving_dims, channels, adapter, recipe, masks)?.is_ok())
 }
 
 /// The capacity check of [`fits`], with the reason when the grid does not fit.
@@ -435,7 +565,9 @@ pub fn capacity_check(
     channels: usize,
     adapter: Option<String>,
     recipe: &Recipe,
+    masks: &MaskDims,
 ) -> Result<Result<(), String>, Failure> {
+    check_masks_used(recipe, masks.fixed.is_some(), masks.moving.is_some())?;
     let g = open_gpu(adapter)?;
     let caps = CapacityCaps::from_context(g.context());
     Ok(check_plan_capacity(
@@ -443,6 +575,7 @@ pub fn capacity_check(
         dims,
         moving_dims.unwrap_or(dims),
         channels,
+        &masks.per_syn_stage(recipe),
         &caps,
     )
     .map_err(|e| e.to_string()))
@@ -727,6 +860,96 @@ mod tests {
             other => panic!("{other:?}"),
         }
         std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn masks_go_to_the_stages_that_use_them() {
+        let g = Grid::new([4, 4, 4], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let mask = |v: f64| MaskVolume::from_volume(Volume::from_vec(g, vec![v; 64]).unwrap());
+        let mut r = Recipe::try_cohort(1).unwrap();
+        apply_masks(&mut r, Some(mask(1.0)), Some(mask(2.0))).unwrap();
+        assert!(r.plan.linear.iter().all(|l| l.mask == Some(mask(1.0))));
+        let syn = &r.plan.syn[0];
+        assert_eq!(syn.fixed_mask, Some(mask(1.0)));
+        assert_eq!(syn.moving_mask, Some(mask(2.0)));
+        assert_eq!(syn_stage_mask_dims(&r.plan), vec![vec![[4; 3], [4; 3]]]);
+        let mut r = Recipe::try_cohort(1).unwrap();
+        apply_masks(&mut r, None, Some(mask(1.0))).unwrap();
+        assert!(r.plan.linear.iter().all(|l| l.mask.is_none()));
+        assert!(r.plan.syn[0].fixed_mask.is_none());
+        let empty = apply_masks(&mut r, Some(mask(0.0)), None);
+        assert!(matches!(empty, Err(Failure::Invalid(m)) if m.contains("fixed mask has no voxel")));
+        r.plan.syn.clear();
+        let linear = apply_masks(&mut r, None, Some(mask(1.0)));
+        assert!(matches!(linear, Err(Failure::Invalid(m)) if m.contains("needs a SyN stage")));
+        assert!(matches!(
+            check_masks_used(&r, false, true),
+            Err(Failure::Invalid(_))
+        ));
+        apply_masks(&mut r, Some(mask(1.0)), None).unwrap();
+        assert!(r.plan.linear.iter().all(|l| l.mask.is_some()));
+    }
+
+    #[test]
+    fn the_switches_of_a_stage_list_select_the_stages_a_mask_reaches() {
+        let g = Grid::new(
+            [4, 4, 4],
+            [1.0; 3],
+            [0.0; 3],
+            fastwarp_reg::linalg::IDENTITY3,
+        )
+        .unwrap();
+        let mask = |v: f64| MaskVolume::from_volume(Volume::from_vec(g, vec![v; 64]).unwrap());
+        let recipe = |stages: serde_json::Value| {
+            Recipe::from_json(&serde_json::json!({ "stages": stages }), 1).unwrap()
+        };
+        let mut r = recipe(serde_json::json!([
+            {"transform": "rigid", "fixed_mask": false},
+            {"transform": "affine"},
+            {"transform": "syn", "moving_mask": true},
+            {"transform": "syn", "fixed_mask": true, "moving_mask": false},
+        ]));
+        apply_masks(&mut r, Some(mask(1.0)), Some(mask(2.0))).unwrap();
+        assert!(r.plan.linear[0].mask.is_none());
+        assert_eq!(r.plan.linear[1].mask, Some(mask(1.0)));
+        assert_eq!(r.plan.syn[0].fixed_mask, Some(mask(1.0)));
+        assert_eq!(r.plan.syn[0].moving_mask, Some(mask(2.0)));
+        assert_eq!(r.plan.syn[1].fixed_mask, Some(mask(1.0)));
+        assert!(r.plan.syn[1].moving_mask.is_none());
+        assert_eq!(
+            syn_stage_mask_dims(&r.plan),
+            vec![vec![[4; 3], [4; 3]], vec![[4; 3]]]
+        );
+        let dims = MaskDims {
+            fixed: Some([5; 3]),
+            moving: Some([6; 3]),
+        };
+        assert_eq!(
+            dims.per_syn_stage(&r),
+            vec![vec![[5; 3], [6; 3]], vec![[5; 3]]]
+        );
+        let mut r = recipe(serde_json::json!([
+            {"transform": "syn", "fixed_mask": false, "moving_mask": false},
+            {"transform": "syn", "fixed_mask": false},
+        ]));
+        apply_masks(&mut r, None, Some(mask(1.0))).unwrap();
+        assert!(r.plan.syn[0].moving_mask.is_none());
+        assert_eq!(r.plan.syn[1].moving_mask, Some(mask(1.0)));
+        let unused = apply_masks(&mut r, Some(mask(1.0)), None);
+        assert!(
+            matches!(&unused, Err(Failure::Invalid(m)) if m.contains("every stage of the recipe switches it off")),
+            "{unused:?}"
+        );
+        let mut r = recipe(serde_json::json!([
+            {"transform": "affine"},
+            {"transform": "syn", "moving_mask": false},
+        ]));
+        let unused = apply_masks(&mut r, None, Some(mask(1.0)));
+        assert!(
+            matches!(&unused, Err(Failure::Invalid(m)) if m.contains("every SyN stage of the recipe switches it off")),
+            "{unused:?}"
+        );
+        apply_masks(&mut r, None, None).unwrap();
     }
 
     #[test]

@@ -158,8 +158,10 @@ def test_fits_gpu_passes_the_largest_moving_grid(monkeypatch):
     monkeypatch.setattr("fastwarp._api._fits_gpu", lambda *a: seen.append(a) or True)
     g.fits_gpu(phantom(), iso_mm=SPACING)
     g.fits_gpu([phantom(), phantom()], [blank((10, 10, 10)), blank((90, 20, 20))], iso_mm=SPACING)
-    assert seen[0] == (SHAPE, 1, None, None, None)
-    assert seen[1] == (SHAPE, 2, None, (90, 20, 20), None)
+    assert seen[0] == (SHAPE, 1, None, None, None, None, None)
+    assert seen[1] == (SHAPE, 2, None, (90, 20, 20), None, None, None)
+    g.fits_gpu(phantom(), iso_mm=SPACING, fixed_mask=blank((9, 8, 7)), moving_mask=phantom())
+    assert seen[2] == (SHAPE, 1, None, None, None, (9, 8, 7), SHAPE)
 
 
 def test_fits_gpu_validates_arguments():
@@ -209,6 +211,81 @@ def test_fits_gpu_checks_the_moving_grid(tmp_path, monkeypatch):
     with pytest.raises(g.GpuCapacityError):
         g.register_syn(phantom(), big, tmp_path / "big_", iso_mm=SPACING)
     assert g.fits_gpu(phantom(), phantom(), iso_mm=SPACING)
+
+
+@needs_gpu
+def test_fits_gpu_counts_the_masks(monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "40")
+    p = phantom()
+    big = blank((SHAPE[0] * 4, SHAPE[1] * 4, SHAPE[2] * 4))
+    assert g.fits_gpu(p, iso_mm=SPACING, fixed_mask=p, moving_mask=p)
+    assert not g.fits_gpu(p, iso_mm=SPACING, moving_mask=big)
+    assert not g.fits_gpu(p, iso_mm=SPACING, fixed_mask=big)
+
+
+def mask_of(img: tuple, spacing: float, hole_mm=None) -> tuple:
+    """A mask on its own grid of ``spacing`` mm covering ``img``: inside where the image is above
+    0.1, without a ball of 10 mm around ``hole_mm``."""
+    vol, sp, origin, direction = img
+    shape = tuple(int(np.ceil(n * s / spacing)) for n, s in zip(vol.shape, sp, strict=True))
+    pts = np.indices(shape, dtype=np.float64) * spacing
+    idx = tuple(
+        np.clip((pts[a] / sp[a]).round().astype(int), 0, vol.shape[a] - 1) for a in range(3)
+    )
+    inside = vol[idx] > 0.1
+    if hole_mm is not None:
+        inside &= sum((pts[a] - hole_mm[a]) ** 2 for a in range(3)) > 10.0**2
+    return (inside.astype(np.float32), (spacing,) * 3, origin, direction)
+
+
+@needs_gpu
+def test_masks_reach_the_registration_and_ants_reads_the_result(tmp_path):
+    fixed, moving = phantom(), phantom(SHIFT_MM)
+    cavity = np.array([56.0, 40.0, 40.0]) + SHIFT_MM
+    lesioned = (moving[0].copy(), *moving[1:])
+    pts = np.indices(SHAPE, dtype=np.float64) * SPACING
+    lesioned[0][sum((pts[a] - cavity[a]) ** 2 for a in range(3)) < 8.0**2] = 0.0
+    info = g.register_syn(
+        fixed,
+        lesioned,
+        tmp_path / "m_",
+        iso_mm=SPACING,
+        write_warped=True,
+        fixed_mask=mask_of(fixed, 3.0),
+        moving_mask=mask_of(lesioned, 2.5, hole_mm=cavity),
+    )
+    assert info["deformable"]
+    for suffix in OUTPUTS:
+        assert Path(f"{tmp_path}/m_{suffix}").is_file(), suffix
+    g.register_syn(fixed, lesioned, tmp_path / "u_", iso_mm=SPACING)
+    g.register_syn(fixed, lesioned, tmp_path / "f_", iso_mm=SPACING, fixed_mask=mask_of(fixed, 3.0))
+    assert _hashes(tmp_path / "f_") != _hashes(tmp_path / "u_"), "the fixed mask changed nothing"
+    assert _hashes(tmp_path / "m_") != _hashes(tmp_path / "f_"), "the moving mask changed nothing"
+    np.testing.assert_allclose(np.asarray(info["affine_parameters"])[9:], SHIFT_MM, atol=0.5)
+    ants = pytest.importorskip("ants")
+    f = ants.from_numpy(fixed[0], spacing=(SPACING,) * 3)
+    m = ants.from_numpy(moving[0], spacing=(SPACING,) * 3)
+    w = ants.apply_transforms(fixed=f, moving=m, transformlist=[f"{tmp_path}/m_Composite.h5"])
+    assert np.corrcoef(f.numpy().ravel(), w.numpy().ravel())[0, 1] > 0.99
+
+
+def test_bad_masks_are_refused_before_any_work(tmp_path):
+    p = phantom()
+    flat = (np.ones((4, 4)), (1.0,) * 3, (0.0,) * 3, np.eye(3))
+    empty = blank((8, 8, 8))
+    linear = {"stages": [{"transform": "rigid"}]}
+    for kwargs, match in (
+        ({"fixed_mask": flat}, "3-D"),
+        ({"moving_mask": flat}, "3-D"),
+        ({"fixed_mask": empty}, "fixed mask has no voxel inside"),
+        ({"moving_mask": empty}, "moving mask has no voxel inside"),
+        ({"moving_mask": p, "recipe": linear}, "needs a SyN stage"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            g.register_syn(p, p, tmp_path / "x_", iso_mm=SPACING, **kwargs)
+    with pytest.raises(ValueError, match="needs a SyN stage"):
+        g.fits_gpu(p, iso_mm=SPACING, moving_mask=p, recipe=linear)
+    assert not any(tmp_path.iterdir())
 
 
 @needs_gpu

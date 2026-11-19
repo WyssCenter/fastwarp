@@ -4,8 +4,9 @@
 //! The registration recipe, in two forms. The cohort form `{"rigid": {...}, "affine": {...},
 //! "syn": {...}}` is the dbs-localizer chain (centre of mass, Rigid, Affine, SyN), each field of
 //! [`LinearRecipe`] / [`SynRecipe`] under its own name. The stage-list form `{"initial": ...,
-//! "stages": [...]}` names the start and any number of `rigid` / `affine` stages followed by at
-//! most one `syn` stage. Both take `"winsorize"`. A missing stage or field keeps the cohort value,
+//! "stages": [...]}` names the start and any number of `rigid` / `affine` stages followed by any
+//! number of `syn` stages; each stage may switch the masks of the call off for itself
+//! (`"fixed_mask"`, and on SyN stages `"moving_mask"`). Both take `"winsorize"`. A missing stage or field keeps the cohort value,
 //! an unknown one is an error, so a caller can state the whole schedule and a typo never passes
 //! silently. The checks are shared by the Python dict (converted to JSON) and the JSON file of
 //! the command line.
@@ -51,6 +52,10 @@ pub const LINEAR_KEYS: &[&str] = &[
     "seed",
 ];
 
+/// The mask switches of a stage in a stage list: `"fixed_mask"` on every stage, `"moving_mask"`
+/// on SyN stages only.
+pub const MASK_SWITCH_KEYS: &[&str] = &["fixed_mask", "moving_mask"];
+
 /// The fields of the `syn` stage.
 pub const SYN_KEYS: &[&str] = &[
     "gradient_step",
@@ -79,11 +84,37 @@ pub enum InitialSpec {
     Parameters,
 }
 
+/// Which of the masks given to a call a stage uses: the `"fixed_mask"` and `"moving_mask"`
+/// switches of a stage in a stage-list recipe. Both default to `true`, so a mask given to the call
+/// applies to every stage it is allowed on (the moving mask to SyN stages only), as
+/// `antsRegistration --masks` given once applies to every stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaskSwitches {
+    /// The stage uses the fixed mask.
+    pub fixed: bool,
+    /// The stage uses the moving mask (SyN stages only).
+    pub moving: bool,
+}
+
+impl Default for MaskSwitches {
+    fn default() -> Self {
+        Self {
+            fixed: true,
+            moving: true,
+        }
+    }
+}
+
 /// The stages that run, with the form the recipe was given in.
 #[derive(Clone, Debug)]
 pub struct Recipe {
     /// What runs.
     pub plan: StagePlan,
+    /// The mask switches of the linear stages, one per entry of `plan.linear` (a missing entry is
+    /// the default, on).
+    pub linear_masks: Vec<MaskSwitches>,
+    /// The mask switches of the SyN stages, one per entry of `plan.syn`.
+    pub syn_masks: Vec<MaskSwitches>,
     /// Whether the recipe used the stage-list form (reported back in that form).
     pub stage_list: bool,
     /// How the start was given.
@@ -97,6 +128,8 @@ impl Recipe {
     pub fn cohort(channels: usize) -> Self {
         Self {
             plan: StagePlan::cohort(&LinearPlan::cohort(), &cohort_syn(channels)),
+            linear_masks: Vec::new(),
+            syn_masks: Vec::new(),
             stage_list: false,
             initial: InitialSpec::CentreOfMass,
             winsorize: Some(DEFAULT_WINSORIZE),
@@ -109,6 +142,8 @@ impl Recipe {
         let syn = SynRecipe::try_cohort_channels(channels).map_err(|e| e.to_string())?;
         Ok(Self {
             plan: StagePlan::cohort(&LinearPlan::cohort(), &syn),
+            linear_masks: Vec::new(),
+            syn_masks: Vec::new(),
             stage_list: false,
             initial: InitialSpec::CentreOfMass,
             winsorize: Some(DEFAULT_WINSORIZE),
@@ -125,20 +160,30 @@ impl Recipe {
         }
     }
 
-    fn syn_name(&self) -> String {
+    fn syn_name(&self, index: usize) -> String {
         if self.stage_list {
-            format!("recipe['stages'][{}]", self.plan.linear.len())
+            format!("recipe['stages'][{}]", self.plan.linear.len() + index)
         } else {
             "recipe['syn']".to_string()
         }
     }
 
+    /// The mask switches of linear stage `index`.
+    pub fn linear_switches(&self, index: usize) -> MaskSwitches {
+        self.linear_masks.get(index).copied().unwrap_or_default()
+    }
+
+    /// The mask switches of SyN stage `index`.
+    pub fn syn_switches(&self, index: usize) -> MaskSwitches {
+        self.syn_masks.get(index).copied().unwrap_or_default()
+    }
+
     /// Checks the recipe for `channels` channels and for what the GPU kernels support.
     pub fn check(&self, channels: usize) -> Result<(), String> {
-        if self.plan.linear.is_empty() && self.plan.syn.is_none() {
+        if self.plan.linear.is_empty() && self.plan.syn.is_empty() {
             return Err("recipe['stages'] is empty: give at least one stage".to_string());
         }
-        if self.plan.syn.is_none() && channels > 1 {
+        if self.plan.syn.is_empty() && channels > 1 {
             return Err(format!(
                 "recipe['stages'] has no SyN stage, which the further channels are for: the linear \
                  stages register the first channel only; give one fixed and one moving image, \
@@ -148,9 +193,22 @@ impl Recipe {
         for (i, l) in self.plan.linear.iter().enumerate() {
             check_linear(&self.linear_name(i), l)?;
         }
-        if let Some(syn) = &self.plan.syn {
-            let what = self.syn_name();
+        let last_factor = |s: &SynRecipe| s.shrink_factors.last().copied().unwrap_or(1);
+        for (index, syn) in self.plan.syn.iter().enumerate() {
+            let what = self.syn_name(index);
             syn.validate().map_err(|e| format!("{what}: {e}"))?;
+            if let Some(first) = self.plan.syn.first() {
+                if last_factor(syn) != last_factor(first) {
+                    return Err(format!(
+                        "{what}['shrink_factors'] ends with {}, {}['shrink_factors'] with {}: \
+                         every SyN stage must end with the same shrink factor, so that their \
+                         fields share the grid of the last level",
+                        last_factor(syn),
+                        self.syn_name(0),
+                        last_factor(first)
+                    ));
+                }
+            }
             if syn.cc_radius > GPU_CC_RADIUS_MAX {
                 return Err(format!(
                     "{what}['cc_radius']: the GPU kernels support 1 to {GPU_CC_RADIUS_MAX}, \
@@ -215,9 +273,11 @@ impl Recipe {
                 r.initial = spec;
             }
             if let Some(v) = obj.get("stages").filter(|v| !v.is_null()) {
-                let (linear, syn) = stages_from_json(v, channels)?;
-                r.plan.linear = linear;
-                r.plan.syn = syn;
+                let stages = stages_from_json(v, channels)?;
+                r.plan.linear = stages.linear;
+                r.plan.syn = stages.syn;
+                r.linear_masks = stages.linear_masks;
+                r.syn_masks = stages.syn_masks;
             }
         } else {
             let mut linear = LinearPlan::cohort();
@@ -238,7 +298,7 @@ impl Recipe {
                 }
             }
             r.plan.linear = vec![linear.rigid, linear.affine];
-            r.plan.syn = Some(syn);
+            r.plan.syn = vec![syn];
         }
         r.check(channels)?;
         Ok(r)
@@ -257,15 +317,20 @@ impl Recipe {
                 .plan
                 .linear
                 .iter()
-                .map(|l| {
+                .enumerate()
+                .map(|(i, l)| {
                     let mut s = linear_to_json(l);
                     s["transform"] = json!(kind_name(l.kind));
+                    s["fixed_mask"] = json!(self.linear_switches(i).fixed);
                     s
                 })
                 .collect();
-            if let Some(syn) = &self.plan.syn {
+            for (i, syn) in self.plan.syn.iter().enumerate() {
                 let mut s = syn_to_json(syn);
+                let switches = self.syn_switches(i);
                 s["transform"] = json!("syn");
+                s["fixed_mask"] = json!(switches.fixed);
+                s["moving_mask"] = json!(switches.moving);
                 stages.push(s);
             }
             return json!({
@@ -278,7 +343,7 @@ impl Recipe {
             "rigid": linear_to_json(&self.plan.linear[0]),
             "affine": linear_to_json(&self.plan.linear[1]),
         });
-        if let Some(syn) = &self.plan.syn {
+        if let Some(syn) = self.plan.syn.first() {
             v["syn"] = syn_to_json(syn);
         }
         if self.plan.winsorize != Some((WINSORIZE_LOWER, WINSORIZE_UPPER)) {
@@ -433,54 +498,101 @@ pub fn initial_file(
     }
 }
 
-fn stages_from_json(
-    v: &Value,
-    channels: usize,
-) -> Result<(Vec<LinearRecipe>, Option<SynRecipe>), String> {
+/// The stages of a stage-list recipe with their mask switches.
+struct StageList {
+    linear: Vec<LinearRecipe>,
+    syn: Vec<SynRecipe>,
+    linear_masks: Vec<MaskSwitches>,
+    syn_masks: Vec<MaskSwitches>,
+}
+
+fn switches_from_json(
+    fields: &mut Map<String, Value>,
+    what: &str,
+    syn: bool,
+) -> Result<MaskSwitches, String> {
+    let mut switches = MaskSwitches::default();
+    for key in MASK_SWITCH_KEYS {
+        let Some(v) = fields.remove(*key) else {
+            continue;
+        };
+        if *key == "moving_mask" && !syn {
+            return Err(format!(
+                "{what}['moving_mask'] is not supported on a linear stage: FastWarp applies the \
+                 moving mask to SyN stages only, so only they have this switch"
+            ));
+        }
+        let on = v
+            .as_bool()
+            .ok_or_else(|| field_err(what, key, "true or false", &v))?;
+        if *key == "fixed_mask" {
+            switches.fixed = on;
+        } else {
+            switches.moving = on;
+        }
+    }
+    Ok(switches)
+}
+
+fn stages_from_json(v: &Value, channels: usize) -> Result<StageList, String> {
     let list = v
         .as_array()
         .ok_or_else(|| format!("recipe['stages'] must be a list of stage dicts, got {v}"))?;
-    let mut linear = Vec::new();
-    let mut syn: Option<SynRecipe> = None;
+    let mut out = StageList {
+        linear: Vec::new(),
+        syn: Vec::new(),
+        linear_masks: Vec::new(),
+        syn_masks: Vec::new(),
+    };
     for (i, item) in list.iter().enumerate() {
         let what = format!("recipe['stages'][{i}]");
         let m = item
             .as_object()
             .ok_or_else(|| format!("{what} must be a dict (a JSON object)"))?;
-        if syn.is_some() {
-            return Err(format!(
-                "{what}: a stage after the SyN stage is not supported: FastWarp runs the linear \
-                 stages first and at most one SyN stage, last"
-            ));
-        }
         let kind = m.get("transform").and_then(Value::as_str);
-        let mut fields = m.clone();
-        fields.remove("transform");
-        match kind {
-            Some("rigid") => {
-                let mut l = LinearRecipe::cohort_rigid();
-                linear_from_json(&fields, &mut l, &what)?;
-                linear.push(l);
-            }
-            Some("affine") => {
-                let mut l = LinearRecipe::cohort_affine();
-                linear_from_json(&fields, &mut l, &what)?;
-                linear.push(l);
-            }
-            Some("syn") => {
-                let mut r = cohort_syn(channels);
-                syn_from_json(&fields, &mut r, &what)?;
-                syn = Some(r);
-            }
+        let keys = match kind {
+            Some("rigid" | "affine") => LINEAR_KEYS,
+            Some("syn") => SYN_KEYS,
             _ => {
                 return Err(format!(
                     "{what}['transform'] must be 'rigid', 'affine' or 'syn', got {}",
                     m.get("transform").cloned().unwrap_or(Value::Null)
                 ))
             }
+        };
+        if kind != Some("syn") && !out.syn.is_empty() {
+            return Err(format!(
+                "{what}: a linear stage after a SyN stage is not supported: FastWarp runs the \
+                 linear stages first, then the SyN stages"
+            ));
+        }
+        let mut fields = m.clone();
+        fields.remove("transform");
+        let allowed: Vec<&str> = keys.iter().chain(MASK_SWITCH_KEYS).copied().collect();
+        check_json_keys(&fields, &allowed, &what)?;
+        let switches = switches_from_json(&mut fields, &what, kind == Some("syn"))?;
+        match kind {
+            Some("rigid") => {
+                let mut l = LinearRecipe::cohort_rigid();
+                linear_from_json(&fields, &mut l, &what)?;
+                out.linear.push(l);
+                out.linear_masks.push(switches);
+            }
+            Some("affine") => {
+                let mut l = LinearRecipe::cohort_affine();
+                linear_from_json(&fields, &mut l, &what)?;
+                out.linear.push(l);
+                out.linear_masks.push(switches);
+            }
+            _ => {
+                let mut r = cohort_syn(channels);
+                syn_from_json(&fields, &mut r, &what)?;
+                out.syn.push(r);
+                out.syn_masks.push(switches);
+            }
         }
     }
-    Ok((linear, syn))
+    Ok(out)
 }
 
 /// The cohort `Rigid` (`transform = "rigid"`) or `Affine` (`"affine"`) stage.
@@ -740,7 +852,7 @@ mod tests {
 
     #[test]
     fn cohort_weights_are_one_over_the_channel_count() {
-        let weights = |n| Recipe::cohort(n).plan.syn.unwrap().channel_weights;
+        let weights = |n| Recipe::cohort(n).plan.syn[0].channel_weights.clone();
         assert_eq!(weights(1), vec![1.0]);
         assert_eq!(weights(2), vec![0.5, 0.5]);
         assert_eq!(weights(3), vec![1.0 / 3.0; 3]);
@@ -767,7 +879,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let syn = r.plan.syn.as_ref().unwrap();
+        let syn = &r.plan.syn[0];
         assert_eq!(syn.iterations, vec![5, 3]);
         assert_eq!(syn.smoothing_sigmas, vec![1.0, 0.0]);
         assert_eq!(
@@ -847,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn the_stage_list_form_reads_any_linear_chain_and_an_optional_syn_stage() {
+    fn the_stage_list_form_reads_any_linear_chain_and_optional_syn_stages() {
         let r = Recipe::from_json(
             &json!({"initial": "identity", "stages": [
                 {"transform": "affine", "iterations": [5, 3], "shrink_factors": [2, 1],
@@ -864,7 +976,7 @@ mod tests {
             [LinearKind::Affine, LinearKind::Rigid, LinearKind::Affine]
         );
         assert_eq!(r.plan.linear[0].iterations, vec![5, 3]);
-        assert!(r.plan.syn.is_none());
+        assert!(r.plan.syn.is_empty());
         let v = r.to_json();
         assert_eq!(v["initial"], json!("identity"));
         assert_eq!(v["stages"][1]["transform"], json!("rigid"));
@@ -879,7 +991,7 @@ mod tests {
         )
         .unwrap();
         assert!(r.plan.linear.is_empty());
-        let syn = r.plan.syn.as_ref().unwrap();
+        let syn = &r.plan.syn[0];
         assert_eq!(
             (syn.cc_radius, syn.channel_weights.clone()),
             (2, vec![0.5, 0.5])
@@ -888,7 +1000,7 @@ mod tests {
 
         let r = Recipe::from_json(&json!({"initial": "com"}), 1).unwrap();
         assert_eq!(r.plan.linear.len(), 2);
-        assert!(r.plan.syn.is_some());
+        assert_eq!(r.plan.syn.len(), 1);
         assert!(r.to_json()["stages"].as_array().unwrap().len() == 3);
 
         let r = Recipe::from_json(
@@ -924,11 +1036,46 @@ mod tests {
             ),
             (
                 json!({"stages": [{"transform": "syn"}, {"transform": "affine"}]}),
-                "after the SyN stage",
+                "recipe['stages'][1]: a linear stage after a SyN stage is not supported",
             ),
             (
-                json!({"stages": [{"transform": "syn"}, {"transform": "syn"}]}),
-                "after the SyN stage",
+                json!({"stages": [{"transform": "syn"}, {"transform": "syn"}, {"transform": "rigid"}]}),
+                "recipe['stages'][2]: a linear stage after a SyN stage is not supported",
+            ),
+            (
+                json!({"stages": [{"transform": "rigid", "moving_mask": false}]}),
+                "recipe['stages'][0]['moving_mask'] is not supported on a linear stage",
+            ),
+            (
+                json!({"stages": [{"transform": "syn", "fixed_mask": 1}]}),
+                "recipe['stages'][0]['fixed_mask']: expected true or false, got 1",
+            ),
+            (
+                json!({"stages": [{"transform": "syn", "moving_mask": "no"}]}),
+                "recipe['stages'][0]['moving_mask']: expected true or false",
+            ),
+            (
+                json!({"stages": [{"transform": "syn"},
+                                  {"transform": "syn", "iterations": [3, 2],
+                                   "shrink_factors": [4, 2], "smoothing_sigmas": [1, 0]}]}),
+                "recipe['stages'][1]['shrink_factors'] ends with 2, recipe['stages'][0]['shrink_factors'] with 1",
+            ),
+            (
+                json!({"syn": {"fixed_mask": false}}),
+                "recipe['syn']: unknown key 'fixed_mask'",
+            ),
+            (
+                json!({"stages": [{"transform": "syn", "fixed_masks": false}]}),
+                "unknown key 'fixed_masks' (known: gradient_step",
+            ),
+            (
+                json!({"stages": [{"transform": "translation", "moving_mask": false}]}),
+                "'rigid', 'affine' or 'syn'",
+            ),
+            (
+                json!({"stages": [{"transform": "rigid"}, {"transform": "syn"}, {"transform": "syn"},
+                                  {"transform": "syn", "cc_radius": 9}]}),
+                "recipe['stages'][3]['cc_radius']",
             ),
             (
                 json!({"stages": [{"transform": "rigid", "cc_radius": 2}]}),
@@ -964,6 +1111,52 @@ mod tests {
     }
 
     #[test]
+    fn a_stage_list_runs_several_syn_stages_with_mask_switches() {
+        let v = json!({"initial": "identity", "stages": [
+            {"transform": "affine", "fixed_mask": false},
+            {"transform": "syn"},
+            {"transform": "syn", "cc_radius": 2, "iterations": [20, 10],
+             "shrink_factors": [2, 1], "smoothing_sigmas": [1, 0],
+             "fixed_mask": true, "moving_mask": false},
+        ]});
+        let r = Recipe::from_json(&v, 2).unwrap();
+        assert_eq!(r.plan.linear.len(), 1);
+        assert_eq!(r.plan.syn.len(), 2);
+        assert_eq!(r.plan.syn[1].cc_radius, 2);
+        assert_eq!(r.plan.syn[1].channel_weights, vec![0.5, 0.5]);
+        assert_eq!(
+            r.linear_switches(0),
+            MaskSwitches {
+                fixed: false,
+                moving: true
+            }
+        );
+        assert_eq!(r.syn_switches(0), MaskSwitches::default());
+        assert_eq!(
+            r.syn_switches(1),
+            MaskSwitches {
+                fixed: true,
+                moving: false
+            }
+        );
+        let out = r.to_json();
+        assert_eq!(out["stages"][0]["fixed_mask"], json!(false));
+        assert!(out["stages"][0].get("moving_mask").is_none());
+        assert_eq!(out["stages"][1]["fixed_mask"], json!(true));
+        assert_eq!(out["stages"][1]["moving_mask"], json!(true));
+        assert_eq!(out["stages"][2]["moving_mask"], json!(false));
+        let back = Recipe::from_json(&out, 2).unwrap();
+        assert_eq!(back.plan, r.plan);
+        assert_eq!(back.linear_masks, r.linear_masks);
+        assert_eq!(back.syn_masks, r.syn_masks);
+        assert_eq!(back.to_json(), out);
+        assert!(r.plan.is_deformable());
+        let cohort = Recipe::cohort(1);
+        assert_eq!(cohort.syn_switches(0), MaskSwitches::default());
+        assert!(cohort.to_json()["syn"].get("fixed_mask").is_none());
+    }
+
+    #[test]
     fn a_relative_start_path_is_anchored_and_a_linear_chain_takes_one_channel() {
         let v = json!({"initial": {"path": "a.mat"}, "stages": []});
         let r = resolve_initial_path(&v, std::path::Path::new("dir"));
@@ -993,7 +1186,7 @@ mod tests {
         assert_eq!(r.plan.linear.len(), 1);
         let r = Recipe::from_json(&json!({"initial": "identity", "stages": null}), 1).unwrap();
         assert_eq!(r.plan.linear.len(), 2);
-        assert!(r.plan.syn.is_some());
+        assert_eq!(r.plan.syn.len(), 1);
         let r = Recipe::from_json(&json!({"rigid": {"seed": 3}, "initial": null}), 1).unwrap();
         assert_eq!(r.plan.linear[0].seed, 3);
         let e = Recipe::from_json(

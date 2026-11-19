@@ -66,13 +66,33 @@ pub trait Backend: Sync {
     fn copy_field(&self, field: &Self::Field) -> Result<Self::Field>;
 
     /// Resamples `source` onto the grid of `field`: output voxel `x` takes the linearly
-    /// interpolated value of `source` at `affine(x + field(x))` (the field first, then the
-    /// optional affine), and zero where that point lies outside `source`'s buffer.
+    /// interpolated value of `source` at `affine(q + pre(q))` with `q = x + field(x)` (the field
+    /// first, then the optional earlier field `pre`, then the optional affine), and zero where
+    /// that point lies outside `source`'s buffer. `pre` lives on its own grid: `pre(q)` is
+    /// interpolated linearly there and is zero where `q` lies outside its buffer, as ITK's
+    /// `DisplacementFieldTransform` maps a point. The image is interpolated once.
     fn warp_through_field(
         &self,
         source: &Self::Image,
         field: &Self::Field,
+        pre: Option<&Self::Field>,
         affine: Option<&AffineTransform>,
+    ) -> Result<Self::Image>;
+
+    /// Resamples a mask (an image of zeros and ones) onto the grid of `field` through the same
+    /// map as [`Backend::warp_through_field`], with nearest-neighbour interpolation: output voxel
+    /// `x` is 1 where the mask voxel nearest to `affine(q + pre(q))`, `q = x + field(x)`
+    /// (rounding half up, as ITK's `NearestNeighborInterpolateImageFunction`) is not zero, and 0
+    /// where it is zero or the point lies outside the mask's buffer. With `product` (an image on the grid of
+    /// `field`), the result is multiplied into `product` voxel by voxel and returned in its
+    /// buffer.
+    fn warp_mask_through_field(
+        &self,
+        mask: &Self::Image,
+        field: &Self::Field,
+        pre: Option<&Self::Field>,
+        affine: Option<&AffineTransform>,
+        product: Option<Self::Image>,
     ) -> Result<Self::Image>;
 
     /// ANTs neighbourhood cross-correlation of two images on the same grid: the metric value
@@ -97,6 +117,35 @@ pub trait Backend: Sync {
         let forward = self.cc_value_derivative(fixed, moving, radius)?;
         let backward = self.cc_value_derivative(moving, fixed, radius)?;
         Ok((forward, backward))
+    }
+
+    /// [`Backend::cc_value_derivative_pair`] restricted to the voxels where `valid` (an image of
+    /// zeros and ones on the grid of the two images: the fixed and the moving mask resolved on
+    /// it) is not zero, as ITK's metric treats points outside its masks: the window sums and
+    /// their voxel count take only valid voxels, a voxel that is not valid has no value and a
+    /// zero derivative, and each value is the mean over the valid voxels. Fails when no voxel is
+    /// valid.
+    fn cc_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        valid: &Self::Image,
+        radius: usize,
+    ) -> Result<MetricPair<Self::Field>>;
+
+    /// [`Backend::cc_value_derivative_pair_masked`] with the [`Backend::l2_norm`] of both
+    /// derivatives, in the same order. The default calls them one after the other; a backend
+    /// that can return all the scalars at once overrides it with bit-identical results.
+    fn cc_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        valid: &Self::Image,
+        radius: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        let pair = self.cc_value_derivative_pair_masked(fixed, moving, valid, radius)?;
+        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        Ok((pair, norms))
     }
 
     /// [`Backend::cc_value_derivative_pair`] with the [`Backend::l2_norm`] of both derivatives,

@@ -26,7 +26,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Registration of MOVING to FIXED: Rigid, Affine and SyN by default, any start, linear stages
-    /// and optional SyN stage with a stage-list recipe.
+    /// and SyN stages with a stage-list recipe.
     Register(RegisterArgs),
     /// One rigid or affine fit of MOVING to FIXED (Mattes mutual information).
     Linear(LinearArgs),
@@ -104,6 +104,16 @@ pub struct RegisterArgs {
     /// {"initial": ..., "stages": [...]}; fields left out keep the default.
     #[arg(long, value_name = "FILE")]
     pub recipe: Option<PathBuf>,
+    /// Fixed-image mask (NIfTI, any grid): the metrics of every stage use only its non-zero
+    /// voxels (for example the brain, without a lesion); a stage-list recipe can switch it off
+    /// per stage ("fixed_mask": false).
+    #[arg(long, value_name = "MASK")]
+    pub mask: Option<PathBuf>,
+    /// Moving-image mask (NIfTI, any grid): the SyN stages use only its non-zero voxels (for
+    /// example everything but a resection cavity); a stage-list recipe can switch it off per SyN
+    /// stage ("moving_mask": false). The linear stages do not use it.
+    #[arg(long, value_name = "MASK")]
+    pub moving_mask: Option<PathBuf>,
     /// Also write <PREFIX>_Warped.nii.gz, MOVING on the registration grid.
     #[arg(long)]
     pub write_warped: bool,

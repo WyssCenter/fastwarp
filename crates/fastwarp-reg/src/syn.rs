@@ -24,7 +24,8 @@
 // `DownsampleImagesForMetricDerivatives`, `GenerateData`), `itkObjectToObjectMultiMetricv4.hxx`
 // (`GetValueAndDerivative`, `GetWeightedValue`, weight normalisation), `itkImageRegistrationMethodv4.hxx`
 // (`InitializeRegistrationAtEachLevel`: shrunk virtual domain, per-level smoothing, iteration state)
-// and from ANTs `itkantsRegistrationHelper.hxx` (the SyN stage set-up). See
+// and from ANTs `itkantsRegistrationHelper.hxx` (the SyN stage set-up, the earlier stages as the
+// moving initial transform, `CollapseDisplacementFieldTransforms`). See
 // `docs/THIRD_PARTY_PORTS.md`.
 
 //! ITK's symmetric normalisation (`SyNImageRegistrationMethod`) as `antsRegistration` drives it,
@@ -34,10 +35,13 @@
 //! `M` and their inverses. One iteration:
 //!
 //! 1. every channel's smoothed full-resolution fixed image is resampled onto the level grid
-//!    through `F^-1`, and the moving image through `affine(M^-1(x))`;
+//!    through `F^-1`, and the moving image through `affine(M^-1(x))` (after earlier SyN stages
+//!    `affine(W(M^-1(x)))`, see [`SynStart`]);
 //! 2. the ANTs CC metric runs on those two images (identity transforms, so its derivative is a
 //!    per-voxel image-space gradient), once with the fixed-side image as "fixed" and once with the
-//!    roles swapped; several channels combine as ITK's multi-metric
+//!    roles swapped; with masks, the fixed mask is resampled through `F^-1` and the moving mask
+//!    through the same map as the moving image (nearest neighbour), and the metric uses only the
+//!    voxels inside both; several channels combine as ITK's multi-metric
 //!    `(sum |d_j| / J) sum w_j d_j / |d_j|`; the value is the first metric's;
 //! 3. each gradient is Gaussian-smoothed (update variance) and scaled so its largest voxel step is
 //!    the gradient step;
@@ -47,6 +51,10 @@
 //! 6. the energy `0.5 * (value_a + value_b)` enters the window convergence monitor.
 //!
 //! The result is `SyN = Minv o F` composed with the initial affine into a [`CompositePair`].
+//! After earlier SyN stages the result is collapsed with their field `W` as
+//! `antsRegistration --collapse-output-transforms 1` collapses consecutive displacement fields
+//! (`CollapseDisplacementFieldTransforms`): forward `SyN(x) + W(x + SyN(x))`, inverse
+//! `Winv(x) + SyN^-1(x + Winv(x))`, both on the grid of the last level.
 
 use std::borrow::Cow;
 use std::sync::atomic::AtomicBool;
@@ -54,7 +62,7 @@ use std::sync::atomic::AtomicBool;
 use crate::backend::Backend;
 use crate::convergence::WindowConvergenceMonitor;
 use crate::error::{check_cancel, invalid, Result};
-use crate::field_ops::{InvertParams, InvertStats};
+use crate::field_ops::{InvertParams, InvertStats, VectorField};
 use crate::grid::Grid;
 use crate::linear::SmoothCache;
 use crate::pyramid::{
@@ -116,17 +124,63 @@ pub struct SynLevelTrace {
     pub converged: bool,
 }
 
-/// Output of [`run_syn`].
+/// Output of [`run_syn`] and [`run_syn_from`].
 #[derive(Clone, Debug)]
 pub struct SynResult {
     /// `Composite = [Affine, Warp]`, `InverseComposite = [InverseWarp, Affine^-1]`.
     pub pair: CompositePair,
-    /// `SyN(x) = F(x) + Minv(x + F(x))` on the last level grid, `f32` like `1Warp.nii.gz`.
+    /// `SyN(x) = F(x) + Minv(x + F(x))` on the last level grid, `f32` like `1Warp.nii.gz`;
+    /// after earlier SyN stages, collapsed with their field: `SyN(x) + W(x + SyN(x))`.
     pub warp: DisplacementField,
-    /// `SyN^-1(x) = M(x) + Finv(x + M(x))` on the last level grid.
+    /// `SyN^-1(x) = M(x) + Finv(x + M(x))` on the last level grid; after earlier SyN stages,
+    /// `Winv(x) + SyN^-1(x + Winv(x))`.
     pub inverse_warp: DisplacementField,
     /// Per-level traces.
     pub levels: Vec<SynLevelTrace>,
+}
+
+/// The displacement fields of the SyN stages that ran before a SyN stage, collapsed into one
+/// field per direction (what `antsRegistration --collapse-output-transforms 1` writes for
+/// them). Both live on the grid of the last level of the stages, which a following stage must
+/// share.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PriorWarp {
+    /// Forward field `W`: a fixed point `x` goes to `x + W(x)`, which the affine then maps
+    /// into the moving image.
+    pub warp: VectorField,
+    /// Inverse field `Winv`.
+    pub inverse_warp: VectorField,
+}
+
+/// Where a SyN stage starts on the moving side: the linear transform of the earlier stages
+/// (fixed points to moving points) and, after earlier SyN stages, their collapsed field. As
+/// `antsRegistration` passes the composite of all earlier stages to a stage as its moving initial
+/// transform, the moving image and the moving mask are sampled at `affine(W(M^-1(x)))`, `W`
+/// evaluated by linear interpolation on its own grid (zero displacement outside it), with one
+/// interpolation of the image.
+#[derive(Clone, Copy, Debug)]
+pub struct SynStart<'a> {
+    /// The collapsed linear transform of the start and the linear stages.
+    pub affine: &'a AffineTransform,
+    /// The collapsed fields of the earlier SyN stages; `None` for the first SyN stage.
+    pub prior: Option<&'a PriorWarp>,
+}
+
+impl<'a> SynStart<'a> {
+    /// A start from `affine` alone (the first SyN stage).
+    pub fn affine(affine: &'a AffineTransform) -> Self {
+        Self {
+            affine,
+            prior: None,
+        }
+    }
+}
+
+/// The two collapsed fields of a SyN stage and its per-level traces.
+pub(crate) struct SynFields {
+    pub(crate) warp: VectorField,
+    pub(crate) inverse_warp: VectorField,
+    pub(crate) levels: Vec<SynLevelTrace>,
 }
 
 struct State<B: Backend> {
@@ -242,6 +296,7 @@ fn side_updates<B: Backend>(
     recipe: &SynRecipe,
     fixed_mid: &[B::Image],
     moving_mid: &[B::Image],
+    valid: Option<&B::Image>,
 ) -> Result<(SideUpdate<B>, SideUpdate<B>)> {
     let channels = fixed_mid.len();
     let sum: f64 = recipe.channel_weights.iter().sum();
@@ -249,21 +304,27 @@ fn side_updates<B: Backend>(
     let mut fixed_side = SideAccumulator::<B>::new(channels);
     let mut moving_side = SideAccumulator::<B>::new(channels);
     for c in 0..channels {
+        let (fixed, moving, radius) = (&fixed_mid[c], &moving_mid[c], recipe.cc_radius);
         let (((fixed_value, fixed_derivative), (moving_value, moving_derivative)), norms) =
-            if channels == 1 {
-                let pair = backend.cc_value_derivative_pair(
-                    &fixed_mid[c],
-                    &moving_mid[c],
-                    recipe.cc_radius,
-                )?;
-                (pair, None)
-            } else {
-                let (pair, norms) = backend.cc_value_derivative_pair_with_norms(
-                    &fixed_mid[c],
-                    &moving_mid[c],
-                    recipe.cc_radius,
-                )?;
-                (pair, Some(norms))
+            match (channels == 1, valid) {
+                (true, None) => (
+                    backend.cc_value_derivative_pair(fixed, moving, radius)?,
+                    None,
+                ),
+                (true, Some(valid)) => (
+                    backend.cc_value_derivative_pair_masked(fixed, moving, valid, radius)?,
+                    None,
+                ),
+                (false, None) => {
+                    let (pair, norms) =
+                        backend.cc_value_derivative_pair_with_norms(fixed, moving, radius)?;
+                    (pair, Some(norms))
+                }
+                (false, Some(valid)) => {
+                    let (pair, norms) = backend
+                        .cc_value_derivative_pair_masked_with_norms(fixed, moving, valid, radius)?;
+                    (pair, Some(norms))
+                }
             };
         fixed_side.add(
             backend,
@@ -314,6 +375,51 @@ fn update_total_field<B: Backend>(
     Ok((new_field, new_inverse, stats_inverse, stats_field))
 }
 
+struct StageMasks<B: Backend> {
+    fixed: Option<B::Image>,
+    moving: Option<B::Image>,
+}
+
+impl<B: Backend> StageMasks<B> {
+    fn upload(backend: &B, recipe: &SynRecipe) -> Result<Self> {
+        let up = |m: &Option<crate::mask::MaskVolume>| {
+            m.as_ref()
+                .map(|m| backend.upload_image_owned(m.to_binary_volume()?))
+                .transpose()
+        };
+        Ok(Self {
+            fixed: up(&recipe.fixed_mask)?,
+            moving: up(&recipe.moving_mask)?,
+        })
+    }
+
+    /// The voxels of the level grid inside both masks, as ITK resamples the masks onto the
+    /// virtual domain in `ComputeMetricGradientField`; `None` without masks.
+    fn validity(
+        &self,
+        backend: &B,
+        state: &State<B>,
+        initial: &AffineTransform,
+        prior: Option<&B::Field>,
+    ) -> Result<Option<B::Image>> {
+        let fixed = self
+            .fixed
+            .as_ref()
+            .map(|m| backend.warp_mask_through_field(m, &state.f2m_inv, None, None, None))
+            .transpose()?;
+        match &self.moving {
+            Some(m) => Ok(Some(backend.warp_mask_through_field(
+                m,
+                &state.m2m_inv,
+                prior,
+                Some(initial),
+                fixed,
+            )?)),
+            None => Ok(fixed),
+        }
+    }
+}
+
 fn upload_smoothed<B: Backend>(
     backend: &B,
     vol: &Volume<f64>,
@@ -342,6 +448,28 @@ pub fn run_syn<B: Backend>(
     run_syn_cached(backend, recipe, channels, initial, options, None)
 }
 
+/// [`run_syn`] from `start`: after earlier SyN stages, their collapsed field enters the moving
+/// side of every metric evaluation, and the result is collapsed with it (see [`SynResult`]).
+/// The prior fields must lie on the grid of this stage's last level.
+pub fn run_syn_from<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    start: SynStart<'_>,
+    options: &SynOptions<'_>,
+) -> Result<SynResult> {
+    let out = syn_fields(backend, recipe, channels, start, None, options.cancel)?;
+    let warp = out.warp.to_displacement_field()?;
+    let inverse_warp = out.inverse_warp.to_displacement_field()?;
+    let pair = CompositePair::new(start.affine, warp.clone(), inverse_warp.clone())?;
+    Ok(SynResult {
+        pair,
+        warp,
+        inverse_warp,
+        levels: out.levels,
+    })
+}
+
 /// [`run_syn`] taking the smoothed copies of the first channel from `cache` (filled by the
 /// linear stages on the same images, [`crate::linear::run_linear_chain_cached`]) instead of
 /// smoothing them again; every pair it uses is removed from the cache.
@@ -353,14 +481,22 @@ pub fn run_syn_cached<B: Backend>(
     options: &SynOptions<'_>,
     cache: Option<&mut SmoothCache>,
 ) -> Result<SynResult> {
-    let (warp, inverse_warp, levels) =
-        syn_fields(backend, recipe, channels, initial, cache, options.cancel)?;
+    let out = syn_fields(
+        backend,
+        recipe,
+        channels,
+        SynStart::affine(initial),
+        cache,
+        options.cancel,
+    )?;
+    let warp = out.warp.to_displacement_field()?;
+    let inverse_warp = out.inverse_warp.to_displacement_field()?;
     let pair = CompositePair::new(initial, warp.clone(), inverse_warp.clone())?;
     Ok(SynResult {
         pair,
         warp,
         inverse_warp,
-        levels,
+        levels: out.levels,
     })
 }
 
@@ -372,19 +508,64 @@ pub(crate) fn run_syn_pair_cached<B: Backend>(
     options: &SynOptions<'_>,
     cache: Option<&mut SmoothCache>,
 ) -> Result<(CompositePair, Vec<SynLevelTrace>)> {
-    let (warp, inverse_warp, levels) =
-        syn_fields(backend, recipe, channels, initial, cache, options.cancel)?;
-    Ok((CompositePair::new(initial, warp, inverse_warp)?, levels))
+    let out = syn_fields(
+        backend,
+        recipe,
+        channels,
+        SynStart::affine(initial),
+        cache,
+        options.cancel,
+    )?;
+    let pair = CompositePair::new(
+        initial,
+        out.warp.to_displacement_field()?,
+        out.inverse_warp.to_displacement_field()?,
+    )?;
+    Ok((pair, out.levels))
+}
+
+/// One SyN stage of a stage list from `start`, its fields collapsed with the earlier ones and
+/// kept in `f64` for the next stage.
+pub(crate) fn run_syn_stage_cached<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    start: SynStart<'_>,
+    options: &SynOptions<'_>,
+    cache: Option<&mut SmoothCache>,
+) -> Result<SynFields> {
+    syn_fields(backend, recipe, channels, start, cache, options.cancel)
+}
+
+/// The fields of a SyN stage (`later`, `later_inverse`) collapsed with those of the SyN stages
+/// before it (`earlier` on the backend, `earlier_inverse` on the host), as ANTs'
+/// `CollapseDisplacementFieldTransforms` composes consecutive displacement fields: forward
+/// `compose(displacement = earlier, warping = later)`, `later(x) + earlier(x + later(x))`;
+/// inverse `compose(displacement = later_inverse, warping = earlier_inverse)`. The earlier
+/// inverse is uploaded only once the forward field is done, so one field less is resident.
+fn collapse<B: Backend>(
+    backend: &B,
+    earlier: B::Field,
+    earlier_inverse: &VectorField,
+    later: B::Field,
+    later_inverse: B::Field,
+) -> Result<(B::Field, B::Field)> {
+    let total = backend.compose(&earlier, &later)?;
+    drop(later);
+    drop(earlier);
+    let earlier_inverse = backend.upload_field(earlier_inverse)?;
+    let total_inverse = backend.compose(&later_inverse, &earlier_inverse)?;
+    Ok((total, total_inverse))
 }
 
 fn syn_fields<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
     channels: &[SynChannel],
-    initial: &AffineTransform,
+    start: SynStart<'_>,
     mut cache: Option<&mut SmoothCache>,
     cancel: Option<&AtomicBool>,
-) -> Result<(DisplacementField, DisplacementField, Vec<SynLevelTrace>)> {
+) -> Result<SynFields> {
     recipe.validate()?;
     if channels.is_empty() {
         return Err(invalid("syn", "no channels"));
@@ -404,6 +585,26 @@ fn syn_fields<B: Backend>(
             ));
         }
     }
+    let initial = start.affine;
+    if let Some(prior) = start.prior {
+        let factors = shrink_factors_per_dimension(
+            recipe.shrink_factors[recipe.levels() - 1],
+            fixed_grid.spacing(),
+        );
+        let last = level_virtual_grid(&fixed_grid, factors)?;
+        if prior.warp.grid() != &last || prior.inverse_warp.grid() != &last {
+            return Err(invalid(
+                "syn",
+                "the field of the earlier SyN stages is not on the grid of this stage's last \
+                 level: every SyN stage must end with the same shrink factor",
+            ));
+        }
+    }
+    let prior = start
+        .prior
+        .map(|p| backend.upload_field(&p.warp))
+        .transpose()?;
+    let masks = StageMasks::<B>::upload(backend, recipe)?;
     let mut state: Option<State<B>> = None;
     let mut levels = Vec::with_capacity(recipe.levels());
     for level in 0..recipe.levels() {
@@ -483,14 +684,23 @@ fn syn_fields<B: Backend>(
             let mut fixed_mid = Vec::with_capacity(channels.len());
             let mut moving_mid = Vec::with_capacity(channels.len());
             for c in 0..channels.len() {
-                fixed_mid.push(backend.warp_through_field(&fixed_smooth[c], &st.f2m_inv, None)?);
+                fixed_mid.push(backend.warp_through_field(
+                    &fixed_smooth[c],
+                    &st.f2m_inv,
+                    None,
+                    None,
+                )?);
                 moving_mid.push(backend.warp_through_field(
                     &moving_smooth[c],
                     &st.m2m_inv,
+                    prior.as_ref(),
                     Some(initial),
                 )?);
             }
-            let (fixed_side, moving_side) = side_updates(backend, recipe, &fixed_mid, &moving_mid)?;
+            let valid = masks.validity(backend, &st, initial, prior.as_ref())?;
+            let (fixed_side, moving_side) =
+                side_updates(backend, recipe, &fixed_mid, &moving_mid, valid.as_ref())?;
+            drop(valid);
             let State {
                 f2m,
                 f2m_inv,
@@ -537,7 +747,105 @@ fn syn_fields<B: Backend>(
     let st = state.ok_or_else(|| invalid("syn", "no levels were run"))?;
     let forward = backend.compose(&st.m2m_inv, &st.f2m)?;
     let inverse = backend.compose(&st.f2m_inv, &st.m2m)?;
-    let warp = backend.download_field(&forward)?.to_displacement_field()?;
-    let inverse_warp = backend.download_field(&inverse)?.to_displacement_field()?;
-    Ok((warp, inverse_warp, levels))
+    let (forward, inverse) = match (prior, start.prior) {
+        (Some(w), Some(p)) => {
+            drop(st);
+            drop(masks);
+            collapse(backend, w, &p.inverse_warp, forward, inverse)?
+        }
+        _ => (forward, inverse),
+    };
+    let warp = backend.download_field(&forward)?;
+    let inverse_warp = backend.download_field(&inverse)?;
+    Ok(SynFields {
+        warp,
+        inverse_warp,
+        levels,
+    })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::cpu::CpuBackend;
+    use crate::linalg::IDENTITY3;
+    use crate::transform::{TransformChain, TransformElem};
+
+    fn smooth(grid: Grid, amp: f64, phase: f64) -> VectorField {
+        VectorField::from_fn(grid, |p| {
+            [
+                amp * (0.21 * p[1] + phase).sin(),
+                0.7 * amp * (0.17 * p[2] - phase).cos(),
+                0.5 * amp * (0.13 * p[0] + 0.5 * phase).sin(),
+            ]
+        })
+    }
+
+    #[test]
+    fn the_collapse_maps_grid_points_as_the_two_fields_in_sequence() {
+        let grid = Grid::new(
+            [14, 12, 11],
+            [2.0, 1.5, 1.8],
+            [-13.0, -8.0, -9.0],
+            IDENTITY3,
+        )
+        .unwrap();
+        let (w1, w1_inv) = (smooth(grid, 2.5, 0.3), smooth(grid, -2.0, 1.1));
+        let (w2, w2_inv) = (smooth(grid, 1.5, 2.0), smooth(grid, -1.2, -0.4));
+        let b = CpuBackend;
+        let (total, total_inv) =
+            collapse(&b, w1.clone(), &w1_inv, w2.clone(), w2_inv.clone()).unwrap();
+        let field =
+            |f: &VectorField| TransformElem::DisplacementField(f.to_displacement_field().unwrap());
+        let forward = TransformChain::from_queue(vec![field(&w1), field(&w2)]);
+        let inverse = TransformChain::from_queue(vec![field(&w2_inv), field(&w1_inv)]);
+        let collapsed = TransformChain::from_queue(vec![field(&total)]);
+        let collapsed_inv = TransformChain::from_queue(vec![field(&total_inv)]);
+        let mut worst = 0.0f64;
+        for idx in 0..grid.num_voxels() {
+            let [i, j, k] = grid.ijk(idx);
+            let x = grid.index_to_point([i as f64, j as f64, k as f64]);
+            for (a, c) in [(&forward, &collapsed), (&inverse, &collapsed_inv)] {
+                let (p, q) = (a.apply(x), c.apply(x));
+                worst = (0..3).fold(worst, |w, n| w.max((p[n] - q[n]).abs()));
+            }
+        }
+        assert!(worst < 1e-5, "{worst}");
+        let swapped = b.compose(&w2, &w1).unwrap();
+        let differs = swapped
+            .data()
+            .iter()
+            .zip(total.data())
+            .any(|(s, t)| (0..3).any(|n| (s[n] - t[n]).abs() > 1e-3));
+        assert!(differs, "the order of the two fields matters");
+    }
+
+    #[test]
+    fn between_voxels_the_collapsed_field_follows_the_two_fields_to_interpolation_error() {
+        let grid = Grid::new([24, 22, 20], [2.0; 3], [-23.0, -21.0, -19.0], IDENTITY3).unwrap();
+        let (w1, w1_inv) = (smooth(grid, 2.0, 0.3), smooth(grid, -2.0, 1.1));
+        let (w2, w2_inv) = (smooth(grid, 1.0, 2.0), smooth(grid, -1.0, -0.4));
+        let (total, _) = collapse(&CpuBackend, w1.clone(), &w1_inv, w2.clone(), w2_inv).unwrap();
+        let mut worst = 0.0f64;
+        let [nx, ny, nz] = grid.size();
+        for idx in 0..grid.num_voxels() {
+            let [i, j, k] = grid.ijk(idx);
+            if i < 3 || j < 3 || k < 3 || i + 4 > nx || j + 4 > ny || k + 4 > nz {
+                continue;
+            }
+            let c = [i as f64 + 0.37, j as f64 + 0.61, k as f64 + 0.5];
+            let x = grid.index_to_point(c);
+            let (Some(a), Some(b)) = (total.interpolate(x), w2.interpolate(x)) else {
+                continue;
+            };
+            let q = [x[0] + b[0], x[1] + b[1], x[2] + b[2]];
+            let d = w1.interpolate(q).unwrap_or([0.0; 3]);
+            worst = (0..3).fold(worst, |w, n| w.max((a[n] - (b[n] + d[n])).abs()));
+        }
+        eprintln!(
+            "largest difference between the collapsed and the chained fields: {worst:.3e} mm"
+        );
+        assert!(worst < 0.1, "{worst}");
+    }
 }

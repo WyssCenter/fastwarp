@@ -17,7 +17,7 @@ use crate::args::{
     ApplyArgs, Command, ComposeArgs, FitsArgs, GpuInfoArgs, LinearArgs, RecipeArgs, RegisterArgs,
     TransformArg,
 };
-use crate::engine::{self, SynOutputs, SynRun};
+use crate::engine::{self, LevelSummary, SynOutputs, SynRun};
 use crate::image;
 use crate::recipe::{linear_stage_from_json, linear_to_json, Recipe};
 use crate::{CliError, ExitStatus};
@@ -102,6 +102,17 @@ fn grid_text(g: [usize; 3]) -> String {
     format!("{}x{}x{}", g[0], g[1], g[2])
 }
 
+fn level_json(l: &LevelSummary) -> Value {
+    json!({
+        "stage": l.stage,
+        "level": l.level,
+        "grid": l.grid_size,
+        "iterations": l.iterations,
+        "converged": l.converged,
+        "energy": l.energy,
+    })
+}
+
 pub(crate) fn syn_run_json(run: &SynRun) -> Value {
     let t = &run.timings;
     json!({
@@ -114,13 +125,12 @@ pub(crate) fn syn_run_json(run: &SynRun) -> Value {
         "syn_s": t.syn_s,
         "warp_s": t.warp_s,
         "write_s": run.write_s,
-        "levels": run.levels.iter().map(|l| json!({
-            "level": l.level,
-            "grid": l.grid_size,
-            "iterations": l.iterations,
-            "converged": l.converged,
-            "energy": l.energy,
-        })).collect::<Vec<_>>(),
+        "levels": run.levels.iter().map(level_json).collect::<Vec<_>>(),
+        "syn_stages": run
+            .syn_stages()
+            .into_iter()
+            .map(|s| s.into_iter().map(level_json).collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
         "affine_parameters": run.affine_parameters,
         "affine_center": run.affine_center,
         "initial_parameters": run.initial_parameters,
@@ -148,12 +158,18 @@ fn register(
         engine::check_iso_mm(mm)?;
     }
     let pairs = a.channel_pairs();
-    let recipe = load_recipe(a.recipe.as_deref(), pairs.len())?;
+    let mut recipe = load_recipe(a.recipe.as_deref(), pairs.len())?;
     for (f, _, fixed_role, _) in &pairs {
         image::check_nifti_name(f, fixed_role)?;
     }
     for (_, m, _, moving_role) in &pairs {
         image::check_nifti_name(m, moving_role)?;
+    }
+    let masks = [(&a.mask, "--mask"), (&a.moving_mask, "--moving-mask")];
+    for (path, role) in masks {
+        if let Some(p) = path {
+            image::check_nifti_name(p, role)?;
+        }
     }
     let fixed = pairs
         .iter()
@@ -163,6 +179,12 @@ fn register(
         .iter()
         .map(|(_, p, _, role)| image::load(p, role))
         .collect::<Result<Vec<_>, _>>()?;
+    let [fixed_mask, moving_mask] = masks.map(|(path, role)| {
+        path.as_deref()
+            .map(|p| image::load(p, role).map(MaskVolume::from_volume))
+            .transpose()
+    });
+    engine::apply_masks(&mut recipe, fixed_mask?, moving_mask?)?;
     let outputs_layout = engine::output_layout(a.outputs.name())?;
     prepare_prefix(&a.output)?;
     engine::check_out_folder(&a.output)?;
@@ -425,6 +447,7 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         channels,
         a.common.adapter.clone(),
         &recipe,
+        &engine::MaskDims::default(),
     )?;
     if a.common.json {
         print_json(

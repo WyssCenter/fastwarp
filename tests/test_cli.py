@@ -77,6 +77,8 @@ EXIT_CASES = [
     (["register", "f.nii", "m.nii", "-o", "x_", "--fixed2", "a.nii", "--moving2", "b.nii"], 2),
     (["register", "f.nii", "m.nii", "-o", "x_", "--channel", "a.nii"], 2),
     (["register", "a.mha", "b.nii", "-o", "x_"], 2),
+    (["register", "f.nii", "m.nii", "-o", "x_", "--moving-mask", "a.mha"], 2),
+    (["register", "f.nii", "m.nii", "-o", "x_", "--mask", "a.mha"], 2),
     (["apply", "-r", "missing.nii", "-i", "m.nii", "-o", "o.nii", "-t", "t.mat"], 3),
     (["fits", "missing.nii.gz"], 3),
     (["bench", "--repeat", "0"], 2),
@@ -440,6 +442,134 @@ def test_a_stage_list_recipe_and_split_outputs_match_the_python_api(ants, regist
     ok("apply", "-r", files["fixed"], "-i", files["moving"], "-o", out, "-t", tx[0], "-t", tx[1])
     theirs = ants.apply_transforms(fixed=fixed, moving=moving, transformlist=tx)
     assert np.abs(ants.image_read(str(out)).numpy() - theirs.numpy()).max() < 1e-3
+
+
+@needs_gpu
+def test_register_masks_match_the_python_api(ants, registered):
+    d, files, _, _ = registered
+    fixed = ants.image_read(str(files["fixed"]))
+    moving = ants.image_read(str(files["moving"]))
+    fixed_mask = ants.threshold_image(fixed, 0.1, 1e9)
+    moving_mask = ants.threshold_image(moving, 0.1, 1e9)
+    hole = ants.threshold_image(moving, 0.9, 1e9)
+    moving_mask = moving_mask * (1.0 - hole)
+    masks = {"fixed": d / "fixed_mask.nii.gz", "moving": d / "moving_mask.nii.gz"}
+    ants.image_write(fixed_mask, str(masks["fixed"]))
+    ants.image_write(moving_mask, str(masks["moving"]))
+    recipe = d / "recipe.json"
+    prefix = d / "masked" / "sub_"
+    common = (
+        "register",
+        files["fixed"],
+        files["moving"],
+        "--iso-mm",
+        str(SPACING),
+        "--recipe",
+        recipe,
+        "--outputs",
+        "split",
+    )
+    p = ok(*common, "-o", f"{prefix}", "--mask", masks["fixed"], "--moving-mask", masks["moving"])
+    assert "wrote" in p.stdout
+    api = g.register_syn(
+        fixed,
+        moving,
+        d / "masked_api" / "sub_",
+        iso_mm=SPACING,
+        recipe=SMALL_RECIPE,
+        outputs="split",
+        fixed_mask=ants.image_read(str(masks["fixed"])),
+        moving_mask=ants.image_read(str(masks["moving"])),
+    )
+    unmasked = g.register_syn(
+        fixed,
+        moving,
+        d / "unmasked_api" / "sub_",
+        iso_mm=SPACING,
+        recipe=SMALL_RECIPE,
+        outputs="split",
+        fixed_mask=ants.image_read(str(masks["fixed"])),
+    )
+    assert api["affine_parameters"] == unmasked["affine_parameters"]
+    for f in ("sub_1Warp.nii.gz", "sub_1InverseWarp.nii.gz"):
+        mine = ants.image_read(str(d / "masked" / f)).numpy()
+        theirs = ants.image_read(str(d / "masked_api" / f)).numpy()
+        np.testing.assert_array_equal(mine, theirs)
+        other = ants.image_read(str(d / "unmasked_api" / f)).numpy()
+        assert np.abs(mine - other).max() > 1e-3, "the moving mask did not reach the SyN stage"
+    linear = d / "linear_only.json"
+    linear.write_text(json.dumps({"stages": [{"transform": "rigid"}]}))
+    p = run(*common[:5], "-o", d / "lin_", "--recipe", linear, "--moving-mask", masks["moving"])
+    assert p.returncode == 2
+    assert "needs a SyN stage" in p.stderr
+
+
+@needs_gpu
+def test_two_syn_stages_with_switches_match_the_python_api(ants, registered):
+    d, files, _, _ = registered
+    fixed = ants.image_read(str(files["fixed"]))
+    moving = ants.image_read(str(files["moving"]))
+    refine = ants.threshold_image(fixed, 0.9, 1e9)
+    lesion = 1.0 - ants.threshold_image(moving, 0.9, 1e9)
+    masks = {"fixed": d / "refine_mask.nii.gz", "moving": d / "lesion_mask.nii.gz"}
+    ants.image_write(refine, str(masks["fixed"]))
+    ants.image_write(lesion, str(masks["moving"]))
+    two_syn = {
+        "initial": "identity",
+        "stages": [
+            {"transform": "syn", **SMALL_RECIPE["syn"], "fixed_mask": False},
+            {
+                "transform": "syn",
+                "iterations": [5],
+                "shrink_factors": [1],
+                "smoothing_sigmas": [0],
+                "moving_mask": True,
+            },
+        ],
+    }
+    recipe = d / "two_syn.json"
+    recipe.write_text(json.dumps(two_syn))
+    prefix = d / "two_syn" / "sub_"
+    p = ok(
+        "register",
+        files["fixed"],
+        files["moving"],
+        "-o",
+        f"{prefix}",
+        "--iso-mm",
+        str(SPACING),
+        "--recipe",
+        recipe,
+        "--outputs",
+        "split",
+        "--mask",
+        masks["fixed"],
+        "--moving-mask",
+        masks["moving"],
+        "--json",
+    )
+    info = json.loads(p.stdout)
+    assert [len(s) for s in info["syn_stages"]] == [2, 1]
+    assert [lvl["level"] for lvl in info["levels"]] == [0, 1, 0]
+    assert info["recipe"]["stages"][0]["fixed_mask"] is False
+    api = g.register_syn(
+        fixed,
+        moving,
+        d / "two_syn_api" / "sub_",
+        iso_mm=SPACING,
+        recipe=two_syn,
+        outputs="split",
+        fixed_mask=ants.image_read(str(masks["fixed"])),
+        moving_mask=ants.image_read(str(masks["moving"])),
+    )
+    assert info["recipe"] == api["recipe"]
+    assert [[lvl["iterations"] for lvl in s] for s in info["syn_stages"]] == [
+        [lvl[2] for lvl in s] for s in api["syn_stages"]
+    ]
+    for f in ("sub_1Warp.nii.gz", "sub_1InverseWarp.nii.gz"):
+        mine = ants.image_read(str(d / "two_syn" / f)).numpy()
+        theirs = ants.image_read(str(d / "two_syn_api" / f)).numpy()
+        np.testing.assert_array_equal(mine, theirs)
 
 
 @needs_gpu

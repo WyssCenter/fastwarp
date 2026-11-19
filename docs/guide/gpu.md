@@ -138,6 +138,22 @@ per voxel of the grid for each, about 0.14 GiB at 1 mm and 1.1 GiB at 0.5 mm. Th
 from the model, not measurements per grid; the GPU test suite checks that the plan stays above
 the measured peak for one to four channels.
 
+[Masks](normalization.md#masks) add to a SyN stage: each mask stays on its own grid, at 4 bytes
+per mask voxel, and each level needs the image of the voxels inside both masks and one more
+window plane with its sum, which the plan counts as 13 bytes per voxel of the grid. With both
+masks on the grid of a 96³ test run, the measured peak grew by 21.5 bytes per voxel (8 of them the
+two masks), and the plan by 22.6. At 1 mm on this template, two masks on the template's grid add
+about 0.14 GiB.
+
+[Several SyN stages](recipes.md#several-syn-stages) are checked one by one, because the engine
+frees its idle buffers before each SyN stage: the plan is that of the stage that needs the most,
+with only the masks it uses. Every SyN stage after the first also keeps the field of the earlier
+SyN stages on the registration grid, which the plan counts as 12 bytes per voxel. On a 96³ test
+run, a second SyN stage raised the measured peak by 3.8 to 6.8 bytes per voxel over one stage
+(it starts with fewer idle buffers than the first), and the plan stayed above the measured peak
+for one and two channels, with and without masks. At 1 mm on this template the second stage
+adds at most about 0.08 GiB.
+
 With the 1 GiB reserve, a 1 mm registration of one channel on this template needs a discrete
 GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
 [Performance](../performance.md#earlier-measurements-on-non-public-data) page used a different

@@ -119,6 +119,10 @@ pub struct SynStageSpec {
     pub shrink_factors: Vec<u32>,
     pub smoothing_sigmas: Vec<f64>,
     pub sigma_units: SigmaUnits,
+    /// The fixed-image mask of this stage (`--masks [fixed,...]`).
+    pub fixed_mask: Option<PathBuf>,
+    /// The moving-image mask of this stage (`--masks [...,moving]`).
+    pub moving_mask: Option<PathBuf>,
 }
 
 /// One stage, in command-line order.
@@ -131,13 +135,13 @@ pub enum StageSpec {
 /// An `antsRegistration` call FastWarp runs: the images, the start, the stages and the outputs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegistrationPlan {
-    /// Fixed image of each channel (the first metric of the SyN stage first; a linear-only run
-    /// has one channel).
+    /// Fixed image of each channel (the metrics of the first SyN stage, in order; a linear-only
+    /// run has one channel).
     pub fixed: Vec<PathBuf>,
     /// Moving image of each channel.
     pub moving: Vec<PathBuf>,
     pub initial: InitialArg,
-    /// The linear stages, then at most one SyN stage.
+    /// The linear stages, then the SyN stages.
     pub stages: Vec<StageSpec>,
     /// `--winsorize-image-intensities [lower,upper]`; `None`: ANTs' plain rescale to [0, 1].
     pub winsorize: Option<(f64, f64)>,
@@ -161,7 +165,7 @@ pub struct RegistrationPlan {
 }
 
 impl RegistrationPlan {
-    /// Number of channels (1, or as many as the SyN stage has metrics).
+    /// Number of channels (1, or as many as each SyN stage has metrics).
     pub fn channels(&self) -> usize {
         self.fixed.len()
     }
@@ -174,12 +178,17 @@ impl RegistrationPlan {
         })
     }
 
-    /// The SyN stage, if any.
-    pub fn syn_stage(&self) -> Option<&SynStageSpec> {
-        self.stages.iter().find_map(|s| match s {
+    /// The SyN stages, in order.
+    pub fn syn_stages(&self) -> impl Iterator<Item = &SynStageSpec> {
+        self.stages.iter().filter_map(|s| match s {
             StageSpec::Syn(s) => Some(s),
             StageSpec::Linear(_) => None,
         })
+    }
+
+    /// The first SyN stage, if any.
+    pub fn syn_stage(&self) -> Option<&SynStageSpec> {
+        self.syn_stages().next()
     }
 
     /// Whether ANTs writes `0GenericAffine.mat`: with an initial transform or a linear stage.
@@ -221,7 +230,7 @@ impl RegistrationPlan {
     }
 
     /// The recipe (stage-list form, `fastwarp register --recipe`) of the call. A start from a
-    /// file is given as `{"path": ..., "invert": ...}`; fixed masks are not part of a recipe
+    /// file is given as `{"path": ..., "invert": ...}`; masks are not part of a recipe
     /// (see [`RegistrationPlan::to_json`]). Without `--random-seed` the stages keep the default
     /// seed.
     pub fn recipe_json(&self) -> Value {
@@ -296,6 +305,10 @@ impl RegistrationPlan {
                 .linear_stages()
                 .map(|l| l.fixed_mask.as_deref().map(text))
                 .collect::<Vec<_>>(),
+            "syn_masks": self.syn_stages().map(|s| json!({
+                "fixed": s.fixed_mask.as_deref().map(text),
+                "moving": s.moving_mask.as_deref().map(text),
+            })).collect::<Vec<_>>(),
             "prefix": text(&self.prefix),
             "warped": self.warped.as_deref().map(text),
             "inverse_warped": self.inverse_warped.as_deref().map(text),
@@ -323,11 +336,12 @@ refused with exit status 2 before any work. See docs/cli.md.
 Supported:
   -d 3   -o PREFIX | [PREFIX,warped.nii.gz,inverseWarped.nii.gz]
   -r [fixed,moving,1] | Identity | file.mat | [file.mat,1]
-  stages, any number of Rigid / Affine, then at most one SyN:
+  stages, any number of Rigid / Affine, then any number of SyN (same CC images, same last -f):
     -t Rigid[step] | Affine[step]   -m MI[fixed,moving,w,32,Regular,percentage]
     -t SyN[step,ufv,tfv]            -m CC[fixed,moving,w,radius 1..8] (one or more)
     -c [MxN,threshold,window]  -f MxN  -s MxN[vox|mm]
-  -x [fixedMask,NULL] (Rigid / Affine stages)   -w [lower,upper]   -u 0
+  -x [fixedMask,movingMask] (moving mask: SyN stages only; across the SyN stages one fixed and
+     one moving mask file, or NULL)   -w [lower,upper]   -u 0
   -a 0|1   -z 1   -i 0   -n Linear|NearestNeighbor|LanczosWindowedSinc
   --float 0|1   --random-seed N   -v 0|1   --version   -h, --help
 ",
@@ -798,7 +812,9 @@ fn is_null(text: &str) -> bool {
     )
 }
 
-fn parse_masks(opts: &[Opt], stages: usize) -> Result<Vec<Option<PathBuf>>, Refusal> {
+type StageMasks = (Option<PathBuf>, Option<PathBuf>);
+
+fn parse_masks(opts: &[Opt], stages: usize) -> Result<Vec<StageMasks>, Refusal> {
     let mut masks = Vec::new();
     for o in opts.iter().filter(|o| o.key == "--masks") {
         let v = o.value()?;
@@ -817,23 +833,18 @@ fn parse_masks(opts: &[Opt], stages: usize) -> Result<Vec<Option<PathBuf>>, Refu
         } else {
             (v.to_string(), String::new())
         };
-        if !is_null(&moving) {
-            return unsupported(
-                "a moving-image mask in --masks",
-                "FastWarp has no moving-image mask.",
-            );
-        }
-        let fixed = if is_null(&fixed) {
-            None
-        } else {
-            let p = PathBuf::from(fixed);
+        let image = |name: String| -> Result<Option<PathBuf>, Refusal> {
+            if is_null(&name) {
+                return Ok(None);
+            }
+            let p = PathBuf::from(name);
             check_image_name(&p)?;
-            Some(p)
+            Ok(Some(p))
         };
-        masks.push(fixed);
+        masks.push((image(fixed)?, image(moving)?));
     }
     match masks.len() {
-        0 => Ok(vec![None; stages]),
+        0 => Ok(vec![(None, None); stages]),
         1 => Ok(vec![masks[0].clone(); stages]),
         n if n == stages => Ok(masks),
         n => refuse(format!(
@@ -1107,11 +1118,11 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
     let kinds: Vec<TransformKind> = parsed.iter().map(|p| p.transform.kind).collect();
     let syn_at = kinds.iter().position(|k| *k == TransformKind::Syn);
     if let Some(at) = syn_at {
-        if at + 1 != kinds.len() {
+        if kinds[at..].iter().any(|k| *k != TransformKind::Syn) {
             let order: Vec<&str> = kinds.iter().map(|k| k.name()).collect();
             return unsupported(
                 format!("stage order {}", order.join(", ")),
-                "FastWarp runs the linear stages first and at most one SyN stage, last.",
+                "FastWarp runs the linear stages first, then the SyN stages.",
             );
         }
     }
@@ -1127,6 +1138,31 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
         "the first stage"
     };
     for (i, p) in parsed.iter().enumerate() {
+        let same_channels = p.metrics.len() == fixed.len()
+            && p.metrics
+                .iter()
+                .zip(fixed.iter().zip(&moving))
+                .all(|(m, (f, v))| same_path(&m.fixed, f) && same_path(&m.moving, v));
+        if p.transform.kind == TransformKind::Syn && !same_channels {
+            let images: Vec<String> = p
+                .metrics
+                .iter()
+                .map(|m| format!("{}, {}", m.fixed.display(), m.moving.display()))
+                .collect();
+            let first: Vec<String> = fixed
+                .iter()
+                .zip(&moving)
+                .map(|(f, m)| format!("{}, {}", f.display(), m.display()))
+                .collect();
+            return unsupported(
+                format!("stage {} with the CC images {}", i + 1, images.join("; ")),
+                format!(
+                    "FastWarp's SyN stages register the same channels, the images of the first \
+                     SyN stage's metrics in the same order ({}).",
+                    first.join("; ")
+                ),
+            );
+        }
         let m = &p.metrics[0];
         if p.transform.kind != TransformKind::Syn
             && !(same_path(&m.fixed, &fixed[0]) && same_path(&m.moving, &moving[0]))
@@ -1178,16 +1214,10 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
 
     let masks = parse_masks(&opts, parsed.len())?;
     let mut stages = Vec::with_capacity(parsed.len());
-    for (p, mask) in parsed.into_iter().zip(masks) {
+    for (p, (fixed_mask, moving_mask)) in parsed.into_iter().zip(masks) {
         let s = p.schedule;
         match p.transform.kind {
             TransformKind::Syn => {
-                if mask.is_some() {
-                    return unsupported(
-                        "a fixed-image mask on the SyN stage (--masks)",
-                        "FastWarp's SyN stage has no mask; give NULL for that stage.",
-                    );
-                }
                 let t = &p.transform.params;
                 stages.push(StageSpec::Syn(SynStageSpec {
                     gradient_step: t[0],
@@ -1201,9 +1231,23 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
                     shrink_factors: s.shrink,
                     smoothing_sigmas: s.sigmas,
                     sigma_units: s.units,
+                    fixed_mask,
+                    moving_mask,
                 }));
             }
             kind => {
+                if moving_mask.is_some() {
+                    let name = if kind == TransformKind::Rigid {
+                        "Rigid"
+                    } else {
+                        "Affine"
+                    };
+                    return unsupported(
+                        format!("a moving-image mask on the {name} stage (--masks)"),
+                        "FastWarp applies a moving-image mask to SyN stages only; give NULL as \
+                         the moving mask of that stage.",
+                    );
+                }
                 let m = &p.metrics[0];
                 stages.push(StageSpec::Linear(LinearStageSpec {
                     kind: if kind == TransformKind::Rigid {
@@ -1219,14 +1263,74 @@ pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall,
                     smoothing_sigmas: s.sigmas,
                     sigma_units: s.units,
                     sampling_percentage: m.percentage.unwrap_or(1.0),
-                    fixed_mask: mask,
+                    fixed_mask,
                 }));
             }
         }
     }
-    if let Some(StageSpec::Syn(syn)) = stages.last() {
-        if syn.channel_weights.iter().sum::<f64>() <= 0.0 {
-            return refuse("the weights of the SyN metrics must not all be 0");
+    for stage in &stages {
+        if let StageSpec::Syn(syn) = stage {
+            if syn.channel_weights.iter().sum::<f64>() <= 0.0 {
+                return refuse("the weights of the SyN metrics must not all be 0");
+            }
+        }
+    }
+    let syn_at_stage: Vec<(usize, &SynStageSpec)> = stages
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| match s {
+            StageSpec::Syn(syn) => Some((i + 1, syn)),
+            StageSpec::Linear(_) => None,
+        })
+        .collect();
+    if let Some((first_k, first)) = syn_at_stage.first() {
+        let last = |s: &SynStageSpec| s.shrink_factors.last().copied().unwrap_or(1);
+        if let Some((k, s)) = syn_at_stage.iter().find(|(_, s)| last(s) != last(first)) {
+            return unsupported(
+                format!("stage {k} ending with shrink factor {}", last(s)),
+                format!(
+                    "FastWarp's SyN stages end with the same shrink factor, so that their fields \
+                     share one grid (stage {first_k} ends with {}).",
+                    last(first)
+                ),
+            );
+        }
+    }
+    let syn_specs: Vec<&SynStageSpec> = stages
+        .iter()
+        .filter_map(|s| match s {
+            StageSpec::Syn(syn) => Some(syn),
+            StageSpec::Linear(_) => None,
+        })
+        .collect();
+    for (which, files) in [
+        (
+            "fixed",
+            syn_specs
+                .iter()
+                .filter_map(|s| s.fixed_mask.clone())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "moving",
+            syn_specs
+                .iter()
+                .filter_map(|s| s.moving_mask.clone())
+                .collect(),
+        ),
+    ] {
+        if let Some(other) = files.iter().find(|p| !same_path(p, &files[0])) {
+            return unsupported(
+                format!(
+                    "a second {which}-image mask {} for the SyN stages (--masks; the first is {})",
+                    other.display(),
+                    files[0].display()
+                ),
+                format!(
+                    "FastWarp's SyN stages share one {which}-image mask; give the same file or \
+                     NULL for each SyN stage."
+                ),
+            );
         }
     }
 
@@ -1331,7 +1435,7 @@ mod tests {
         let r = Recipe::from_json(&p.recipe_json(), 1).unwrap();
         assert_eq!(r.plan.linear.len(), 2);
         assert_eq!(r.plan.winsorize, None);
-        assert_eq!(r.plan.syn.as_ref().unwrap().cc_radius, 2);
+        assert_eq!(r.plan.syn[0].cc_radius, 2);
     }
 
     #[test]
@@ -1503,8 +1607,84 @@ mod tests {
         assert_eq!(masks, vec![None, Some(PathBuf::from("a.nii"))]);
         let j = per_stage.to_json();
         assert_eq!(j["fixed_masks"], json!([null, "a.nii"]));
+        assert_eq!(j["syn_masks"], json!([{"fixed": null, "moving": null}]));
+        let syn = plan(&format!(
+            "-r [f.nii.gz,m.nii.gz,1] {LIN} {SYN} -x [a.nii,NULL] -x NULL -x [f.nii,m.nii.gz] -o o_"
+        ));
+        let s = syn.syn_stage().unwrap();
+        assert_eq!(s.fixed_mask, Some(PathBuf::from("f.nii")));
+        assert_eq!(s.moving_mask, Some(PathBuf::from("m.nii.gz")));
+        let j = syn.to_json();
+        assert_eq!(j["fixed_masks"], json!(["a.nii", null]));
+        assert_eq!(
+            j["syn_masks"],
+            json!([{"fixed": "f.nii", "moving": "m.nii.gz"}])
+        );
+        let once = plan(&format!("{SYN} -x [f.nii,m.nii] -o o_"));
+        let s = once.syn_stage().unwrap();
+        assert_eq!(
+            (s.fixed_mask.clone(), s.moving_mask.clone()),
+            (Some(PathBuf::from("f.nii")), Some(PathBuf::from("m.nii")))
+        );
+        assert_eq!(
+            plan(&full("-x mask.nii")).syn_stage().unwrap().fixed_mask,
+            Some(PathBuf::from("mask.nii"))
+        );
+        assert_eq!(
+            plan(&format!("{LIN} -o o_")).to_json()["syn_masks"],
+            json!([])
+        );
         assert_eq!(j["initial"], json!("com"));
         assert_eq!(j["files"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn several_syn_stages_take_their_masks_per_stage() {
+        let p = plan(&format!(
+            "-r [f.nii.gz,m.nii.gz,1] {LIN} {SYN} {SYN} -x NULL -x NULL -x [NA,lesion.nii] \
+             -x [subcortical.nii,lesion.nii] -o o_"
+        ));
+        assert_eq!(p.syn_stages().count(), 2);
+        let masks: Vec<_> = p
+            .syn_stages()
+            .map(|s| (s.fixed_mask.clone(), s.moving_mask.clone()))
+            .collect();
+        let lesion = Some(PathBuf::from("lesion.nii"));
+        assert_eq!(
+            masks,
+            vec![
+                (None, lesion.clone()),
+                (Some(PathBuf::from("subcortical.nii")), lesion)
+            ]
+        );
+        let j = p.to_json();
+        assert_eq!(
+            j["syn_masks"],
+            json!([
+                {"fixed": null, "moving": "lesion.nii"},
+                {"fixed": "subcortical.nii", "moving": "lesion.nii"}
+            ])
+        );
+        let stages = p.recipe_json()["stages"].as_array().unwrap().clone();
+        assert_eq!(stages.len(), 4);
+        assert_eq!(stages[3]["transform"], json!("syn"));
+        let r = crate::recipe::Recipe::from_json(&p.recipe_json(), 1).unwrap();
+        assert_eq!(r.plan.syn.len(), 2);
+        assert_eq!(
+            p.transform_files(),
+            vec![
+                PathBuf::from("o_0GenericAffine.mat"),
+                PathBuf::from("o_1Warp.nii.gz"),
+                PathBuf::from("o_1InverseWarp.nii.gz")
+            ]
+        );
+        let p = plan(&format!("{SYN} {SYN} -x [NA,NA] -x [mask.nii,NA] -o o_"));
+        let fixed: Vec<_> = p.syn_stages().map(|s| s.fixed_mask.clone()).collect();
+        assert_eq!(fixed, vec![None, Some(PathBuf::from("mask.nii"))]);
+        let once = plan(&format!("{SYN} {SYN} -x [mask.nii,m.nii] -o o_"));
+        assert!(once
+            .syn_stages()
+            .all(|s| s.fixed_mask.is_some() && s.moving_mask.is_some()));
     }
 
     #[test]
@@ -1545,8 +1725,9 @@ mod tests {
             (full("-u"), "-u needs a value, 0 or 1"),
             (full("--minc 1"), "--minc 1 is not supported: FastWarp writes ITK transform files."),
             (full("--foo 1"), "unknown option --foo"),
-            (full("-x [f.nii.gz,m.nii.gz]"), "a moving-image mask in --masks is not supported: FastWarp has no moving-image mask."),
-            (full("-x mask.nii.gz"), "a fixed-image mask on the SyN stage (--masks) is not supported: FastWarp's SyN stage has no mask; give NULL for that stage."),
+            (full("-x [f.nii.gz,m.nii.gz]"), "a moving-image mask on the Rigid stage (--masks) is not supported: FastWarp applies a moving-image mask to SyN stages only; give NULL as the moving mask of that stage."),
+            (full("-x [NULL,NULL] -x [a.nii,m.nii] -x [a.nii,m.nii]"), "a moving-image mask on the Affine stage (--masks) is not supported: FastWarp applies a moving-image mask to SyN stages only; give NULL as the moving mask of that stage."),
+            (full("-x [NULL,m.mha]"), "image m.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             (full("-x NULL -x NULL -x a.nii -x NULL"), "--masks is given 4 times for 3 stages: give it once or once per stage"),
             (full("-x a.mha"), "image a.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             (full("-w [0.9,0.1]"), "-w [0.9,0.1]: expected quantiles with 0 <= lower < upper <= 1"),
@@ -1579,8 +1760,12 @@ mod tests {
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -m CC[a.nii,b.nii,1,4] -m CC[c.nii,d.nii,1,2] -c 5 -f 1 -s 0 -o o_".into(), "stage 1: CC radii 4 and 2 is not supported: FastWarp's SyN stage uses one radius for all channels."),
             ("-t SyN[0.1] -m CC[f.mha,m.nii,1,4] -c 5 -f 1 -s 0 -o o_".into(), "image f.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -c 5 -f 1 -s 0 -o [o_,w.mha]".into(), "image w.mha is not supported: FastWarp reads and writes NIfTI images (.nii, .nii.gz) only."),
-            (format!("{SYN} {LIN} -o o_"), "stage order SyN, Rigid, Affine is not supported: FastWarp runs the linear stages first and at most one SyN stage, last."),
-            (format!("{SYN} {SYN} -o o_"), "stage order SyN, SyN is not supported: FastWarp runs the linear stages first and at most one SyN stage, last."),
+            (format!("{SYN} {LIN} -o o_"), "stage order SyN, Rigid, Affine is not supported: FastWarp runs the linear stages first, then the SyN stages."),
+            (format!("{SYN} {SYN} {LIN} -o o_"), "stage order SyN, SyN, Rigid, Affine is not supported: FastWarp runs the linear stages first, then the SyN stages."),
+            (format!("{SYN} {SYN} -x [a.nii,NULL] -x [b.nii,NULL] -o o_"), "a second fixed-image mask b.nii for the SyN stages (--masks; the first is a.nii) is not supported: FastWarp's SyN stages share one fixed-image mask; give the same file or NULL for each SyN stage."),
+            (format!("{LIN} {SYN} {SYN} -x NULL -x NULL -x [NULL,m.nii] -x [f.nii,n.nii] -o o_"), "a second moving-image mask n.nii for the SyN stages (--masks; the first is m.nii) is not supported: FastWarp's SyN stages share one moving-image mask; give the same file or NULL for each SyN stage."),
+            (format!("{LIN} {SYN} -t SyN[0.1,3,0] -m CC[f.nii.gz,m.nii.gz,1,2] -c [5x3,1e-6,10] -f 4x2 -s 1x0vox -o o_"), "stage 4 ending with shrink factor 2 is not supported: FastWarp's SyN stages end with the same shrink factor, so that their fields share one grid (stage 3 ends with 1)."),
+            (format!("{SYN} -t SyN[0.1,3,0] -m CC[f.nii.gz,x.nii.gz,1,2] -c [5x3,1e-6,10] -f 2x1 -s 1x0vox -o o_"), "stage 2 with the CC images f.nii.gz, x.nii.gz is not supported: FastWarp's SyN stages register the same channels, the images of the first SyN stage's metrics in the same order (f.nii.gz, m.nii.gz)."),
             (format!("-t Rigid[0.1] -m MI[f.nii.gz,x.nii.gz,1,32,Regular,0.25] -c 5 -f 1 -s 0 {SYN} -o o_"), "stage 1 with the images f.nii.gz, x.nii.gz is not supported: FastWarp's linear stages register the images of the first SyN metric (f.nii.gz, m.nii.gz)."),
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -c [5,1e-6,1] -f 1 -s 0 -o o_".into(), "-c [5,1e-6,1]: the convergence window must be at least 2"),
             ("-t SyN[0.1] -m CC[f.nii,m.nii,1,4] -c [5x3,1e-6,10] -f 1 -s 0 -o o_".into(), "stage 1: --convergence gives 2 levels, --shrink-factors 1 and --smoothing-sigmas 1: give one value per level"),

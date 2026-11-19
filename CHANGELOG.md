@@ -12,6 +12,43 @@
   voxel for every further channel, which bounded the measured peak for one to four channels.
 - Changed: `fastwarp register` no longer takes `--fixed2` and `--moving2`; `--fixed2 F2 --moving2 M2`
   becomes `--channel F2 M2`.
+- Masks in the SyN stage (cost-function masking), so that a lesion or a resection cavity does not
+  drive the deformation: `register_syn(fixed_mask=..., moving_mask=...)` and `fastwarp register
+  --mask FIXED_MASK --moving-mask MOVING_MASK`, on any grid. As in ITK's SyN with ANTs'
+  neighbourhood cross-correlation, every iteration resamples the fixed mask through the fixed-side
+  and the moving mask through the moving-side transform (nearest neighbour), and the metric of
+  every channel uses only the voxels inside both: window sums, value and gradient. The fixed mask
+  also applies to the linear stages; the moving mask applies to the SyN stage only for now, and a
+  recipe without a SyN stage refuses it. `fits_gpu` takes the masks for its memory plan (each
+  level about 13 bytes per voxel more, plus 4 bytes per mask voxel). `fastwarp ants-registration`
+  takes `-x [fixedMask,movingMask]` on the SyN stage and refuses a moving mask on a Rigid or
+  Affine stage; `fastwarp.ants.registration` takes `mask` and `moving_mask` for the SyN types as
+  ANTsPy applies them (the last stage, every stage with `mask_all_stages`) and refuses a moving
+  mask that ANTsPy would give to a linear stage. A level with no voxel inside both masks fails
+  with a clear error. Runs without masks are unchanged, bit for bit. With one mask, or with two
+  or more levels, `antsRegistration` 2.6.5 reuses masks it warped earlier in the run; FastWarp
+  does not, so masked results differ slightly from ANTs' there (see the differences listed under
+  `fastwarp ants-registration`).
+- Several SyN stages in one registration, for example a whole-brain SyN followed by a SyN that
+  only a subcortical region of the template drives ("subcortical refine"). A stage-list recipe
+  (`register_syn(recipe=...)`, `fastwarp register --recipe`) takes any number of `syn` stages
+  after the linear stages; they must end with the same shrink factor. As in `antsRegistration`,
+  each SyN stage starts from everything before it: its moving image and moving mask are sampled
+  through its moving-side field, the earlier SyN field and the affine, with one interpolation of
+  the image (a new GPU kernel, `k_warp_pre`; the existing kernels and results are unchanged, bit
+  for bit). After each stage the fields are collapsed as `--collapse-output-transforms 1` does,
+  so the outputs stay one affine and one warp per direction. Each stage of a stage list takes the
+  mask switches `"fixed_mask"` and, on SyN stages, `"moving_mask"` (default `true`), which keep
+  the call's masks out of single stages; a mask that every stage switches off is refused, and a
+  `"moving_mask"` switch on a linear stage is an error. The result has `syn_stages`, the levels
+  of each SyN stage, next to `levels` (all SyN levels, one stage after the other); the plan
+  JSON of the ANTs compatibility mode now reports `syn_masks` as a list, one entry per SyN
+  stage. `fastwarp ants-registration` takes several `-t SyN[...]` stages with the same CC images
+  and one `-x` per stage, and refuses two different fixed-mask or moving-mask files across the
+  SyN stages. The GPU capacity check plans each SyN stage on its own plus 12 bytes per voxel for
+  the earlier field. Against ANTs 2.6.5, two SyN stages agree to an RMS of 5e-6 mm without
+  masks; with masks the agreement is that of a masked single stage (see `docs/cli.md`).
+  `fastwarp.ants` is unchanged: no ANTsPy type runs more than one SyN stage.
 - Removed: `register_rigid`, `rigid_session` and `RigidSession`, deprecated in 0.2.0; use
   `LinearSession` for `RigidSession` and `linear_session(...)` for `rigid_session(...)`. For
   `register_rigid(fixed, moving, ...)`, use `with fastwarp.linear_session(fixed, moving,

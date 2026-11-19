@@ -18,10 +18,12 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
 - **A GPU is required.** The registration functions do not run on the CPU. Without a usable GPU
   they raise {class}`~fastwarp.GpuUnavailableError` (see [Falling back to ANTs](gpu.md#fall-back-to-ants)).
 - **Three transforms, in a fixed order.** {term}`Rigid`, {term}`affine` and {term}`SyN`: any
-  number of rigid and affine stages, then at most one SyN stage (see
-  [Stage lists](recipes.md#stage-lists)). ANTs' other transforms, such as `Similarity`,
-  `Translation`, `BSplineSyN` or `TimeVaryingVelocityField`, and a linear stage after SyN are not
-  available.
+  number of rigid and affine stages, then any number of SyN stages that end with the same shrink
+  factor (see [Stage lists](recipes.md#stage-lists)). ANTs' other transforms, such as
+  `Similarity`, `Translation`, `BSplineSyN` or `TimeVaryingVelocityField`, and a linear stage
+  after SyN are not available. With three or more SyN stages, a stage sees the earlier ones
+  through their collapsed field rather than one after the other as in ANTs (see
+  [Several SyN stages](recipes.md#several-syn-stages)).
 - **Two metrics, with limited settings.** {term}`Mattes mutual information` with exactly 32
   histogram bins and regularly spaced samples for the linear stages, and
   {term}`cross-correlation` with a window radius from 1 to 8 voxels for SyN. ANTs' other metrics (`MeanSquares`, `GC`, `Demons`,
@@ -34,9 +36,15 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
   `--collapse-output-transforms 1`, not the per-stage files of `-z 0`. A SyN-only run without
   a start (ANTs' `0Warp.nii.gz` layout) is not produced: FastWarp always writes a
   `0GenericAffine.mat`.
-- **No moving-image mask.** A mask limits where the fixed image is sampled, as ANTs'
-  `--masks [fixed,NULL]` does; there is no mask for the moving image. {func}`~fastwarp.register_syn`
-  takes no mask at all; only the [linear fits](linear.md#masks) do.
+- **The moving-image mask applies to SyN stages only, and a call has one mask per side.**
+  {func}`~fastwarp.register_syn` takes one fixed mask for every stage and one moving mask for the
+  SyN stages (see [Masks](normalization.md#masks)), as ANTs' `--masks [fixed,moving]` given once;
+  a stage-list recipe can switch either off per stage ([Mask switches](recipes.md#mask-switches)),
+  but not give a stage a mask of its own. The rigid and affine stages do not use a moving mask;
+  one given for them (`fastwarp ants-registration -x` on a linear stage, or a `fastwarp.ants`
+  call that would put it there) is refused, and `fastwarp ants-registration` refuses two
+  different fixed or moving mask files across its SyN stages. A moving mask on the linear stages
+  will follow.
 - **One stage per linear fit.** A {class}`~fastwarp.LinearSession` fit runs one rigid or one
   affine stage; chain several fits yourself.
 - **No bias-field correction.** Run N4 (for example `ants.n4_bias_field_correction`) before
