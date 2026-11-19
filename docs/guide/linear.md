@@ -139,12 +139,12 @@ A session runs one fit at a time. A second thread that calls
 `ValueError: the session is closed or busy`. Each fit releases Python's global interpreter lock
 while it runs.
 
-## Deprecated names
+## Removed names
 
-`register_rigid`, `rigid_session` and `RigidSession` still work but warn with a
-`DeprecationWarning` and will be removed in FastWarp 0.3.0. Replace them as follows:
+`register_rigid`, `rigid_session` and `RigidSession` were deprecated in FastWarp 0.2.0 and are
+removed. Replace them as follows:
 
-| Deprecated | Use |
+| Removed | Use |
 | --- | --- |
 | `fastwarp.register_rigid(fixed, moving, ...)` | `fastwarp.linear_session(fixed, moving, ...).register(...)`, in a `with` block |
 | `fastwarp.rigid_session(...)` | `fastwarp.linear_session(...)` |

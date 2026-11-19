@@ -49,6 +49,11 @@
   the earlier field. Against ANTs 2.6.5, two SyN stages agree to an RMS of 5e-6 mm without
   masks; with masks the agreement is that of a masked single stage (see `docs/cli.md`).
   `fastwarp.ants` is unchanged: no ANTsPy type runs more than one SyN stage.
+- Removed: `register_rigid`, `rigid_session` and `RigidSession`, deprecated in 0.2.0; use
+  `LinearSession` for `RigidSession` and `linear_session(...)` for `rigid_session(...)`. For
+  `register_rigid(fixed, moving, ...)`, use `with fastwarp.linear_session(fixed, moving,
+  fixed_mask=..., winsorize=..., adapter=...) as s: s.register(stage=..., initial=...,
+  out_prefix=..., cancel=...)`.
 
 ## 0.2.0 (2026-11-15)
 

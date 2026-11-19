@@ -94,9 +94,3 @@ The [command line](cli.md) reports the same errors as exit status: 2 for invalid
 for a file error, 4 for {class}`~fastwarp.GpuUnavailableError`, 5 for
 {class}`~fastwarp.GpuCapacityError`, 1 for other failures. See
 [Exit status](cli.md#exit-status).
-
-## Warnings
-
-The deprecated names `register_rigid`, `rigid_session` and `RigidSession` emit a
-`DeprecationWarning` when they are used. See
-[Linear fits](guide/linear.md#deprecated-names).

@@ -66,22 +66,21 @@ def test_private_modules_stay_importable():
     assert fastwarp._api.register_syn is fastwarp.register_syn
 
 
-def test_deprecated_names_are_not_public():
+def test_removed_names_are_not_public():
     for name in ("RigidSession", "rigid_session", "register_rigid"):
         assert name not in fastwarp.__all__ and name not in dir(fastwarp)
 
 
-def test_the_deprecated_names_still_work_but_warn():
-    with pytest.warns(DeprecationWarning, match="LinearSession") as record:
-        assert fastwarp.RigidSession is fastwarp.LinearSession
-    assert record[0].filename == __file__
-    with pytest.warns(DeprecationWarning, match="linear_session"):
-        assert fastwarp.rigid_session is fastwarp.linear_session
-    with pytest.warns(DeprecationWarning, match="register"):
-        assert callable(fastwarp.register_rigid)
-    with pytest.warns(DeprecationWarning) as record:
-        from fastwarp import RigidSession
-    assert record[0].filename == __file__
-    assert RigidSession is fastwarp.LinearSession
+def test_the_removed_rigid_names_are_gone():
+    import fastwarp._api
+    import fastwarp._core
+
+    for name in ("RigidSession", "rigid_session", "register_rigid"):
+        with pytest.raises(AttributeError):
+            getattr(fastwarp, name)
+        with pytest.raises(ImportError):
+            exec(f"from fastwarp import {name}")
+        assert not hasattr(fastwarp._api, name)
+    assert not hasattr(fastwarp._core, "check_linear_stage")
     with pytest.raises(AttributeError):
         _ = fastwarp.no_such_name
