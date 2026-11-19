@@ -40,7 +40,7 @@
 
 [Lead-DBS](https://www.lead-dbs.org)
 : A toolbox for deep brain stimulation imaging, which can normalize images with ANTs. The
-  earlier post-processing timings on the [Performance](performance.md) page are for the kind of
+  post-processing timings on the [Performance](performance.md) page are for the kind of
   steps it runs after a registration: composing the transforms into displacement fields and
   re-warping the subject's image. FastWarp does not depend on Lead-DBS.
 

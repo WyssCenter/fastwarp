@@ -24,12 +24,12 @@ FastWarp has run on these GPUs:
 
 | GPU | System | Graphics API | Source |
 | --- | --- | --- | --- |
-| NVIDIA RTX A4000 | Linux | Vulkan | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
-| Apple M5 Pro | macOS (MacBook Pro) | Metal | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
-| Intel Lunar Lake, integrated | Linux (laptop) | Vulkan | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
-| AMD Radeon Pro 5500 XT | macOS (Intel iMac) | Metal | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
-| NVIDIA Quadro K620, 2 GB | Windows Server 2022 | Vulkan | [Performance](../performance.md#earlier-measurements-on-non-public-data) |
-| Intel Arc 140V, integrated | Windows 11 (laptop) | Vulkan | the examples of this documentation |
+| NVIDIA RTX A4000 | Linux | Vulkan | [Performance](../performance.md#results) |
+| Apple M5 Pro | macOS (MacBook Pro) | Metal | [Performance](../performance.md#results) |
+| Intel Arc 140V (Lunar Lake), integrated | Linux (laptop) | Vulkan | [Performance](../performance.md#results) |
+| AMD Radeon Pro 5500 XT | macOS (Intel iMac) | Metal | [Performance](../performance.md#results) |
+| NVIDIA Quadro K620, 2 GB | Windows Server 2022 | Vulkan | [Performance](../performance.md#results) |
+| Intel Arc 140V (Lunar Lake), integrated | Windows 11 (laptop) | Vulkan | the examples of this documentation |
 | Mesa lavapipe (software) | Ubuntu, GitHub Actions | Vulkan | every CI run ([Testing](../testing.md#what-ci-runs)) |
 
 No measurement on DirectX 12 is published. If {func}`~fastwarp.gpu_info` raises
@@ -155,12 +155,9 @@ for one and two channels, with and without masks. At 1 mm on this template the s
 adds at most about 0.08 GiB.
 
 With the 1 GiB reserve, a 1 mm registration of one channel on this template needs a discrete
-GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
-[Performance](../performance.md#earlier-measurements-on-non-public-data) page used a different
-template, MNI 2009b, on a 1 mm grid of 197 × 233 × 189 voxels (8.7 million): there, one channel
-needs 1.38 GiB and two channels 1.54 GiB. On a 2 GB NVIDIA Quadro K620, the two-channel
-registration was refused, and the one-channel one ran only with
-`FASTWARP_GPU_MEMORY_BUDGET_MB=1900` (1.86 GiB).
+GPU that reports a little over 2.1 GiB of free memory. In the
+[benchmark](../performance.md#registration), the 2 GB NVIDIA Quadro K620 ran the `mindboggle`
+and `deep7t` pairs with the defaults and refused the `snsx` pairs.
 
 ## Check before you run
 

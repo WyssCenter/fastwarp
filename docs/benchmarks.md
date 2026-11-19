@@ -6,9 +6,9 @@ and how long both take. Reviewers can download the data and run it themselves. T
 `benchmarks/accuracy/` of the repository; it is not part of the wheel. The timings it records
 are the ones [Performance](performance.md) reports.
 
-No results are reported here yet. The benchmark has been tested end to end only on a
-synthetic phantom (`tests/test_benchmark_smoke.py`); the real-data runs are still to be done,
-and their tables will be added to this page when they are.
+The [results](#results) of the default run on five machines are at the end of this page; the
+timings are on [Performance](performance.md). The test suite runs the benchmark end to end on a
+synthetic phantom (`tests/test_benchmark_smoke.py`).
 
 ## What is measured
 
@@ -362,8 +362,10 @@ export UV_PYTHON=3.13
 uv sync --locked --no-install-project --group benchmark
 # FastWarp of this checkout (needs the Rust toolchain of rust-toolchain.toml):
 uv run --no-sync maturin develop --uv --release
-# or the released wheel from PyPI, checked against its pinned hashes:
-uv pip install --no-deps --require-hashes --only-binary :all: -r benchmarks/fastwarp-pypi.txt
+# or the released wheel from PyPI, checked against its pinned hashes (--no-config keeps the
+# project's scipy constraint, which --require-hashes refuses, out of this install; --python .venv
+# installs into the project environment even when another one is active):
+uv pip install --python .venv --no-config --no-deps --require-hashes --only-binary :all: -r benchmarks/fastwarp-pypi.txt
 uv run --no-sync python -c "import fastwarp; print(fastwarp.__version__, fastwarp.gpu_info())"
 ```
 
@@ -429,8 +431,9 @@ $B report --work ~/fastwarp-bench/work
 
 ### Time and disk
 
-These are estimates, not measurements; `plan` replaces them with the medians of the pairs
-already run, so run `--quick` first and check `plan` before starting the night.
+The table is the planning guess `plan` starts from; it replaces the guesses with the medians of
+the pairs already run, so run `--quick` first and check `plan` before starting the night.
+Measured totals follow the table.
 
 | Step | Assumption | Default run |
 | --- | --- | --- |
@@ -441,14 +444,20 @@ already run, so run `--quick` first and check `plan` before starting the night.
 | `post`, one pair, `.nii` outputs: ANTs; FastWarp (`--gzip` about doubles it) | about 90 s and 15 s | 50 pairs: about 1.5 h |
 | Total (20 `mindboggle` + 10 `deep7t` + 20 `snsx` pairs) | | about 9.3 h; allow 10–12 h |
 
+Measured from the start of `run` to the end of `report` (without `fetch`), the default run took
+2.0 h on an
+Apple M5 Pro, 5.0 h on 2 × Xeon Gold 6136 with an RTX A4000, 7.1 h on an iMac (Core i7-10700K,
+Radeon Pro 5500 XT), 7.4 h on a Core Ultra 7 258V laptop and 7.8 h on 2 × Xeon E5-2687W v4 with
+a Quadro K620; ANTs takes most of it (see [Performance](performance.md#results)).
 `--quick` (one pair per dataset) takes about 30 min without `linear` and `post`. If the night
 is short, lower the pairs (`--pairs`, also per step) or
 run the datasets or the steps on separate nights; every step resumes where it stopped.
 `post` writes six uncompressed fields and images per pair (about 1 GB for a 7 T pair;
 twice as many files with `--gzip`) and deletes them after comparing. Disk: 1.6 GB
 of data after extraction, 4.5 GB at the peak (the 2.85 GB 7 T archive is deleted after
-extraction unless `--keep-archives`), about 60 MB per pair in the work folder (transforms of both
-engines), so about 3 GB for the default run. Memory: about 4 GB of RAM for ANTs and evaluation; the GPU
+extraction unless `--keep-archives`), about 550 MB per pair in the work folder (the forward and
+inverse composite transforms of both engines, 0.07 to 0.2 GB each), so about 28 GB for the
+default run. Memory: about 4 GB of RAM for ANTs and evaluation; the GPU
 needs the memory `fastwarp.fits_gpu` checks (a pair that does not fit is recorded as skipped).
 
 ### Hardware notes
@@ -476,8 +485,91 @@ it). Leave `--threads` out for the timings to report; with it, say so next to th
 
 ## Results
 
-To be added after the first full run, as the `summary.md` tables of each recipe with the
-`environment.json` of the machine.
+The default run (20 `mindboggle`, 10 `deep7t` and 20 `snsx` pairs, `--recipe cohort`, 1 mm)
+ran on five machines on 17 and 18 November 2026, with FastWarp 0.2.0 from PyPI and the ANTs
+bundled with ANTsPy 0.6.3 (`v2.5.1.post95-g2236a75`); [Performance](performance.md#results)
+lists the machines and software and reports the timings. The tables below are the `report`
+output of the reference machine (NVIDIA RTX A4000, 2 × Intel Xeon Gold 6136, Ubuntu 24.04).
+The other four machines give the same results within small differences: between any two
+machines, the Dice score of one pair, engine and label group differs by at most 0.0021, its
+HD95 by at most 0.05 mm and the pair's mean landmark error by at most 0.1 mm. On the NVIDIA
+Quadro K620 (2 GB), FastWarp's capacity check refuses the `snsx` pairs
+([Performance](performance.md#registration)), so its `snsx` accuracy
+comes from ANTs alone.
+
+### FastWarp against ANTs
+
+Difference = FastWarp minus ANTs; CI = 95 % percentile bootstrap of the mean difference; p = Wilcoxon signed-rank (pairs share subjects, so the p-values and CIs treat dependent pairs as independent).
+
+| Dataset | Metric | Better | Pairs | FastWarp mean | SD | ANTs mean | SD | Mean diff. | CI low | CI high | p |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| deep7t | jac_nonpositive_frac | lower | 10 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
+| deep7t | dice_deep_nuclei | higher | 10 | 0.731 | 0.034 | 0.732 | 0.034 | -1.80e-04 | -3.98e-04 | 3.37e-05 | 0.193 |
+| deep7t | hd95_mm_deep_nuclei | lower | 10 | 1.517 | 0.232 | 1.517 | 0.230 | 7.39e-04 | -0.004 | 0.005 | 0.812 |
+| deep7t | assd_mm_deep_nuclei | lower | 10 | 0.543 | 0.066 | 0.543 | 0.065 | -2.36e-05 | -6.58e-04 | 5.02e-04 | 0.922 |
+| mindboggle | dice_cortical | higher | 20 | 0.567 | 0.014 | 0.567 | 0.014 | 5.17e-05 | -1.23e-04 | 2.32e-04 | 0.546 |
+| mindboggle | hd95_mm_cortical | lower | 20 | 5.890 | 0.410 | 5.887 | 0.406 | 0.003 | -2.80e-04 | 0.006 | 0.154 |
+| mindboggle | assd_mm_cortical | lower | 20 | 1.303 | 0.078 | 1.303 | 0.078 | 3.19e-05 | -5.38e-04 | 6.82e-04 | 0.674 |
+| mindboggle | dice_subcortical | higher | 20 | 0.798 | 0.018 | 0.798 | 0.018 | 1.54e-05 | -1.48e-04 | 1.68e-04 | 0.430 |
+| mindboggle | hd95_mm_subcortical | lower | 20 | 1.942 | 0.355 | 1.943 | 0.354 | -0.001 | -0.005 | 0.003 | 0.638 |
+| mindboggle | assd_mm_subcortical | lower | 20 | 0.724 | 0.075 | 0.724 | 0.075 | -4.98e-05 | -3.53e-04 | 2.87e-04 | 0.522 |
+| mindboggle | jac_nonpositive_frac | lower | 20 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
+| snsx | jac_nonpositive_frac | lower | 20 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 1.000 |
+| snsx | landmark_mean_mm | lower | 20 | 1.749 | 0.370 | 1.748 | 0.367 | 0.001 | -0.005 | 0.007 | 0.498 |
+| snsx | landmark_median_mm | lower | 20 | 1.348 | 0.244 | 1.342 | 0.248 | 0.006 | -0.004 | 0.016 | 0.368 |
+
+### Agreement between the two engines
+
+Field differences (mm) inside the fixed brain mask; Dice between the label maps the two engines warp.
+
+| Dataset | Metric | Pairs | Mean | SD | Max |
+| --- | --- | --- | --- | --- | --- |
+| deep7t | field_diff_rms_mm | 10 | 0.182 | 0.374 | 1.206 |
+| deep7t | field_diff_mean_mm | 10 | 0.092 | 0.160 | 0.511 |
+| deep7t | field_diff_p95_mm | 10 | 0.310 | 0.587 | 1.877 |
+| deep7t | field_diff_max_mm | 10 | 2.128 | 4.444 | 14.257 |
+| deep7t | agreement_dice_deep_nuclei | 10 | 0.997 | 0.003 | 0.999 |
+| mindboggle | field_diff_rms_mm | 20 | 0.069 | 0.046 | 0.150 |
+| mindboggle | field_diff_mean_mm | 20 | 0.040 | 0.026 | 0.080 |
+| mindboggle | field_diff_p95_mm | 20 | 0.128 | 0.087 | 0.284 |
+| mindboggle | field_diff_max_mm | 20 | 1.126 | 0.733 | 2.529 |
+| mindboggle | agreement_dice_cortical | 20 | 0.987 | 0.008 | 0.999 |
+| mindboggle | agreement_dice_subcortical | 20 | 0.997 | 0.001 | 1.000 |
+| snsx | field_diff_rms_mm | 20 | 0.162 | 0.169 | 0.763 |
+| snsx | field_diff_mean_mm | 20 | 0.125 | 0.128 | 0.577 |
+| snsx | field_diff_p95_mm | 20 | 0.328 | 0.345 | 1.556 |
+| snsx | field_diff_max_mm | 20 | 0.963 | 0.948 | 4.037 |
+
+:::{dropdown} Mean Dice per structure (non-cortical)
+| Dataset | Label | Structure | FastWarp | ANTs | Pairs |
+| --- | --- | --- | --- | --- | --- |
+| deep7t | 1 | STN_L | 0.618 | 0.619 | 10 |
+| deep7t | 2 | STN_R | 0.635 | 0.636 | 10 |
+| deep7t | 3 | SN_L | 0.716 | 0.717 | 10 |
+| deep7t | 4 | SN_R | 0.721 | 0.721 | 10 |
+| deep7t | 5 | RN_L | 0.828 | 0.828 | 10 |
+| deep7t | 6 | RN_R | 0.804 | 0.804 | 10 |
+| deep7t | 7 | GPe_L | 0.789 | 0.789 | 10 |
+| deep7t | 8 | GPe_R | 0.772 | 0.772 | 10 |
+| deep7t | 9 | GPi_L | 0.714 | 0.714 | 10 |
+| deep7t | 10 | GPi_R | 0.717 | 0.717 | 10 |
+| mindboggle | 10 | Left-Thalamus | 0.875 | 0.875 | 20 |
+| mindboggle | 11 | Left-Caudate | 0.796 | 0.796 | 20 |
+| mindboggle | 12 | Left-Putamen | 0.870 | 0.870 | 20 |
+| mindboggle | 13 | Left-Pallidum | 0.812 | 0.812 | 20 |
+| mindboggle | 17 | Left-Hippocampus | 0.765 | 0.765 | 20 |
+| mindboggle | 18 | Left-Amygdala | 0.717 | 0.717 | 20 |
+| mindboggle | 26 | Left-Accumbens | 0.697 | 0.697 | 20 |
+| mindboggle | 28 | Left-VentralDC | 0.840 | 0.840 | 20 |
+| mindboggle | 49 | Right-Thalamus | 0.875 | 0.876 | 20 |
+| mindboggle | 50 | Right-Caudate | 0.800 | 0.800 | 20 |
+| mindboggle | 51 | Right-Putamen | 0.868 | 0.868 | 20 |
+| mindboggle | 52 | Right-Pallidum | 0.821 | 0.821 | 20 |
+| mindboggle | 53 | Right-Hippocampus | 0.769 | 0.768 | 20 |
+| mindboggle | 54 | Right-Amygdala | 0.709 | 0.708 | 20 |
+| mindboggle | 58 | Right-Accumbens | 0.708 | 0.708 | 20 |
+| mindboggle | 60 | Right-VentralDC | 0.840 | 0.840 | 20 |
+:::
 
 ## References
 

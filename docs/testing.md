@@ -170,8 +170,9 @@ registration take it from the session fixture `baseline` (`tests/conftest.py`), 
 per process.
 
 Hardware GPUs are not tested in CI: `ci.yml` runs the GPU tests on the lavapipe software
-driver. The hardware in [Performance](performance.md) was measured by hand, and the examples of
-this documentation were run on an Intel Arc 140V laptop GPU.
+driver. The hardware in [Performance](performance.md) was measured with the benchmark
+(`benchmarks/scripts/chain.py`), and the examples of this documentation were run on an Intel
+Arc 140V laptop GPU.
 
 ## What the release workflow tests
 

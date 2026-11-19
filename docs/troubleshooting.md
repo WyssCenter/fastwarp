@@ -158,8 +158,8 @@ FastWarp follows the ANTs algorithms but does not reproduce ANTs' numbers digit 
   FastWarp gives the same result on every run on one GPU.
 
 The tests check how close the results are; [Performance and validation](validation.md#what-the-tests-check-today)
-lists the tolerances. The [accuracy benchmark](benchmarks.md) compares both tools on public
-data; its results are not published yet.
+lists the tolerances. The [accuracy benchmark](benchmarks.md#results) compares both tools on public
+data.
 
 ## Something else
 

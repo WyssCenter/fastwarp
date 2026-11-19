@@ -95,7 +95,7 @@ example 4 for no usable GPU and 5 for a grid too large for the GPU. Reference:
 - [Quickstart](https://fastwarp.readthedocs.io/latest/quickstart.html): first registration, resampling and a rigid fit.
 - [User guide](https://fastwarp.readthedocs.io/latest/user-guide.html): images, output files, recipes, linear fits and GPU memory.
 - [API reference](https://fastwarp.readthedocs.io/latest/api.html) and [environment variables](https://fastwarp.readthedocs.io/latest/environment.html).
-- [Performance](https://fastwarp.readthedocs.io/latest/performance.html) and the [accuracy benchmark](https://fastwarp.readthedocs.io/latest/benchmarks.html): how speed and accuracy are measured against ANTs on public data. No benchmark results yet; earlier measurements on non-public data are on the Performance page, labelled as such.
+- [Performance](https://fastwarp.readthedocs.io/latest/performance.html) and the [accuracy benchmark](https://fastwarp.readthedocs.io/latest/benchmarks.html): how speed and accuracy are measured against ANTs on public data, and the results on five machines.
 - [Troubleshooting](https://fastwarp.readthedocs.io/latest/troubleshooting.html): no GPU found, too little GPU memory.
 
 ## Project

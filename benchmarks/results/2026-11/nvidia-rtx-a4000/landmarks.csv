@@ -1,0 +1,1281 @@
+dataset,recipe,pair,fixed,moving,engine,label,description,error_mm
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,1,AC,0.7782381575617735
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,2,PC,0.6036198432734199
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,3,infracollicular sulcus,1.049392862310351
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,4,PMJ,2.7791893647149792
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,5,superior interpeduncular fossa,0.7228288475748526
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,6,R superior LMS,0.892152787964368
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,7,L superior LMS,0.9894760352514458
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,8,R inferior LMS,2.8984578706792465
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,9,L inferior LMS,1.741519943511231
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,10,culmen,1.530861698362727
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,11,intermammillary sulcus,1.545738484557447
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,12,R MB,1.1634077523927133
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,13,L MB,1.102680503388694
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,14,pineal gland,0.66375532662866
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,15,R LV at AC,4.614862646154428
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,16,L LV at AC,3.4754068533422244
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,17,R LV at PC,5.214315997024035
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,18,L LV at PC,5.059028569196481
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,19,genu of CC,0.7219742160506742
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,20,splenium of CC,0.243088347546339
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,21,R AL temporal horn,2.2657766854185253
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,22,L AL temporal horn,1.0184702445455602
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,23,R superior AM temporal horn,0.4131161487426088
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,24,L superior AM temporal horn,0.7645169423256988
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,25,R inferior AM temporal horn,2.7754289037460627
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,26,L inferior AM temporal horn,2.3786413789876284
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,27,R indusium griseum origin,5.25544259967967
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,28,L indusium griseum origin,7.180328361491743
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,29,R ventral occipital horn,2.58138939242353
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,30,L ventral occipital horn,1.240775708278714
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,31,R olfactory sulcal fundus,3.6306375960785915
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,fastwarp,32,L olfactory sulcal fundus,3.118553884288976
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,1,AC,0.7813428377087541
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,2,PC,0.6058789044144122
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,3,infracollicular sulcus,1.043189870081956
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,4,PMJ,2.773364517489323
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,5,superior interpeduncular fossa,0.721152552697206
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,6,R superior LMS,0.8869896883769287
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,7,L superior LMS,0.9877684808050219
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,8,R inferior LMS,2.8972619733518195
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,9,L inferior LMS,1.7452909700658308
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,10,culmen,1.5193403518759663
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,11,intermammillary sulcus,1.548939625117076
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,12,R MB,1.174706132031492
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,13,L MB,1.1035326956201579
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,14,pineal gland,0.6622089745993538
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,15,R LV at AC,4.668033371907644
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,16,L LV at AC,3.520541709016325
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,17,R LV at PC,5.26637736963261
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,18,L LV at PC,5.09824197583654
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,19,genu of CC,0.7327481169281298
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,20,splenium of CC,0.23700104841775754
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,21,R AL temporal horn,2.2841441529277686
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,22,L AL temporal horn,1.040761705353941
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,23,R superior AM temporal horn,0.4264959645614389
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,24,L superior AM temporal horn,0.7645358124203824
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,25,R inferior AM temporal horn,2.79266534924391
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,26,L inferior AM temporal horn,2.400509738886612
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,27,R indusium griseum origin,5.255459678577766
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,28,L indusium griseum origin,7.1853795993555245
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,29,R ventral occipital horn,2.611462487581394
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,30,L ventral occipital horn,1.2413228214080658
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,31,R olfactory sulcal fundus,3.6375739659169146
+snsx,cohort,MNI152NLin2009cAsym__C001,MNI152NLin2009cAsym,C001,ants,32,L olfactory sulcal fundus,3.121046036466387
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,1,AC,0.24781230951440708
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,2,PC,0.6357351382388536
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,3,infracollicular sulcus,0.16602290893322977
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,4,PMJ,0.5855769608035456
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,5,superior interpeduncular fossa,0.4518922718731183
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,6,R superior LMS,1.3598562687225393
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,7,L superior LMS,1.8938168626138128
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,8,R inferior LMS,1.8668400856625278
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,9,L inferior LMS,2.7640372776883484
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,10,culmen,0.7874121999103435
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,11,intermammillary sulcus,0.6108867682972325
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,12,R MB,0.7018560269177604
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,13,L MB,0.2533374170129094
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,14,pineal gland,1.1169590016569293
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,15,R LV at AC,2.268150531864035
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,16,L LV at AC,2.4115160818360986
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,17,R LV at PC,5.076102258095606
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,18,L LV at PC,5.800236022527488
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,19,genu of CC,2.4226472023246997
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,20,splenium of CC,0.7583165626917145
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,21,R AL temporal horn,7.55079159664651
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,22,L AL temporal horn,5.979741396508586
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,23,R superior AM temporal horn,5.502337314883018
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,24,L superior AM temporal horn,1.4479491302815601
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,25,R inferior AM temporal horn,6.200954214872616
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,26,L inferior AM temporal horn,4.794584689636271
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,27,R indusium griseum origin,5.79340855920205
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,28,L indusium griseum origin,2.147330563571981
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,29,R ventral occipital horn,2.626316113455069
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,30,L ventral occipital horn,4.341840971983154
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,31,R olfactory sulcal fundus,1.2304207968836385
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,fastwarp,32,L olfactory sulcal fundus,0.9585419513565191
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,1,AC,0.25373616157873813
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,2,PC,0.6548467314822926
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,3,infracollicular sulcus,0.18170575024437555
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,4,PMJ,0.6352383387764844
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,5,superior interpeduncular fossa,0.47119300637763356
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,6,R superior LMS,1.398486432566343
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,7,L superior LMS,1.9122077462201126
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,8,R inferior LMS,1.8764552407403432
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,9,L inferior LMS,2.775552846247756
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,10,culmen,0.8970942561721602
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,11,intermammillary sulcus,0.6112694076088576
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,12,R MB,0.7184957409474872
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,13,L MB,0.2476974212419578
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,14,pineal gland,1.1191291010227944
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,15,R LV at AC,2.1493862513596094
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,16,L LV at AC,2.2608940351679054
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,17,R LV at PC,4.985937288094025
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,18,L LV at PC,5.699246215279775
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,19,genu of CC,2.3446027775585616
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,20,splenium of CC,0.690624636831207
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,21,R AL temporal horn,7.487542822064186
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,22,L AL temporal horn,6.032177694081383
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,23,R superior AM temporal horn,5.5237419734132045
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,24,L superior AM temporal horn,1.5592882870802836
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,25,R inferior AM temporal horn,6.211441264734637
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,26,L inferior AM temporal horn,4.865309239130102
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,27,R indusium griseum origin,5.838179263802987
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,28,L indusium griseum origin,2.1788797373078825
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,29,R ventral occipital horn,2.105852445151868
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,30,L ventral occipital horn,4.100512318470777
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,31,R olfactory sulcal fundus,1.2243592946202773
+snsx,cohort,MNI152NLin2009cAsym__C002,MNI152NLin2009cAsym,C002,ants,32,L olfactory sulcal fundus,0.9470104886595555
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,1,AC,0.2716896635589413
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,2,PC,0.543584566362312
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,3,infracollicular sulcus,0.3621956767799937
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,4,PMJ,2.395311135605618
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,5,superior interpeduncular fossa,0.47272515509931146
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,6,R superior LMS,0.38832420589252775
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,7,L superior LMS,2.153671883766965
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,8,R inferior LMS,6.340827235930739
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,9,L inferior LMS,4.880620150725901
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,10,culmen,1.3769406894713736
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,11,intermammillary sulcus,0.6808141512877267
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,12,R MB,0.22993814943703544
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,13,L MB,0.2004015717435762
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,14,pineal gland,1.7873885710376474
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,15,R LV at AC,2.4530742017739677
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,16,L LV at AC,3.2660944339644433
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,17,R LV at PC,0.5875250524842598
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,18,L LV at PC,1.7925489181466288
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,19,genu of CC,1.411033996664193
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,20,splenium of CC,0.50766877159546
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,21,R AL temporal horn,1.1060059879955575
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,22,L AL temporal horn,1.8977389062099628
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,23,R superior AM temporal horn,0.8351351752673806
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,24,L superior AM temporal horn,2.751662270178739
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,25,R inferior AM temporal horn,2.411191094389097
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,26,L inferior AM temporal horn,4.3408305437523405
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,27,R indusium griseum origin,0.854205007200767
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,28,L indusium griseum origin,0.8001411654829345
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,29,R ventral occipital horn,0.8277541822383254
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,30,L ventral occipital horn,5.170287053148612
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,31,R olfactory sulcal fundus,1.3976726640157136
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,fastwarp,32,L olfactory sulcal fundus,2.3979908432927513
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,1,AC,0.2789313659796258
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,2,PC,0.5380675767841595
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,3,infracollicular sulcus,0.3538523598850747
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,4,PMJ,2.3935905282811394
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,5,superior interpeduncular fossa,0.4825869470414756
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,6,R superior LMS,0.37992554853696187
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,7,L superior LMS,2.1608177288007897
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,8,R inferior LMS,6.348006130560465
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,9,L inferior LMS,4.900044492424327
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,10,culmen,1.3512386405165855
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,11,intermammillary sulcus,0.6774498707894181
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,12,R MB,0.23474972870431127
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,13,L MB,0.2124347134007175
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,14,pineal gland,1.7806399851337955
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,15,R LV at AC,2.466756866311369
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,16,L LV at AC,3.2246996483237913
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,17,R LV at PC,0.5739059899478138
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,18,L LV at PC,1.7440972950610083
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,19,genu of CC,1.4456590862829535
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,20,splenium of CC,0.5085118162649971
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,21,R AL temporal horn,1.0454401073894881
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,22,L AL temporal horn,1.8254373365175895
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,23,R superior AM temporal horn,0.8278539679203148
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,24,L superior AM temporal horn,2.732683613382113
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,25,R inferior AM temporal horn,2.379983067585961
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,26,L inferior AM temporal horn,4.271266671335148
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,27,R indusium griseum origin,0.8598686504577459
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,28,L indusium griseum origin,0.8011543271445136
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,29,R ventral occipital horn,0.8526029112233959
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,30,L ventral occipital horn,5.153274457765658
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,31,R olfactory sulcal fundus,1.3046537640205624
+snsx,cohort,MNI152NLin2009cAsym__C003,MNI152NLin2009cAsym,C003,ants,32,L olfactory sulcal fundus,2.377936297408231
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,1,AC,0.4049361905778455
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,2,PC,0.6908449449652231
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,3,infracollicular sulcus,1.3237600382803538
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,4,PMJ,0.8817664852895589
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,5,superior interpeduncular fossa,0.808500284823547
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,6,R superior LMS,0.34483461411818067
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,7,L superior LMS,0.2840051711958614
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,8,R inferior LMS,0.8452774236430014
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,9,L inferior LMS,0.5669390464530146
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,10,culmen,1.39888001386332
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,11,intermammillary sulcus,1.587394342934588
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,12,R MB,0.8799260811022409
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,13,L MB,0.874194725636249
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,14,pineal gland,0.7874539253517541
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,15,R LV at AC,2.0975034794902787
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,16,L LV at AC,1.8661102802182172
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,17,R LV at PC,2.4856820273441493
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,18,L LV at PC,2.9662222716836757
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,19,genu of CC,0.9807121600284507
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,20,splenium of CC,0.5781144949306737
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,21,R AL temporal horn,0.7983777146561467
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,22,L AL temporal horn,0.753624630211282
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,23,R superior AM temporal horn,3.923094507582429
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,24,L superior AM temporal horn,1.8633115442041392
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,25,R inferior AM temporal horn,1.5209390788796036
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,26,L inferior AM temporal horn,1.8857859288593055
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,27,R indusium griseum origin,2.5955000699625392
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,28,L indusium griseum origin,1.7180282233385809
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,29,R ventral occipital horn,0.4874499771154157
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,30,L ventral occipital horn,1.7839423234931968
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,31,R olfactory sulcal fundus,1.7480590687395352
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,fastwarp,32,L olfactory sulcal fundus,0.696242842465689
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,1,AC,0.4051702202180952
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,2,PC,0.6942396187731235
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,3,infracollicular sulcus,1.3183022594275329
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,4,PMJ,0.8808196580454125
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,5,superior interpeduncular fossa,0.813416983423226
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,6,R superior LMS,0.3463991860428313
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,7,L superior LMS,0.28141858101676465
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,8,R inferior LMS,0.844989664830258
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,9,L inferior LMS,0.5661736405647408
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,10,culmen,1.4120102977570226
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,11,intermammillary sulcus,1.5862636464917603
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,12,R MB,0.8807073681672202
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,13,L MB,0.8713537965724762
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,14,pineal gland,0.7893269191567973
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,15,R LV at AC,2.0721405785906812
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,16,L LV at AC,1.8016571049030858
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,17,R LV at PC,2.471532997154018
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,18,L LV at PC,2.937974739494042
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,19,genu of CC,0.9877703860799166
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,20,splenium of CC,0.5734978749219656
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,21,R AL temporal horn,0.7972437074846066
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,22,L AL temporal horn,0.7817344590542836
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,23,R superior AM temporal horn,3.9239627339820977
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,24,L superior AM temporal horn,1.8527638409344545
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,25,R inferior AM temporal horn,1.5171680302397776
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,26,L inferior AM temporal horn,1.8925386914188385
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,27,R indusium griseum origin,2.582922539242385
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,28,L indusium griseum origin,1.7157462484622767
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,29,R ventral occipital horn,0.4759727797768259
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,30,L ventral occipital horn,1.7904603693571184
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,31,R olfactory sulcal fundus,1.756083104840343
+snsx,cohort,MNI152NLin2009cAsym__C004,MNI152NLin2009cAsym,C004,ants,32,L olfactory sulcal fundus,0.6816517661392993
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,1,AC,0.5209628248642166
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,2,PC,0.31951205865441756
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,3,infracollicular sulcus,1.3474824825011678
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,4,PMJ,0.515687435870988
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,5,superior interpeduncular fossa,0.823326313608673
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,6,R superior LMS,0.5155395800291316
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,7,L superior LMS,0.7610751244402498
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,8,R inferior LMS,0.45203943046201167
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,9,L inferior LMS,1.4935753284142532
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,10,culmen,1.8498332789908667
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,11,intermammillary sulcus,0.8691740850940873
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,12,R MB,0.39304222357087476
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,13,L MB,0.29789065478349624
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,14,pineal gland,1.8673253589306134
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,15,R LV at AC,3.3318398855309477
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,16,L LV at AC,4.011522068702072
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,17,R LV at PC,4.0305966981416725
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,18,L LV at PC,2.0527457497220922
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,19,genu of CC,2.1852221079538774
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,20,splenium of CC,1.1715255368019264
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,21,R AL temporal horn,3.024898787842168
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,22,L AL temporal horn,0.701772042006203
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,23,R superior AM temporal horn,0.7625269763298312
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,24,L superior AM temporal horn,0.7695069056361349
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,25,R inferior AM temporal horn,3.5627533356913563
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,26,L inferior AM temporal horn,3.367682934960613
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,27,R indusium griseum origin,5.384431411338702
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,28,L indusium griseum origin,4.577327667872496
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,29,R ventral occipital horn,0.32421033338126953
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,30,L ventral occipital horn,2.373895425921176
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,31,R olfactory sulcal fundus,0.5462918358564426
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,fastwarp,32,L olfactory sulcal fundus,0.7823633290986293
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,1,AC,0.5228028988031537
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,2,PC,0.3262023205403999
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,3,infracollicular sulcus,1.3586891677334882
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,4,PMJ,0.5313968041670891
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,5,superior interpeduncular fossa,0.8298070057823148
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,6,R superior LMS,0.5090897842618168
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,7,L superior LMS,0.7681041987215399
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,8,R inferior LMS,0.4475464785049511
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,9,L inferior LMS,1.4902092859251515
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,10,culmen,1.8610183029587788
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,11,intermammillary sulcus,0.8703956753509143
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,12,R MB,0.39414941573855866
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,13,L MB,0.30071681700298025
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,14,pineal gland,1.8702061056131505
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,15,R LV at AC,3.2704691927235827
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,16,L LV at AC,3.9179849137808933
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,17,R LV at PC,4.114247579042811
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,18,L LV at PC,2.092143407616939
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,19,genu of CC,2.141849717318506
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,20,splenium of CC,1.1792088862065608
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,21,R AL temporal horn,2.970880916267843
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,22,L AL temporal horn,0.6924254308815931
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,23,R superior AM temporal horn,0.7606910731084352
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,24,L superior AM temporal horn,0.793805452152188
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,25,R inferior AM temporal horn,3.570759018682148
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,26,L inferior AM temporal horn,3.3951005138373525
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,27,R indusium griseum origin,5.3528341114502425
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,28,L indusium griseum origin,4.576767358560283
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,29,R ventral occipital horn,0.2537172811610539
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,30,L ventral occipital horn,2.4334630986581516
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,31,R olfactory sulcal fundus,0.5403926837950496
+snsx,cohort,MNI152NLin2009cAsym__C005,MNI152NLin2009cAsym,C005,ants,32,L olfactory sulcal fundus,0.7732117508796298
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,1,AC,0.6287003190372467
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,2,PC,0.7516564872760408
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,3,infracollicular sulcus,1.053658099256488
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,4,PMJ,0.2793402856687968
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,5,superior interpeduncular fossa,0.5514094183510503
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,6,R superior LMS,0.3659283201435956
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,7,L superior LMS,1.0645760393278385
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,8,R inferior LMS,0.8310525890619761
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,9,L inferior LMS,1.7294307802502018
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,10,culmen,2.034771998620417
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,11,intermammillary sulcus,0.6641329537061422
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,12,R MB,0.29646274666313244
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,13,L MB,0.20393194584391033
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,14,pineal gland,1.51954524853631
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,15,R LV at AC,4.326308053283047
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,16,L LV at AC,2.724435951195818
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,17,R LV at PC,3.9008880824242285
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,18,L LV at PC,1.3072314134185796
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,19,genu of CC,1.058160822331733
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,20,splenium of CC,0.8953375768217942
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,21,R AL temporal horn,0.19325553987285185
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,22,L AL temporal horn,1.7437709734163886
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,23,R superior AM temporal horn,4.130723251150417
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,24,L superior AM temporal horn,1.4972089115813443
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,25,R inferior AM temporal horn,1.5288428953171973
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,26,L inferior AM temporal horn,2.4068140589444313
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,27,R indusium griseum origin,0.4822979216769701
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,28,L indusium griseum origin,1.6393114819654409
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,29,R ventral occipital horn,1.0786562702156572
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,30,L ventral occipital horn,1.2351414767358098
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,31,R olfactory sulcal fundus,3.126876122202594
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,fastwarp,32,L olfactory sulcal fundus,3.155547799410122
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,1,AC,0.6216880689314612
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,2,PC,0.750769906240117
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,3,infracollicular sulcus,1.0490183424698716
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,4,PMJ,0.2697726778713558
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,5,superior interpeduncular fossa,0.55232028799692
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,6,R superior LMS,0.36427487789234103
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,7,L superior LMS,1.0635049768978686
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,8,R inferior LMS,0.8319031688352653
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,9,L inferior LMS,1.7292503485618993
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,10,culmen,2.042696079782584
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,11,intermammillary sulcus,0.6629645263410817
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,12,R MB,0.2970937221436199
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,13,L MB,0.20347512609390708
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,14,pineal gland,1.5175473814350606
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,15,R LV at AC,4.307732477971035
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,16,L LV at AC,2.713807187825407
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,17,R LV at PC,3.880106014490876
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,18,L LV at PC,1.303010621122157
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,19,genu of CC,1.0568554640476817
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,20,splenium of CC,0.8997202988735291
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,21,R AL temporal horn,0.20637089113037874
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,22,L AL temporal horn,1.747032496258143
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,23,R superior AM temporal horn,4.133693639676838
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,24,L superior AM temporal horn,1.489970048117011
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,25,R inferior AM temporal horn,1.5335685986407972
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,26,L inferior AM temporal horn,2.411393065835552
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,27,R indusium griseum origin,0.4812456295391201
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,28,L indusium griseum origin,1.6476334520423939
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,29,R ventral occipital horn,1.0744183190606287
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,30,L ventral occipital horn,1.2336969972295682
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,31,R olfactory sulcal fundus,3.1274402527759997
+snsx,cohort,MNI152NLin2009cAsym__C006,MNI152NLin2009cAsym,C006,ants,32,L olfactory sulcal fundus,3.155167986808172
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,1,AC,0.29036716307936306
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,2,PC,0.7794875209076472
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,3,infracollicular sulcus,0.37231146974499474
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,4,PMJ,0.2875102527664312
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,5,superior interpeduncular fossa,0.38606081707873474
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,6,R superior LMS,1.7373431245807924
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,7,L superior LMS,1.1490581636102628
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,8,R inferior LMS,1.5182452710800602
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,9,L inferior LMS,2.4707336148771533
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,10,culmen,2.1106378643311086
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,11,intermammillary sulcus,0.7573009829469486
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,12,R MB,0.6246795515148504
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,13,L MB,0.3494620815142525
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,14,pineal gland,0.6881923794736758
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,15,R LV at AC,1.9910622758636667
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,16,L LV at AC,2.3055276004748313
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,17,R LV at PC,1.601512340001933
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,18,L LV at PC,1.897990990576805
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,19,genu of CC,0.5502541303293447
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,20,splenium of CC,2.1315918740271567
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,21,R AL temporal horn,2.253014807012965
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,22,L AL temporal horn,3.5305861346315717
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,23,R superior AM temporal horn,1.1809013754552533
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,24,L superior AM temporal horn,2.064107184738862
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,25,R inferior AM temporal horn,4.618726682558233
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,26,L inferior AM temporal horn,3.1456468344989728
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,27,R indusium griseum origin,3.5472043465257896
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,28,L indusium griseum origin,1.0039081976277406
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,29,R ventral occipital horn,0.6928305175532105
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,30,L ventral occipital horn,1.1244596373457192
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,31,R olfactory sulcal fundus,0.8472789654373878
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,fastwarp,32,L olfactory sulcal fundus,0.6788787980251365
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,1,AC,0.2933403681529481
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,2,PC,0.7809206086572406
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,3,infracollicular sulcus,0.36614938850573797
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,4,PMJ,0.2873584967880246
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,5,superior interpeduncular fossa,0.3868949614830586
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,6,R superior LMS,1.7319878031249998
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,7,L superior LMS,1.1599380680932108
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,8,R inferior LMS,1.5230757511849589
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,9,L inferior LMS,2.499615793860047
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,10,culmen,2.106675765878623
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,11,intermammillary sulcus,0.7576218317704692
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,12,R MB,0.628035413497119
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,13,L MB,0.3564121980826685
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,14,pineal gland,0.6767129136982695
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,15,R LV at AC,2.0214269021796554
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,16,L LV at AC,2.371319474295088
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,17,R LV at PC,1.5928065840431642
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,18,L LV at PC,1.9409973078821545
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,19,genu of CC,0.4936773669449488
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,20,splenium of CC,2.124128490073944
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,21,R AL temporal horn,2.256840009153206
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,22,L AL temporal horn,3.514392986982701
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,23,R superior AM temporal horn,1.1691212101267408
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,24,L superior AM temporal horn,2.0540877255605654
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,25,R inferior AM temporal horn,4.614424333561578
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,26,L inferior AM temporal horn,3.126216126389413
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,27,R indusium griseum origin,3.519534837863675
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,28,L indusium griseum origin,0.9879945337141964
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,29,R ventral occipital horn,0.7081996711453474
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,30,L ventral occipital horn,1.076350036820284
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,31,R olfactory sulcal fundus,0.8082880525386812
+snsx,cohort,MNI152NLin2009cAsym__C007,MNI152NLin2009cAsym,C007,ants,32,L olfactory sulcal fundus,0.6708162540956227
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,1,AC,0.24518536122801715
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,2,PC,0.3082195768305816
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,3,infracollicular sulcus,0.8992571371710986
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,4,PMJ,0.5698128794613332
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,5,superior interpeduncular fossa,0.37175577691355943
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,6,R superior LMS,1.6402418678181039
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,7,L superior LMS,2.0200317282235476
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,8,R inferior LMS,1.3267777897394202
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,9,L inferior LMS,2.3049667079842417
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,10,culmen,2.2903986262959237
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,11,intermammillary sulcus,1.7410225751250714
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,12,R MB,0.5129787282484926
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,13,L MB,1.227717772001356
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,14,pineal gland,0.36307484217683583
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,15,R LV at AC,3.398665749446276
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,16,L LV at AC,3.811952061112771
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,17,R LV at PC,3.0176253561647686
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,18,L LV at PC,3.620680946297203
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,19,genu of CC,1.6024007693421203
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,20,splenium of CC,0.8242921386657611
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,21,R AL temporal horn,3.4536921916309495
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,22,L AL temporal horn,1.657246799486282
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,23,R superior AM temporal horn,0.5493656324346416
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,24,L superior AM temporal horn,1.9513529501612734
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,25,R inferior AM temporal horn,3.957711538204939
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,26,L inferior AM temporal horn,2.061602861369477
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,27,R indusium griseum origin,1.557218325607926
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,28,L indusium griseum origin,3.1947839894036982
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,29,R ventral occipital horn,2.1372769408056365
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,30,L ventral occipital horn,4.635683539794255
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,31,R olfactory sulcal fundus,0.9420474977597343
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,fastwarp,32,L olfactory sulcal fundus,0.686090644541372
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,1,AC,0.25432382606364584
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,2,PC,0.31040065666381333
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,3,infracollicular sulcus,0.9015349185254444
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,4,PMJ,0.5569040188264778
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,5,superior interpeduncular fossa,0.36969366454935354
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,6,R superior LMS,1.6373063827011383
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,7,L superior LMS,2.023158654819814
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,8,R inferior LMS,1.3374847320521794
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,9,L inferior LMS,2.298866124554367
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,10,culmen,2.2921685471811526
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,11,intermammillary sulcus,1.7537247410781993
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,12,R MB,0.5142430064526444
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,13,L MB,1.2363558619684367
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,14,pineal gland,0.36701242064526274
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,15,R LV at AC,3.452068523348842
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,16,L LV at AC,3.9329108543508204
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,17,R LV at PC,3.0247304864575018
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,18,L LV at PC,3.7305091488638804
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,19,genu of CC,1.611468493994697
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,20,splenium of CC,0.8279154617519431
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,21,R AL temporal horn,3.4492848706223254
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,22,L AL temporal horn,1.6285331709601565
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,23,R superior AM temporal horn,0.5457789983433496
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,24,L superior AM temporal horn,1.931404816694188
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,25,R inferior AM temporal horn,4.004219678106566
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,26,L inferior AM temporal horn,2.07054483432457
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,27,R indusium griseum origin,1.5761358527187599
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,28,L indusium griseum origin,3.188887286392421
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,29,R ventral occipital horn,2.113693107596332
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,30,L ventral occipital horn,4.7612999489725905
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,31,R olfactory sulcal fundus,0.949037021208889
+snsx,cohort,MNI152NLin2009cAsym__C008,MNI152NLin2009cAsym,C008,ants,32,L olfactory sulcal fundus,0.685162843136633
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,1,AC,0.19545519402721245
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,2,PC,0.5958444589557444
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,3,infracollicular sulcus,0.645341659169255
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,4,PMJ,1.277770884248197
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,5,superior interpeduncular fossa,0.34193330890763307
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,6,R superior LMS,0.6247642927288928
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,7,L superior LMS,1.887017412897909
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,8,R inferior LMS,1.4708204371660802
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,9,L inferior LMS,1.5444092457758383
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,10,culmen,3.264172147233575
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,11,intermammillary sulcus,0.6073200927929046
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,12,R MB,0.31214118346231057
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,13,L MB,0.27392017058280244
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,14,pineal gland,2.7562761124395485
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,15,R LV at AC,1.6153486783071702
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,16,L LV at AC,2.617087569175601
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,17,R LV at PC,1.491191996951245
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,18,L LV at PC,1.0522282194896346
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,19,genu of CC,0.9142227376741925
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,20,splenium of CC,0.2684580872636131
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,21,R AL temporal horn,4.2264525758284535
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,22,L AL temporal horn,3.4056803411567356
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,23,R superior AM temporal horn,0.9825503686853909
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,24,L superior AM temporal horn,1.1852374449739684
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,25,R inferior AM temporal horn,4.948906091033685
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,26,L inferior AM temporal horn,3.546810604486923
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,27,R indusium griseum origin,1.1295202934445794
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,28,L indusium griseum origin,0.6840762640953743
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,29,R ventral occipital horn,2.248803493586042
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,30,L ventral occipital horn,3.7234811236956356
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,31,R olfactory sulcal fundus,0.6600673361067455
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,fastwarp,32,L olfactory sulcal fundus,0.20232561365447185
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,1,AC,0.19515197838088494
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,2,PC,0.5971842842400957
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,3,infracollicular sulcus,0.6461005668543406
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,4,PMJ,1.2729387531483156
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,5,superior interpeduncular fossa,0.33995697621393367
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,6,R superior LMS,0.6286615523184146
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,7,L superior LMS,1.889471611315956
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,8,R inferior LMS,1.4749333984935031
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,9,L inferior LMS,1.5472004309479357
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,10,culmen,3.267922757204457
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,11,intermammillary sulcus,0.6082416766169785
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,12,R MB,0.31083678005586113
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,13,L MB,0.2741980374912705
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,14,pineal gland,2.750662867946029
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,15,R LV at AC,1.561857926293203
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,16,L LV at AC,2.596711734477471
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,17,R LV at PC,1.5090983300923813
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,18,L LV at PC,1.050986923286119
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,19,genu of CC,0.8868807983160246
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,20,splenium of CC,0.2672204650429071
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,21,R AL temporal horn,4.251071494583196
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,22,L AL temporal horn,3.3883753254767757
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,23,R superior AM temporal horn,0.9743877251868691
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,24,L superior AM temporal horn,1.1802271969719191
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,25,R inferior AM temporal horn,4.928252529710617
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,26,L inferior AM temporal horn,3.5346422547510516
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,27,R indusium griseum origin,1.1238050399365958
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,28,L indusium griseum origin,0.6879352157025648
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,29,R ventral occipital horn,2.2241975436787373
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,30,L ventral occipital horn,3.7096038557694646
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,31,R olfactory sulcal fundus,0.6500767560523721
+snsx,cohort,MNI152NLin2009cAsym__C009,MNI152NLin2009cAsym,C009,ants,32,L olfactory sulcal fundus,0.2071530925180208
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,1,AC,0.32830536820499223
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,2,PC,0.7480551388881116
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,3,infracollicular sulcus,0.8941847016417167
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,4,PMJ,1.5280938966618256
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,5,superior interpeduncular fossa,1.227912214102895
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,6,R superior LMS,0.6458429222024805
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,7,L superior LMS,1.4972799928879907
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,8,R inferior LMS,0.8500413564548467
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,9,L inferior LMS,0.6821573878044589
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,10,culmen,0.7345230980467651
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,11,intermammillary sulcus,2.1486971057544713
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,12,R MB,1.7113809372673041
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,13,L MB,1.3260453261653762
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,14,pineal gland,0.6816554276343597
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,15,R LV at AC,0.4178601547929724
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,16,L LV at AC,1.2446045646134172
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,17,R LV at PC,1.3004212530244634
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,18,L LV at PC,1.7472928710165023
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,19,genu of CC,0.25758072222787476
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,20,splenium of CC,0.7010178563269038
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,21,R AL temporal horn,3.4202688895857976
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,22,L AL temporal horn,1.8261172660224678
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,23,R superior AM temporal horn,1.6240611025679366
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,24,L superior AM temporal horn,0.8475994157128149
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,25,R inferior AM temporal horn,2.806843191475157
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,26,L inferior AM temporal horn,5.139297424551659
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,27,R indusium griseum origin,1.4248952376273636
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,28,L indusium griseum origin,1.3276026576761002
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,29,R ventral occipital horn,1.6605320764434868
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,30,L ventral occipital horn,1.9781257597925483
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,31,R olfactory sulcal fundus,1.2459724253951956
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,fastwarp,32,L olfactory sulcal fundus,0.7061661411466513
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,1,AC,0.33611263603589026
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,2,PC,0.7747659385303264
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,3,infracollicular sulcus,0.9242402032563194
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,4,PMJ,1.4744938806316512
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,5,superior interpeduncular fossa,1.235210336049431
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,6,R superior LMS,0.6478364303298065
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,7,L superior LMS,1.4937686546085513
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,8,R inferior LMS,0.8705213895601004
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,9,L inferior LMS,0.6760569594080178
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,10,culmen,0.7519769880809836
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,11,intermammillary sulcus,2.1378893319987515
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,12,R MB,1.7082558678343094
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,13,L MB,1.3203309729125694
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,14,pineal gland,0.7171046810461904
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,15,R LV at AC,0.7694496290061045
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,16,L LV at AC,0.900508000110027
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,17,R LV at PC,1.258215656275878
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,18,L LV at PC,1.5885102757697467
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,19,genu of CC,0.14746589738484162
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,20,splenium of CC,0.6344949868361263
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,21,R AL temporal horn,3.3923202240945267
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,22,L AL temporal horn,1.824990648233376
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,23,R superior AM temporal horn,1.608478124616944
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,24,L superior AM temporal horn,0.8616403238557517
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,25,R inferior AM temporal horn,2.841310558794234
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,26,L inferior AM temporal horn,5.10574765709151
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,27,R indusium griseum origin,1.420000734639274
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,28,L indusium griseum origin,1.2645131084596906
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,29,R ventral occipital horn,1.7858372782740788
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,30,L ventral occipital horn,1.4607297554173118
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,31,R olfactory sulcal fundus,1.2009549463425262
+snsx,cohort,MNI152NLin2009cAsym__C010,MNI152NLin2009cAsym,C010,ants,32,L olfactory sulcal fundus,0.7073639187453782
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,1,AC,0.37477217890148984
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,2,PC,0.36626447209571217
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,3,infracollicular sulcus,1.2063134159656963
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,4,PMJ,0.45153314557341767
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,5,superior interpeduncular fossa,0.6588092081170827
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,6,R superior LMS,0.5048292164492743
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,7,L superior LMS,0.9680081198426668
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,8,R inferior LMS,0.6379547657697467
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,9,L inferior LMS,2.356923449104736
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,10,culmen,2.7710840789484528
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,11,intermammillary sulcus,0.42000525438596775
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,12,R MB,0.29904107541426383
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,13,L MB,0.39565605721621855
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,14,pineal gland,3.006483576854259
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,15,R LV at AC,0.5015743900637222
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,16,L LV at AC,1.0016125475032223
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,17,R LV at PC,1.308356447963398
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,18,L LV at PC,1.8261139307841607
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,19,genu of CC,1.1982510709451362
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,20,splenium of CC,0.34264822058241695
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,21,R AL temporal horn,2.653623231250131
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,22,L AL temporal horn,1.6738202011639054
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,23,R superior AM temporal horn,2.874943613053357
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,24,L superior AM temporal horn,2.9917812491877247
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,25,R inferior AM temporal horn,1.0021666957230235
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,26,L inferior AM temporal horn,1.5184008234943607
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,27,R indusium griseum origin,2.350186049939086
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,28,L indusium griseum origin,0.5311301297519241
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,29,R ventral occipital horn,0.7160995971167774
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,30,L ventral occipital horn,2.81039027884714
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,31,R olfactory sulcal fundus,1.7795653919185472
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,fastwarp,32,L olfactory sulcal fundus,0.7203535262438784
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,1,AC,0.3755541115199374
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,2,PC,0.36627368995353543
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,3,infracollicular sulcus,1.2163672532677923
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,4,PMJ,0.4520625391842914
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,5,superior interpeduncular fossa,0.6577691361483042
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,6,R superior LMS,0.5054720919590036
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,7,L superior LMS,0.9676452993251987
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,8,R inferior LMS,0.633830884240649
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,9,L inferior LMS,2.353317443388604
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,10,culmen,2.761561772613144
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,11,intermammillary sulcus,0.41604941819939073
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,12,R MB,0.29452506660130534
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,13,L MB,0.4001658689892452
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,14,pineal gland,2.990173448795108
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,15,R LV at AC,0.5165232623590228
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,16,L LV at AC,1.0197629989239416
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,17,R LV at PC,1.3073930133991685
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,18,L LV at PC,1.8274442401420774
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,19,genu of CC,1.1995675189528328
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,20,splenium of CC,0.3471290092548591
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,21,R AL temporal horn,2.652807845239481
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,22,L AL temporal horn,1.6668921460365975
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,23,R superior AM temporal horn,2.8727128227544543
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,24,L superior AM temporal horn,2.987449591896706
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,25,R inferior AM temporal horn,1.007623638900555
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,26,L inferior AM temporal horn,1.513898796983542
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,27,R indusium griseum origin,2.351401961429571
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,28,L indusium griseum origin,0.5313259380802461
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,29,R ventral occipital horn,0.730155911499691
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,30,L ventral occipital horn,2.8263454195835367
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,31,R olfactory sulcal fundus,1.7962727991389893
+snsx,cohort,MNI152NLin2009cAsym__C011,MNI152NLin2009cAsym,C011,ants,32,L olfactory sulcal fundus,0.7250370022710184
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,1,AC,0.418848712367822
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,2,PC,0.39149362959840717
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,3,infracollicular sulcus,0.9359755928725291
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,4,PMJ,1.1641484126592265
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,5,superior interpeduncular fossa,1.1516649323364272
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,6,R superior LMS,0.29250673378068265
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,7,L superior LMS,0.3182998967246242
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,8,R inferior LMS,1.2252233782042339
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,9,L inferior LMS,2.0841628332751583
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,10,culmen,1.6328228417421227
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,11,intermammillary sulcus,0.5960852948652818
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,12,R MB,0.31964517842692336
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,13,L MB,0.38258297256264073
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,14,pineal gland,2.8821911596716774
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,15,R LV at AC,1.7944445336218906
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,16,L LV at AC,1.4300573599411184
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,17,R LV at PC,1.3593526571484085
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,18,L LV at PC,0.47657918826605467
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,19,genu of CC,1.974797325436853
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,20,splenium of CC,0.5791081460472945
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,21,R AL temporal horn,0.9560594940452817
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,22,L AL temporal horn,0.8698998111950687
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,23,R superior AM temporal horn,1.7185756960146605
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,24,L superior AM temporal horn,0.824775278604681
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,25,R inferior AM temporal horn,1.3721590227614817
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,26,L inferior AM temporal horn,2.5909928981654597
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,27,R indusium griseum origin,1.534386245968607
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,28,L indusium griseum origin,1.2940220735902999
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,29,R ventral occipital horn,1.7304226961692515
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,30,L ventral occipital horn,0.8240496078377846
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,31,R olfactory sulcal fundus,4.348661056662456
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,fastwarp,32,L olfactory sulcal fundus,1.7528384879466155
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,1,AC,0.42097967794665814
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,2,PC,0.39270310282647847
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,3,infracollicular sulcus,0.9339953587115362
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,4,PMJ,1.1597495426932571
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,5,superior interpeduncular fossa,1.1523308750908798
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,6,R superior LMS,0.29299402537614433
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,7,L superior LMS,0.3183921445755629
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,8,R inferior LMS,1.2232332155789214
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,9,L inferior LMS,2.082313409418088
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,10,culmen,1.6240560592433937
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,11,intermammillary sulcus,0.5978079722711565
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,12,R MB,0.3193052543962809
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,13,L MB,0.38103432994073805
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,14,pineal gland,2.8856086024055365
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,15,R LV at AC,1.747088369554983
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,16,L LV at AC,1.4317579666002866
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,17,R LV at PC,1.3401455013507568
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,18,L LV at PC,0.453822376477526
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,19,genu of CC,1.9620954540009892
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,20,splenium of CC,0.5785793812288502
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,21,R AL temporal horn,0.952482907759459
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,22,L AL temporal horn,0.8714694808573787
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,23,R superior AM temporal horn,1.7181841686138406
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,24,L superior AM temporal horn,0.8258983386483905
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,25,R inferior AM temporal horn,1.3786187420394855
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,26,L inferior AM temporal horn,2.5936013931863346
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,27,R indusium griseum origin,1.535403880432952
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,28,L indusium griseum origin,1.3088635871313248
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,29,R ventral occipital horn,1.7190046224025706
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,30,L ventral occipital horn,0.8062490452422477
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,31,R olfactory sulcal fundus,4.347041334957523
+snsx,cohort,MNI152NLin2009cAsym__C012,MNI152NLin2009cAsym,C012,ants,32,L olfactory sulcal fundus,1.7673911972199536
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,1,AC,0.36231105813538533
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,2,PC,0.526699022555085
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,3,infracollicular sulcus,0.7019082560154325
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,4,PMJ,1.5076200395655408
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,5,superior interpeduncular fossa,0.9194438393554415
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,6,R superior LMS,1.4883443520452537
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,7,L superior LMS,0.7112084698397505
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,8,R inferior LMS,0.76655032854541
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,9,L inferior LMS,1.2176427677326973
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,10,culmen,1.1585754572500815
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,11,intermammillary sulcus,1.4948136440213693
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,12,R MB,1.091637707812311
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,13,L MB,1.1132743102955174
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,14,pineal gland,1.0567831412234874
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,15,R LV at AC,1.2585577382536686
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,16,L LV at AC,1.6044459424156787
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,17,R LV at PC,1.1845765549157465
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,18,L LV at PC,1.8251555805144284
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,19,genu of CC,1.6153669365877297
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,20,splenium of CC,1.1215562071466663
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,21,R AL temporal horn,1.4894271805375316
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,22,L AL temporal horn,1.3358534794256602
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,23,R superior AM temporal horn,4.061745253484646
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,24,L superior AM temporal horn,2.2729470835372307
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,25,R inferior AM temporal horn,3.296130728013355
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,26,L inferior AM temporal horn,1.7654174961449336
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,27,R indusium griseum origin,0.384635779272653
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,28,L indusium griseum origin,2.2236197826851956
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,29,R ventral occipital horn,2.7934799072986096
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,30,L ventral occipital horn,7.373147560718979
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,31,R olfactory sulcal fundus,2.4493695792681525
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,fastwarp,32,L olfactory sulcal fundus,2.507764428634669
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,1,AC,0.36548431724311986
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,2,PC,0.5264884334361057
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,3,infracollicular sulcus,0.7166977871036851
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,4,PMJ,1.429917350232527
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,5,superior interpeduncular fossa,0.9181550878939678
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,6,R superior LMS,1.4862065705047638
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,7,L superior LMS,0.6920109978185286
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,8,R inferior LMS,0.7518616083123268
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,9,L inferior LMS,1.1927719443861924
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,10,culmen,1.1490951027052705
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,11,intermammillary sulcus,1.4851246749826905
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,12,R MB,1.0976800231762525
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,13,L MB,1.1234034516019942
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,14,pineal gland,1.072530500230571
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,15,R LV at AC,1.363158515674123
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,16,L LV at AC,1.8705368625773582
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,17,R LV at PC,1.2148507006615135
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,18,L LV at PC,1.9516317991788763
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,19,genu of CC,1.6402881415158461
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,20,splenium of CC,1.0695314787879862
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,21,R AL temporal horn,1.6440258737101534
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,22,L AL temporal horn,1.355244121777906
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,23,R superior AM temporal horn,4.20016420413418
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,24,L superior AM temporal horn,2.342891479313996
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,25,R inferior AM temporal horn,3.382437504035221
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,26,L inferior AM temporal horn,1.8095918423400383
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,27,R indusium griseum origin,0.4347802375278415
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,28,L indusium griseum origin,2.3236085912977495
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,29,R ventral occipital horn,2.7843118707979237
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,30,L ventral occipital horn,7.529263072782037
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,31,R olfactory sulcal fundus,2.518292686707371
+snsx,cohort,MNI152NLin2009cAsym__C013,MNI152NLin2009cAsym,C013,ants,32,L olfactory sulcal fundus,2.5291948805071693
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,1,AC,0.4951970131511244
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,2,PC,1.5640566456476896
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,3,infracollicular sulcus,1.1630745278310346
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,4,PMJ,0.33689456245498617
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,5,superior interpeduncular fossa,0.9976853708608643
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,6,R superior LMS,1.5301918710539657
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,7,L superior LMS,0.2847198808142097
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,8,R inferior LMS,0.7302417744769811
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,9,L inferior LMS,1.252831681351469
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,10,culmen,2.5432271242764326
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,11,intermammillary sulcus,0.44172772969947643
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,12,R MB,0.5986090442458886
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,13,L MB,0.4390397060041534
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,14,pineal gland,3.758271591275373
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,15,R LV at AC,1.7778339147262474
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,16,L LV at AC,0.6907116193516507
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,17,R LV at PC,7.750845884318303
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,18,L LV at PC,5.353097771184012
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,19,genu of CC,0.8180497871002143
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,20,splenium of CC,2.2329649514825043
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,21,R AL temporal horn,1.195980942079505
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,22,L AL temporal horn,0.905277381416969
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,23,R superior AM temporal horn,3.034653304296557
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,24,L superior AM temporal horn,3.787989427077969
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,25,R inferior AM temporal horn,4.512382030378016
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,26,L inferior AM temporal horn,3.794360638045813
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,27,R indusium griseum origin,1.1580135145116044
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,28,L indusium griseum origin,1.5823508521863177
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,29,R ventral occipital horn,3.7820903343113907
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,30,L ventral occipital horn,4.533910278369982
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,31,R olfactory sulcal fundus,0.9174644810504323
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,fastwarp,32,L olfactory sulcal fundus,2.307064155216134
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,1,AC,0.4941376193876543
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,2,PC,1.6657600645710207
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,3,infracollicular sulcus,1.1851733109160796
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,4,PMJ,0.3178277613843596
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,5,superior interpeduncular fossa,0.9744654102984714
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,6,R superior LMS,1.5521138018314993
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,7,L superior LMS,0.2765694197467764
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,8,R inferior LMS,0.7020544627588421
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,9,L inferior LMS,1.1762101646219594
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,10,culmen,2.48247874256231
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,11,intermammillary sulcus,0.43740106483915675
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,12,R MB,0.5995791304618048
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,13,L MB,0.43784710176777775
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,14,pineal gland,3.784137161797738
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,15,R LV at AC,1.6952516808961549
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,16,L LV at AC,0.6637316211841072
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,17,R LV at PC,7.705869979251483
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,18,L LV at PC,5.329877437610431
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,19,genu of CC,0.7791985945617134
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,20,splenium of CC,2.256868883430958
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,21,R AL temporal horn,1.17268551694172
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,22,L AL temporal horn,0.952341132781856
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,23,R superior AM temporal horn,3.054301311415273
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,24,L superior AM temporal horn,3.770820113016614
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,25,R inferior AM temporal horn,4.533189158851725
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,26,L inferior AM temporal horn,3.7835282403277297
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,27,R indusium griseum origin,1.1594032787298625
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,28,L indusium griseum origin,1.575727472802856
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,29,R ventral occipital horn,3.8421310803672357
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,30,L ventral occipital horn,4.573108306135813
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,31,R olfactory sulcal fundus,0.9149544032788491
+snsx,cohort,MNI152NLin2009cAsym__C015,MNI152NLin2009cAsym,C015,ants,32,L olfactory sulcal fundus,2.304238067685593
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,1,AC,0.0552811951359859
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,2,PC,0.4127919533074991
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,3,infracollicular sulcus,0.8136105378958759
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,4,PMJ,0.6886803924679074
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,5,superior interpeduncular fossa,1.0095063476239203
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,6,R superior LMS,0.4480432940927597
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,7,L superior LMS,0.7475451441203019
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,8,R inferior LMS,0.26251940062493884
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,9,L inferior LMS,0.5855522028240859
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,10,culmen,4.10838497246251
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,11,intermammillary sulcus,0.332662995120988
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,12,R MB,0.3655128521689697
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,13,L MB,0.15822476234469807
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,14,pineal gland,2.726212876693989
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,15,R LV at AC,1.2119276103097212
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,16,L LV at AC,1.2039181751535435
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,17,R LV at PC,1.552088777850432
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,18,L LV at PC,2.450596834712388
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,19,genu of CC,3.369262833285174
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,20,splenium of CC,1.1124505737266523
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,21,R AL temporal horn,0.6809268148483802
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,22,L AL temporal horn,2.7824040340684144
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,23,R superior AM temporal horn,2.1337342971548874
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,24,L superior AM temporal horn,1.3669230545379552
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,25,R inferior AM temporal horn,1.7500965939180912
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,26,L inferior AM temporal horn,2.2820545070302605
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,27,R indusium griseum origin,2.5602835122294945
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,28,L indusium griseum origin,1.3065422149826167
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,29,R ventral occipital horn,23.954323723097815
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,30,L ventral occipital horn,19.353726246664156
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,31,R olfactory sulcal fundus,2.169098239004764
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,fastwarp,32,L olfactory sulcal fundus,0.47841554305581474
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,1,AC,0.055530063865069874
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,2,PC,0.42292563288265295
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,3,infracollicular sulcus,0.8207793609481752
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,4,PMJ,0.6912012771501213
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,5,superior interpeduncular fossa,1.0058490917881315
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,6,R superior LMS,0.44115581251812847
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,7,L superior LMS,0.748212050694087
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,8,R inferior LMS,0.24217122238881358
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,9,L inferior LMS,0.5678906899299968
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,10,culmen,4.086882746998541
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,11,intermammillary sulcus,0.3298974826215695
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,12,R MB,0.35887961261892926
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,13,L MB,0.16061528686836654
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,14,pineal gland,2.7105435912158082
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,15,R LV at AC,1.180216698983585
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,16,L LV at AC,1.1085575635316085
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,17,R LV at PC,1.5087801581624591
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,18,L LV at PC,2.384105527732917
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,19,genu of CC,3.327133347210337
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,20,splenium of CC,1.127199809099288
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,21,R AL temporal horn,0.6855748515348409
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,22,L AL temporal horn,2.7545887359944374
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,23,R superior AM temporal horn,2.1450517371618325
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,24,L superior AM temporal horn,1.3872748002611974
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,25,R inferior AM temporal horn,1.7199988994169622
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,26,L inferior AM temporal horn,2.254166387345849
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,27,R indusium griseum origin,2.5618868721243064
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,28,L indusium griseum origin,1.2980525676640562
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,29,R ventral occipital horn,23.97429961995913
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,30,L ventral occipital horn,19.262224014715606
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,31,R olfactory sulcal fundus,2.1464820215662583
+snsx,cohort,MNI152NLin2009cAsym__C016,MNI152NLin2009cAsym,C016,ants,32,L olfactory sulcal fundus,0.4852986084526358
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,1,AC,0.2528800625188284
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,2,PC,0.7887941528179565
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,3,infracollicular sulcus,1.0230381700053026
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,4,PMJ,0.7262306878132161
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,5,superior interpeduncular fossa,0.22557954225996507
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,6,R superior LMS,2.6790928717160805
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,7,L superior LMS,2.15998187483266
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,8,R inferior LMS,0.3255112722437727
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,9,L inferior LMS,1.4271825339797968
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,10,culmen,4.867588144326528
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,11,intermammillary sulcus,0.6759463264408683
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,12,R MB,0.4163861962211316
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,13,L MB,0.781688306658733
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,14,pineal gland,2.7673568666613733
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,15,R LV at AC,2.58024741054801
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,16,L LV at AC,2.0208887058820166
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,17,R LV at PC,4.181554507762429
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,18,L LV at PC,2.286885748918302
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,19,genu of CC,1.6385670165266526
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,20,splenium of CC,1.1514355580918993
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,21,R AL temporal horn,1.9639760836880515
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,22,L AL temporal horn,3.18290046907646
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,23,R superior AM temporal horn,0.6522084360422501
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,24,L superior AM temporal horn,0.7844365604591605
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,25,R inferior AM temporal horn,2.495264220039748
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,26,L inferior AM temporal horn,3.006688047134232
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,27,R indusium griseum origin,2.842526139995825
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,28,L indusium griseum origin,0.5262948901895139
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,29,R ventral occipital horn,1.4908592772394895
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,30,L ventral occipital horn,1.7388563077780304
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,31,R olfactory sulcal fundus,2.1521204598725423
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,fastwarp,32,L olfactory sulcal fundus,1.4653303948815826
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,1,AC,0.24995645023588742
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,2,PC,0.772630611488054
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,3,infracollicular sulcus,1.020706855544613
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,4,PMJ,0.7235166765300309
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,5,superior interpeduncular fossa,0.22563042846800757
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,6,R superior LMS,2.6750861922707263
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,7,L superior LMS,2.148847796777527
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,8,R inferior LMS,0.32499600473794765
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,9,L inferior LMS,1.4183346514258222
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,10,culmen,4.887727760691987
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,11,intermammillary sulcus,0.6724835294926613
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,12,R MB,0.4123919372951445
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,13,L MB,0.7816981166207402
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,14,pineal gland,2.7603842714414486
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,15,R LV at AC,2.5910327945845313
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,16,L LV at AC,2.0208877939181464
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,17,R LV at PC,4.207703512112173
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,18,L LV at PC,2.260858683403335
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,19,genu of CC,1.6645163054486574
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,20,splenium of CC,1.1395466677265778
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,21,R AL temporal horn,1.9248983695605457
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,22,L AL temporal horn,3.1930253775517117
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,23,R superior AM temporal horn,0.6462620928589173
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,24,L superior AM temporal horn,0.7906528366675771
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,25,R inferior AM temporal horn,2.4781091232318104
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,26,L inferior AM temporal horn,3.0282110185974878
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,27,R indusium griseum origin,2.849380005084173
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,28,L indusium griseum origin,0.5460128551450107
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,29,R ventral occipital horn,1.438666071953435
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,30,L ventral occipital horn,1.6961992120984424
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,31,R olfactory sulcal fundus,2.1649563109174736
+snsx,cohort,MNI152NLin2009cAsym__C018,MNI152NLin2009cAsym,C018,ants,32,L olfactory sulcal fundus,1.4552212327328733
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,1,AC,0.22985517724518872
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,2,PC,0.24692504868096254
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,3,infracollicular sulcus,0.9064426856897855
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,4,PMJ,1.5274950877348226
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,5,superior interpeduncular fossa,1.3015216621691839
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,6,R superior LMS,0.8805943875714058
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,7,L superior LMS,0.8157476539901576
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,8,R inferior LMS,0.8887294674112228
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,9,L inferior LMS,0.6663430076787334
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,10,culmen,1.5299965845139596
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,11,intermammillary sulcus,1.8925586202721
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,12,R MB,1.8380011954320936
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,13,L MB,1.9194044255199227
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,14,pineal gland,1.6782546480511777
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,15,R LV at AC,2.103789677427936
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,16,L LV at AC,1.9354839261121926
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,17,R LV at PC,0.5770248500685777
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,18,L LV at PC,3.633625410482112
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,19,genu of CC,2.915330375202506
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,20,splenium of CC,0.5308648475332874
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,21,R AL temporal horn,1.7884246119489127
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,22,L AL temporal horn,2.52491629705764
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,23,R superior AM temporal horn,0.9767979605162191
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,24,L superior AM temporal horn,0.5623557057054199
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,25,R inferior AM temporal horn,3.3350036441676703
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,26,L inferior AM temporal horn,3.2347042561945605
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,27,R indusium griseum origin,1.6001498336057445
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,28,L indusium griseum origin,2.0498066646456583
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,29,R ventral occipital horn,1.8188150376351755
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,30,L ventral occipital horn,2.2431936493460327
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,31,R olfactory sulcal fundus,1.2438144753019196
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,fastwarp,32,L olfactory sulcal fundus,0.6712480339426813
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,1,AC,0.23741129656955756
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,2,PC,0.2509750716527872
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,3,infracollicular sulcus,0.9239495032818524
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,4,PMJ,1.545604506542303
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,5,superior interpeduncular fossa,1.290652700339314
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,6,R superior LMS,0.8957428024829545
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,7,L superior LMS,0.8119261220349435
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,8,R inferior LMS,0.8878193448564435
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,9,L inferior LMS,0.6685660709632936
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,10,culmen,1.5594133206730794
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,11,intermammillary sulcus,1.902569467847223
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,12,R MB,1.846699980286965
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,13,L MB,1.9317224238023252
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,14,pineal gland,1.6773520024881332
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,15,R LV at AC,2.1312789374870835
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,16,L LV at AC,1.9344214945149627
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,17,R LV at PC,0.5454354100068187
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,18,L LV at PC,3.58443445379553
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,19,genu of CC,2.791707373815856
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,20,splenium of CC,0.526637446527274
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,21,R AL temporal horn,1.7926802312713679
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,22,L AL temporal horn,2.5466617076283207
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,23,R superior AM temporal horn,0.9764222148351663
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,24,L superior AM temporal horn,0.5654866564516018
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,25,R inferior AM temporal horn,3.372651114380761
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,26,L inferior AM temporal horn,3.2551857287417754
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,27,R indusium griseum origin,1.6187437461716474
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,28,L indusium griseum origin,2.0560579665336216
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,29,R ventral occipital horn,1.874091841615299
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,30,L ventral occipital horn,2.339286561748532
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,31,R olfactory sulcal fundus,1.244891765135353
+snsx,cohort,MNI152NLin2009cAsym__C019,MNI152NLin2009cAsym,C019,ants,32,L olfactory sulcal fundus,0.6616496562142277
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,1,AC,0.6670753694929223
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,2,PC,0.1738466108340733
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,3,infracollicular sulcus,1.0612505505072238
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,4,PMJ,0.22662009660591273
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,5,superior interpeduncular fossa,0.705796687381485
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,6,R superior LMS,0.3363297992367951
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,7,L superior LMS,1.5036295427497361
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,8,R inferior LMS,0.46403707441321257
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,9,L inferior LMS,0.7002221032967745
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,10,culmen,1.3113746305996992
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,11,intermammillary sulcus,0.662220722036629
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,12,R MB,0.33655844605585244
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,13,L MB,0.7721312264369878
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,14,pineal gland,1.7861392072334774
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,15,R LV at AC,1.7247826975311307
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,16,L LV at AC,3.034585799563344
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,17,R LV at PC,3.389024759024405
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,18,L LV at PC,4.97333827111889
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,19,genu of CC,1.9888072333740083
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,20,splenium of CC,0.9923514167585383
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,21,R AL temporal horn,4.09326177996372
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,22,L AL temporal horn,1.6309073058050239
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,23,R superior AM temporal horn,2.373051554447879
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,24,L superior AM temporal horn,1.8160501549637058
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,25,R inferior AM temporal horn,0.9220995320462708
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,26,L inferior AM temporal horn,1.1461113903729678
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,27,R indusium griseum origin,2.121998399659595
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,28,L indusium griseum origin,1.9567259165926054
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,29,R ventral occipital horn,0.9591525345869923
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,30,L ventral occipital horn,2.1099998656699555
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,31,R olfactory sulcal fundus,5.462398047015608
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,fastwarp,32,L olfactory sulcal fundus,7.64153809697616
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,1,AC,0.6597660864241521
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,2,PC,0.18021037499242037
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,3,infracollicular sulcus,1.0450951601483267
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,4,PMJ,0.21917317353781032
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,5,superior interpeduncular fossa,0.7055995427218748
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,6,R superior LMS,0.31675859370661025
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,7,L superior LMS,1.5051473949588559
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,8,R inferior LMS,0.46760464236914523
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,9,L inferior LMS,0.6952622111839938
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,10,culmen,1.324649687805967
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,11,intermammillary sulcus,0.6558441277141522
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,12,R MB,0.3360464408009893
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,13,L MB,0.762802942060907
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,14,pineal gland,1.7722308204771655
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,15,R LV at AC,1.6903528351768358
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,16,L LV at AC,2.9064623817998165
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,17,R LV at PC,3.371330930507032
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,18,L LV at PC,4.8719866508395375
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,19,genu of CC,1.9853344094138714
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,20,splenium of CC,0.9904127898632713
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,21,R AL temporal horn,4.110479093910785
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,22,L AL temporal horn,1.5797207670538718
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,23,R superior AM temporal horn,2.3812961273909896
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,24,L superior AM temporal horn,1.80158289642784
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,25,R inferior AM temporal horn,0.9383501587863282
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,26,L inferior AM temporal horn,1.1255337309464484
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,27,R indusium griseum origin,2.132627473804019
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,28,L indusium griseum origin,1.9559377517146295
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,29,R ventral occipital horn,0.9657564818374138
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,30,L ventral occipital horn,2.14669121861318
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,31,R olfactory sulcal fundus,5.443906758401922
+snsx,cohort,MNI152NLin2009cAsym__C020,MNI152NLin2009cAsym,C020,ants,32,L olfactory sulcal fundus,7.693367716413024
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,1,AC,0.5223707540916649
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,2,PC,0.6567167653891128
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,3,infracollicular sulcus,1.8915158300800337
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,4,PMJ,0.3737454992809664
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,5,superior interpeduncular fossa,0.2513831635900867
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,6,R superior LMS,0.5161203741319312
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,7,L superior LMS,0.6668744226492186
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,8,R inferior LMS,1.0329344673185443
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,9,L inferior LMS,1.2627406198377298
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,10,culmen,4.282037441392943
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,11,intermammillary sulcus,0.3882057829179115
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,12,R MB,0.3186721151970894
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,13,L MB,0.5433898281551165
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,14,pineal gland,2.1048530039358817
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,15,R LV at AC,3.6228921571533568
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,16,L LV at AC,3.229395438855238
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,17,R LV at PC,4.866208568854206
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,18,L LV at PC,4.496893965439154
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,19,genu of CC,1.298082279611589
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,20,splenium of CC,0.3683453722896635
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,21,R AL temporal horn,3.4934750261099468
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,22,L AL temporal horn,1.882408926180113
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,23,R superior AM temporal horn,2.201949965708207
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,24,L superior AM temporal horn,3.3526638207811805
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,25,R inferior AM temporal horn,1.8895204798811622
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,26,L inferior AM temporal horn,2.0606002270884565
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,27,R indusium griseum origin,0.735281654527292
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,28,L indusium griseum origin,2.2298373662831206
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,29,R ventral occipital horn,3.034902208341175
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,30,L ventral occipital horn,1.7527798652312303
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,31,R olfactory sulcal fundus,1.0223456699958478
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,fastwarp,32,L olfactory sulcal fundus,0.23509547280687879
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,1,AC,0.5208521145255274
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,2,PC,0.6547530290587992
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,3,infracollicular sulcus,1.889895446474872
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,4,PMJ,0.37239780049980326
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,5,superior interpeduncular fossa,0.25175169765739136
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,6,R superior LMS,0.5154117161933104
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,7,L superior LMS,0.6622345665023975
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,8,R inferior LMS,1.036819636560116
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,9,L inferior LMS,1.2635371548894587
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,10,culmen,4.295011537998877
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,11,intermammillary sulcus,0.39218106458213
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,12,R MB,0.32220384465491286
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,13,L MB,0.5433105888421508
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,14,pineal gland,2.105977201226307
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,15,R LV at AC,3.6564621942171507
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,16,L LV at AC,3.2434067244737714
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,17,R LV at PC,4.893099030493826
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,18,L LV at PC,4.503653310985486
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,19,genu of CC,1.3029589803273356
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,20,splenium of CC,0.3739033547198986
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,21,R AL temporal horn,3.509299046268413
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,22,L AL temporal horn,1.868367220764841
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,23,R superior AM temporal horn,2.2072732646731907
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,24,L superior AM temporal horn,3.3486388989274496
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,25,R inferior AM temporal horn,1.8870601414976411
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,26,L inferior AM temporal horn,2.056052842874756
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,27,R indusium griseum origin,0.7322240862267819
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,28,L indusium griseum origin,2.2485503402238782
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,29,R ventral occipital horn,3.0926554420987906
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,30,L ventral occipital horn,1.7515592703235634
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,31,R olfactory sulcal fundus,1.0224629825365628
+snsx,cohort,MNI152NLin2009cAsym__C021,MNI152NLin2009cAsym,C021,ants,32,L olfactory sulcal fundus,0.23608684022793552
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,1,AC,0.347841634616501
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,2,PC,1.2895049330866257
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,3,infracollicular sulcus,1.5891540482797324
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,4,PMJ,1.7417285362137371
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,5,superior interpeduncular fossa,1.8551561286771858
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,6,R superior LMS,1.4146715311417881
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,7,L superior LMS,0.901179528816984
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,8,R inferior LMS,1.1380409125036506
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,9,L inferior LMS,1.0805901013164803
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,10,culmen,2.8639786444952953
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,11,intermammillary sulcus,0.28650096367461175
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,12,R MB,0.57680508984698
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,13,L MB,0.19529388225254585
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,14,pineal gland,1.7507021668307639
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,15,R LV at AC,2.2230453816700027
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,16,L LV at AC,0.4134785429113052
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,17,R LV at PC,3.3368885758533255
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,18,L LV at PC,2.4524430105707715
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,19,genu of CC,2.2661457667176945
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,20,splenium of CC,1.18566084237511
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,21,R AL temporal horn,1.4625590567775009
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,22,L AL temporal horn,3.485889301099417
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,23,R superior AM temporal horn,2.0496268834236884
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,24,L superior AM temporal horn,3.067192480017321
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,25,R inferior AM temporal horn,1.7920741608906958
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,26,L inferior AM temporal horn,2.4425345319326106
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,27,R indusium griseum origin,0.8275582275809077
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,28,L indusium griseum origin,2.2420629343671896
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,29,R ventral occipital horn,1.17974362673869
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,30,L ventral occipital horn,4.051561516207559
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,31,R olfactory sulcal fundus,0.059704542926320964
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,fastwarp,32,L olfactory sulcal fundus,1.4638781185695313
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,1,AC,0.3431682676640527
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,2,PC,1.268394779641108
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,3,infracollicular sulcus,1.594393725460208
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,4,PMJ,1.7401820381758095
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,5,superior interpeduncular fossa,1.8550339169000287
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,6,R superior LMS,1.416739221664079
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,7,L superior LMS,0.8899065508468519
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,8,R inferior LMS,1.154931141067197
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,9,L inferior LMS,1.0895283342520206
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,10,culmen,2.8472289375125417
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,11,intermammillary sulcus,0.2858612660443196
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,12,R MB,0.5824216044480518
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,13,L MB,0.1879805758580569
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,14,pineal gland,1.796527747560165
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,15,R LV at AC,2.2520131447595446
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,16,L LV at AC,0.4082216347462426
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,17,R LV at PC,3.3459125303179214
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,18,L LV at PC,2.5060246536850244
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,19,genu of CC,2.2892388948891527
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,20,splenium of CC,1.1932419859220584
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,21,R AL temporal horn,1.5339226320296446
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,22,L AL temporal horn,3.480286192078372
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,23,R superior AM temporal horn,2.083639572761608
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,24,L superior AM temporal horn,3.0459220077526274
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,25,R inferior AM temporal horn,1.8274892369967752
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,26,L inferior AM temporal horn,2.413333117341656
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,27,R indusium griseum origin,0.8382638821990523
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,28,L indusium griseum origin,2.2480360501880816
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,29,R ventral occipital horn,1.2124620329627613
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,30,L ventral occipital horn,4.1696637767704265
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,31,R olfactory sulcal fundus,0.08215790064129401
+snsx,cohort,MNI152NLin2009cAsym__C022,MNI152NLin2009cAsym,C022,ants,32,L olfactory sulcal fundus,1.4451681810486219

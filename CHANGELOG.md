@@ -54,6 +54,14 @@
   `register_rigid(fixed, moving, ...)`, use `with fastwarp.linear_session(fixed, moving,
   fixed_mask=..., winsorize=..., adapter=...) as s: s.register(stage=..., initial=...,
   out_prefix=..., cancel=...)`.
+- Benchmark results of the default run on five machines (NVIDIA RTX A4000, Apple M5 Pro, AMD
+  Radeon Pro 5500 XT, Intel Arc 140V, NVIDIA Quadro K620): the timings on the Performance page,
+  the accuracy on the benchmark page, the result files in `benchmarks/results/2026-11/`. They
+  replace the earlier measurements on non-public data.
+- `benchmarks/scripts/chain.py` runs every step of the benchmark unattended;
+  `benchmarks/scripts/monitor.py` records the machine's load meanwhile.
+- The documented hash-checked install of the PyPI wheel passes `--no-config` and `--python .venv`
+  again, and the work folder needs about 550 MB per pair, not 60 MB.
 
 ## 0.2.0 (2026-11-15)
 

@@ -1,0 +1,29 @@
+{
+ "recorded": "2026-11-17T15:14:54+00:00",
+ "benchmark_commit": "124d690c55aa10dc01f5de26d360f02466992567",
+ "benchmark_tree_dirty": false,
+ "platform": "macOS-26.6.2-x86_64-i386-64bit-Mach-O",
+ "python": "3.13.18",
+ "cpu": "Intel(R) Core(TM) i7-10700K CPU @ 3.80GHz",
+ "cpu_count": 16,
+ "cpu_count_physical": 8,
+ "threads": "all cores",
+ "itk_threads": null,
+ "rayon_threads": null,
+ "thread_env_of_caller": {},
+ "fastwarp_env": {},
+ "numpy": "2.3.5",
+ "scipy": "1.15.3",
+ "fastwarp": "0.2.0",
+ "fastwarp_engine_source": "fastwarp-legacy 90c1df3",
+ "gpu": {
+  "name": "AMD Radeon Pro 5500 XT",
+  "backend": "Metal",
+  "device_type": "DiscreteGpu",
+  "driver": "",
+  "memory_budget_bytes": 7498227712
+ },
+ "antspyx": "0.6.3",
+ "ants_program": "ANTsPy's bundled antsRegistration",
+ "ants_version": "v2.5.1.post95-g2236a75"
+}

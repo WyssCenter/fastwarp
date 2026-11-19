@@ -1,8 +1,7 @@
 # Performance and validation
 
-How FastWarp's speed and accuracy are measured against ANTs, and what the tests check on every
-change. **The benchmark results are not published yet**: the benchmark is written and tested on
-a synthetic phantom, and its first full run on public data is still to be done.
+How FastWarp's speed and accuracy are measured against ANTs, the results on five machines, and
+what the tests check on every change.
 
 ::::{grid} 1 1 3 3
 :gutter: 3
@@ -11,16 +10,16 @@ a synthetic phantom, and its first full run on public data is still to be done.
 :link: performance
 :link-type: doc
 
-How run times are measured and how to repeat the measurement. Results pending; earlier
-measurements on non-public data are labelled as such.
+How run times are measured, how to repeat the measurement, and the results against ANTs on
+five machines.
 :::
 
 :::{grid-item-card} {fas}`bullseye` Accuracy benchmark
 :link: benchmarks
 :link-type: doc
 
-FastWarp and ANTs on public brain MRI with manual labels and landmarks. Results pending; anyone
-can download the data and run it.
+FastWarp and ANTs on public brain MRI with manual labels and landmarks, with the results of
+five machines; anyone can download the data and run it.
 :::
 
 :::{grid-item-card} {fas}`vial` Testing
