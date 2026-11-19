@@ -326,14 +326,22 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
         [0.9, -0.6, 0.4],
         [1.0, 2.0, -1.0],
     );
-    for (name, aff) in [
-        ("warp_through_field", None),
-        ("warp_through_field+affine", Some(&affine)),
+    let pre = field(&other, 0.8 * amp, case.seed + 9);
+    let g_pre = gpu.upload_field(&pre)?;
+    for (name, aff, with_pre) in [
+        ("warp_through_field", None, false),
+        ("warp_through_field+affine", Some(&affine), false),
+        ("warp_through_field+pre+affine", Some(&affine), true),
     ] {
+        let (gp, cp) = if with_pre {
+            (Some(&g_pre), Some(&pre))
+        } else {
+            (None, None)
+        };
         let g = gpu
-            .warp_through_field(&g_src, &gf, aff)
+            .warp_through_field(&g_src, &gf, gp, aff)
             .map_err(|e| mismatch(name, e))?;
-        let c = cpu.warp_through_field(&c_src, &cf, aff)?;
+        let c = cpu.warp_through_field(&c_src, &cf, cp, aff)?;
         let got: Vec<f64> = gpu.download_image(&g)?;
         let want = c.data();
         let flips = got
@@ -517,10 +525,22 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
             .collect(),
     )?;
     let g_mask = gpu.upload_image(&mask_src)?;
+    let g_pre_warped = gpu
+        .warp_mask_through_field(&g_mask, &gf, Some(&g_pre), Some(&affine), None)
+        .map_err(|e| mismatch("warp_mask_through_field+pre", e))?;
+    let c_pre_warped =
+        cpu.warp_mask_through_field(&mask_src, &cf, Some(&pre), Some(&affine), None)?;
+    out.push(mask_warp_result(
+        "warp_mask_through_field+pre+affine",
+        &gpu.download_image(&g_pre_warped)?,
+        c_pre_warped.data(),
+        n,
+    ));
+    drop(g_pre_warped);
     let g_warped = gpu
-        .warp_mask_through_field(&g_mask, &gf, Some(&affine), None)
+        .warp_mask_through_field(&g_mask, &gf, None, Some(&affine), None)
         .map_err(|e| mismatch("warp_mask_through_field", e))?;
-    let c_warped = cpu.warp_mask_through_field(&mask_src, &cf, Some(&affine), None)?;
+    let c_warped = cpu.warp_mask_through_field(&mask_src, &cf, None, Some(&affine), None)?;
     let got = gpu.download_image(&g_warped)?;
     out.push(mask_warp_result(
         "warp_mask_through_field+affine",
@@ -538,9 +558,9 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     )?;
     let g_second = gpu.upload_image(&second_src)?;
     let g_product = gpu
-        .warp_mask_through_field(&g_second, &gf, None, Some(g_warped))
+        .warp_mask_through_field(&g_second, &gf, None, None, Some(g_warped))
         .map_err(|e| mismatch("warp_mask_through_field product", e))?;
-    let c_product = cpu.warp_mask_through_field(&second_src, &cf, None, Some(c_warped))?;
+    let c_product = cpu.warp_mask_through_field(&second_src, &cf, None, None, Some(c_warped))?;
     out.push(mask_warp_result(
         "warp_mask_through_field product",
         &gpu.download_image(&g_product)?,

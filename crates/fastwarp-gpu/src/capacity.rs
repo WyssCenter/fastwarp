@@ -42,13 +42,21 @@ const MOVING_IMAGE_BYTES_PER_VOXEL: u64 = 4;
 const MASK_BYTES_PER_VOXEL: u64 = 13;
 /// A mask stays on its own grid for the whole stage, one `f32` per voxel.
 const MASK_IMAGE_BYTES_PER_VOXEL: u64 = 4;
+/// What a SyN stage after another one holds besides its own working set: the collapsed forward
+/// field of the earlier SyN stages, for the whole stage (`syn.rs`, `syn_fields`). Its inverse
+/// stays on the host until the stage ends; it is uploaded after the stage's four fields have
+/// gone back to the buffer pool, so it reuses one of their buffers instead of adding to the peak
+/// (`tests/syn_parity.rs`, `the_capacity_plan_bounds_the_pool_peak_of_two_syn_stages`). The
+/// field lies on the grid of the last level; counting it on the fixed grid over-counts when the
+/// stages end at a shrink factor above 1.
+const PRIOR_FIELD_BYTES_PER_VOXEL: u64 = 12;
 /// The share of the per-voxel figures held by the nine displacement fields of a level.
 const LEVEL_FIELD_BYTES_PER_VOXEL: u64 = 9 * 12;
 const SYN_WORKGROUP: [u64; 3] = [8, 8, 4];
 const SYN_REDUCTION_GROUP: u64 = 256;
 const SYN_REDUCTION_MAX_GROUPS_X: u64 = 32768;
 
-/// Bytes the device self-test of `WgpuBackend::new` leaves idle in the buffer pool (614,032 on
+/// Bytes the device self-test of `WgpuBackend::new` leaves idle in the buffer pool (631,952 on
 /// the adapter measured; `tests/syn_parity.rs` checks the bound). Each buffer is below
 /// [`RETAIN_FLOOR_BYTES`], so no level transition frees them.
 pub const SELFTEST_POOL_BYTES: u64 = 640 << 10;
@@ -439,6 +447,66 @@ pub fn plan_capacity_syn_masked(
     })
 }
 
+/// One SyN stage for [`plan_capacity_syn_stages`]: its levels and the grid sizes of the masks it
+/// uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SynStageCapacity<'a> {
+    /// The shrink factor of each level.
+    pub shrink_factors: &'a [u32],
+    /// The grid size of each mask the stage uses (none, the fixed mask, the moving mask or both).
+    pub mask_dims: &'a [[usize; 3]],
+}
+
+/// Like [`plan_capacity_syn_masked`] for SyN stages run one after the other, as
+/// `register_stages` runs them: the backend frees its idle buffers before each stage, so each
+/// stage is planned on its own, and every stage after the first also holds the collapsed field of
+/// the earlier ones on the fixed grid (12 bytes per voxel). Returns the plan of the stage that
+/// needs the most device memory (an empty list as one stage of one full-resolution level). Pure;
+/// no device is touched.
+pub fn plan_capacity_syn_stages(
+    grid_dims: [usize; 3],
+    moving_dims: [usize; 3],
+    channels: usize,
+    stages: &[SynStageCapacity<'_>],
+    caps: &CapacityCaps,
+) -> Result<CapacityPlan, CapacityError> {
+    let Some((first, rest)) = stages.split_first() else {
+        return plan_capacity_syn(grid_dims, moving_dims, channels, &[1], caps);
+    };
+    let unbudgeted = CapacityCaps {
+        memory_budget: u64::MAX,
+        ..*caps
+    };
+    let prior = voxel_count(grid_dims).saturating_mul(PRIOR_FIELD_BYTES_PER_VOXEL);
+    let stage_plan = |stage: &SynStageCapacity<'_>| {
+        plan_capacity_syn_masked(
+            grid_dims,
+            moving_dims,
+            channels,
+            stage.shrink_factors,
+            stage.mask_dims,
+            &unbudgeted,
+        )
+    };
+    let mut plan = stage_plan(first)?;
+    for stage in rest {
+        let mut later = stage_plan(stage)?;
+        later.level_total_bytes = later.level_total_bytes.saturating_add(prior);
+        if later.level_total_bytes > plan.level_total_bytes {
+            plan = later;
+        }
+    }
+    plan.memory_budget = caps.memory_budget;
+    if plan.level_total_bytes > caps.memory_budget {
+        return Err(CapacityError::Memory {
+            dims: grid_dims,
+            need: plan.level_total_bytes,
+            budget: caps.memory_budget,
+        });
+    }
+    Ok(plan)
+}
+
 /// Bytes of the record of one Mattes MI sample (`wgpu_backend/mi.rs`).
 const LINEAR_SAMPLE_RECORD_BYTES: u64 = 16;
 /// Samples per workgroup chunk of the MI kernels.
@@ -566,6 +634,80 @@ mod tests {
             timestamp_period_ns: None,
             feature_names: Vec::new(),
         }
+    }
+
+    #[test]
+    fn several_syn_stages_are_planned_one_by_one_with_the_earlier_field() {
+        let dims = [96, 96, 96];
+        let n = 96u64 * 96 * 96;
+        let caps = arc();
+        let full: &[u32] = &[4, 2, 1];
+        let fine: &[u32] = &[1];
+        let mask = [[64, 64, 64]];
+        let stage = |shrink_factors, mask_dims| SynStageCapacity {
+            shrink_factors,
+            mask_dims,
+        };
+        let one = plan_capacity_syn_masked(dims, dims, 2, full, &[], &caps).unwrap();
+        let alone =
+            plan_capacity_syn_stages(dims, dims, 2, &[stage(full, &[][..])], &caps).unwrap();
+        assert_eq!(alone, one);
+        let twice = plan_capacity_syn_stages(
+            dims,
+            dims,
+            2,
+            &[stage(full, &[][..]), stage(full, &[][..])],
+            &caps,
+        )
+        .unwrap();
+        assert_eq!(twice.level_total_bytes, one.level_total_bytes + 12 * n);
+        let masked_second = plan_capacity_syn_stages(
+            dims,
+            dims,
+            2,
+            &[stage(full, &[][..]), stage(fine, &mask[..])],
+            &caps,
+        )
+        .unwrap();
+        let fine_masked = plan_capacity_syn_masked(dims, dims, 2, fine, &mask, &caps).unwrap();
+        assert_eq!(
+            masked_second.level_total_bytes,
+            (fine_masked.level_total_bytes + 12 * n).max(one.level_total_bytes)
+        );
+        let masked_first = plan_capacity_syn_stages(
+            dims,
+            dims,
+            2,
+            &[stage(full, &mask[..]), stage(fine, &[][..])],
+            &caps,
+        )
+        .unwrap();
+        let full_masked = plan_capacity_syn_masked(dims, dims, 2, full, &mask, &caps).unwrap();
+        assert!(masked_first.level_total_bytes >= full_masked.level_total_bytes);
+        let tight = CapacityCaps {
+            memory_budget: twice.level_total_bytes - 1,
+            ..caps
+        };
+        assert!(plan_capacity_syn_masked(dims, dims, 2, full, &[], &tight).is_ok());
+        match plan_capacity_syn_stages(
+            dims,
+            dims,
+            2,
+            &[stage(full, &[][..]), stage(full, &[][..])],
+            &tight,
+        ) {
+            Err(CapacityError::Memory { need, budget, .. }) => {
+                assert_eq!(
+                    (need, budget),
+                    (twice.level_total_bytes, tight.memory_budget)
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            plan_capacity_syn_stages(dims, dims, 2, &[], &caps).unwrap(),
+            plan_capacity_pair(dims, dims, 2, &caps).unwrap()
+        );
     }
 
     #[test]

@@ -23,10 +23,12 @@
 // `itkImageRegistrationMethodv4.hxx`, `InitializeCenterOfLinearOutputTransform`, and ANTs
 // `itkantsRegistrationHelper.hxx`, `AddLinearTransformToCompositeTransform` /
 // `CollapseLinearTransforms`) from a fixed Rigid-then-Affine pair to any list of linear stages
-// after any initial transform. See `docs/THIRD_PARTY_PORTS.md`.
+// after any initial transform, followed by any number of SyN stages chained and collapsed as
+// `itkantsRegistrationHelper.hxx` chains them (`CollapseDisplacementFieldTransforms`). See
+// `docs/THIRD_PARTY_PORTS.md`.
 
 //! Stage-list orchestration: an initial transform, any number of `Rigid` / `Affine` stages in any
-//! order, then at most one SyN stage, as `antsRegistration` runs them with
+//! order, then any number of SyN stages, as `antsRegistration` runs them with
 //! `--collapse-output-transforms 1`, and the ANTs-named outputs of such a run.
 //!
 //! [`register_stages`] with [`StagePlan::cohort`] runs exactly what
@@ -51,7 +53,7 @@ use crate::register::{
     check_winsorize, prepare_channels_with, write_linear_output, LinearPlan, PreparedChannels,
     RegisterTimings, WINSORIZE_LOWER, WINSORIZE_UPPER,
 };
-use crate::syn::{run_syn_pair_cached, SynLevelTrace, SynOptions};
+use crate::syn::{run_syn_stage_cached, PriorWarp, SynLevelTrace, SynOptions, SynStart};
 use crate::transform::ants_io::{
     with_suffix, AFFINE_SUFFIX, COMPOSITE_SUFFIX, INVERSE_COMPOSITE_SUFFIX, INVERSE_WARP_SUFFIX,
     WARP_SUFFIX,
@@ -77,7 +79,7 @@ pub enum InitialTransform {
     Affine(AffineTransform),
 }
 
-/// What runs: the start, the linear stages in order, an optional SyN stage after them, and the
+/// What runs: the start, the linear stages in order, the SyN stages after them, and the
 /// intensity preprocessing of every metric image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StagePlan {
@@ -85,8 +87,10 @@ pub struct StagePlan {
     pub initial: InitialTransform,
     /// `Rigid` / `Affine` stages, run in this order on the first channel (any number, also none).
     pub linear: Vec<LinearRecipe>,
-    /// The SyN stage on every channel, after the linear stages; `None` for a linear-only run.
-    pub syn: Option<SynRecipe>,
+    /// The SyN stages on every channel, in this order after the linear stages (each starts from
+    /// the collapsed result of everything before it, see [`crate::syn::SynStart`]); empty for a
+    /// linear-only run. They must end with the same shrink factor, so their fields share a grid.
+    pub syn: Vec<SynRecipe>,
     /// `Some((lower, upper))`: `--winsorize-image-intensities [lower,upper]`; `None`: ANTs'
     /// default rescale to `[0, 1]` with the quantile window `(0, 1)`.
     pub winsorize: Option<(f32, f32)>,
@@ -99,21 +103,33 @@ impl StagePlan {
         Self {
             initial: InitialTransform::CentreOfMass,
             linear: vec![plan.rigid.clone(), plan.affine.clone()],
-            syn: Some(syn.clone()),
+            syn: vec![syn.clone()],
             winsorize: Some((WINSORIZE_LOWER, WINSORIZE_UPPER)),
         }
     }
 
     /// Checks every stage and the preprocessing window; a plan needs at least one stage.
     pub fn validate(&self) -> Result<()> {
-        if self.linear.is_empty() && self.syn.is_none() {
+        if self.linear.is_empty() && self.syn.is_empty() {
             return Err(invalid("stage plan", "the plan has no stage"));
         }
         for stage in &self.linear {
             stage.validate()?;
         }
-        if let Some(syn) = &self.syn {
+        for syn in &self.syn {
             syn.validate()?;
+        }
+        let last = |s: &SynRecipe| s.shrink_factors.last().copied();
+        if self
+            .syn
+            .iter()
+            .any(|s| last(s) != self.syn.first().and_then(last))
+        {
+            return Err(invalid(
+                "stage plan",
+                "the SyN stages end with different shrink factors: their fields must share the \
+                 grid of the last level, so give them the same last shrink factor",
+            ));
         }
         if let InitialTransform::Affine(a) = &self.initial {
             let finite = a
@@ -133,9 +149,9 @@ impl StagePlan {
         check_winsorize(self.winsorize)
     }
 
-    /// Whether the plan ends with a SyN stage.
+    /// Whether the plan has a SyN stage.
     pub fn is_deformable(&self) -> bool {
-        self.syn.is_some()
+        !self.syn.is_empty()
     }
 }
 
@@ -196,8 +212,8 @@ pub struct StagesOutput {
     pub linear: Vec<LinearStageResult>,
     /// The start and every linear stage collapsed into one affine (`0GenericAffine.mat`).
     pub total: AffineTransform,
-    /// Per-level traces of the SyN stage; empty without one.
-    pub levels: Vec<SynLevelTrace>,
+    /// Per-level traces of each SyN stage, in order; empty without one.
+    pub syn_levels: Vec<Vec<SynLevelTrace>>,
     /// Whether a SyN stage ran (the pair holds displacement fields).
     pub deformable: bool,
     /// Phase timings.
@@ -205,15 +221,18 @@ pub struct StagesOutput {
 }
 
 /// Runs `plan`: resampling to `iso_mm` and preprocessing every channel, the start, the linear
-/// stages on `engine` (first channel), then the SyN stage on `backend` (every channel) from the
-/// collapsed affine. Between the linear stages and the SyN stage the backend frees its idle
-/// buffers ([`Backend::release_idle_buffers`]), so the device peak is that of one of the two
-/// phases. A plan without a SyN stage takes one channel. The GPU capacity of the grid is the
-/// caller's to check.
+/// stages on `engine` (first channel), then the SyN stages on `backend` (every channel), the first
+/// from the collapsed affine, each later one from the affine and the collapsed field of the SyN
+/// stages before it. After each SyN stage its field is collapsed with the earlier ones as
+/// `antsRegistration --collapse-output-transforms 1` does, so the result is one affine and one
+/// field per direction. Before every SyN stage that follows another stage the backend frees its
+/// idle buffers ([`Backend::release_idle_buffers`]), so the device peak is that of one stage
+/// (a later SyN stage also holds the earlier field). A plan without a SyN stage takes one
+/// channel. The GPU capacity of the grid is the caller's to check.
 ///
 /// The linear stages share one cache of smoothed full-resolution images (one pair per distinct
-/// sigma, when the stages keep `cache_smoothed_images`) on the host until the SyN stage has
-/// taken what it reuses; a long stage list with many different sigmas holds that many pairs.
+/// sigma, when the stages keep `cache_smoothed_images`) on the host until the SyN stages have
+/// taken what they reuse; a long stage list with many different sigmas holds that many pairs.
 #[allow(clippy::too_many_arguments)]
 pub fn register_stages<B: Backend, E: LinearEngine>(
     backend: &B,
@@ -225,20 +244,21 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
     options: &SynOptions<'_>,
 ) -> Result<StagesOutput> {
     plan.validate()?;
-    match &plan.syn {
-        Some(syn) if syn.channel_weights.len() != fixed.len() => {
-            return Err(invalid(
-                "stage plan",
-                "the number of channels differs from the number of channel weights",
-            ));
-        }
-        None if fixed.len() > 1 => {
-            return Err(invalid(
-                "stage plan",
-                "a plan without a SyN stage registers one channel; the linear stages use the first",
-            ));
-        }
-        _ => {}
+    if plan
+        .syn
+        .iter()
+        .any(|syn| syn.channel_weights.len() != fixed.len())
+    {
+        return Err(invalid(
+            "stage plan",
+            "the number of channels differs from the number of channel weights",
+        ));
+    }
+    if plan.syn.is_empty() && fixed.len() > 1 {
+        return Err(invalid(
+            "stage plan",
+            "a plan without a SyN stage registers one channel; the linear stages use the first",
+        ));
     }
     let mut timings = RegisterTimings::default();
     let PreparedChannels {
@@ -270,29 +290,36 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
         .into_iter()
         .next()
         .ok_or_else(|| invalid("register", "no moving channel"))?;
-    let (pair, levels) = match &plan.syn {
-        Some(recipe) => {
-            if !plan.linear.is_empty() {
-                backend.release_idle_buffers();
-            }
-            let t = Instant::now();
-            let syn = run_syn_pair_cached(
-                backend,
-                recipe,
-                &channels,
-                &total,
-                options,
-                Some(&mut cache),
-            );
-            drop(cache);
-            let out = syn?;
+    let t = Instant::now();
+    let mut prior: Option<PriorWarp> = None;
+    let mut syn_levels = Vec::with_capacity(plan.syn.len());
+    for (i, recipe) in plan.syn.iter().enumerate() {
+        if i > 0 || !plan.linear.is_empty() {
+            backend.release_idle_buffers();
+        }
+        let start = SynStart {
+            affine: &total,
+            prior: prior.as_ref(),
+        };
+        let out =
+            run_syn_stage_cached(backend, recipe, &channels, start, options, Some(&mut cache))?;
+        prior = Some(PriorWarp {
+            warp: out.warp,
+            inverse_warp: out.inverse_warp,
+        });
+        syn_levels.push(out.levels);
+    }
+    drop(cache);
+    let pair = match prior {
+        Some(p) => {
             timings.syn_s = t.elapsed().as_secs_f64();
-            out
+            CompositePair::new(
+                &total,
+                p.warp.to_displacement_field()?,
+                p.inverse_warp.to_displacement_field()?,
+            )?
         }
-        None => {
-            drop(cache);
-            (CompositePair::linear(&total)?, Vec::new())
-        }
+        None => CompositePair::linear(&total)?,
     };
     let grid = *channels[0].fixed.grid();
     drop(channels);
@@ -312,8 +339,8 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
         initial,
         linear,
         total,
-        levels,
-        deformable: plan.syn.is_some(),
+        syn_levels,
+        deformable: plan.is_deformable(),
         timings,
     })
 }
@@ -477,8 +504,232 @@ mod tests {
         assert_eq!(staged.linear[1].affine, chain.affine.affine);
         assert_eq!(staged.pair, full.pair);
         assert_eq!(staged.warped, full.warped);
-        assert_eq!(staged.levels, full.levels);
+        assert_eq!(staged.syn_levels, vec![full.levels.clone()]);
         assert!(staged.deformable);
+    }
+
+    fn run_plan(syn: Vec<SynRecipe>) -> StagesOutput {
+        let (fx, mv) = pair();
+        let plan = StagePlan {
+            initial: InitialTransform::Identity,
+            linear: Vec::new(),
+            syn,
+            winsorize: Some((WINSORIZE_LOWER, WINSORIZE_UPPER)),
+        };
+        register_stages(
+            &CpuBackend,
+            &CpuLinearEngine,
+            &plan,
+            &fx,
+            &mv,
+            None,
+            &SynOptions::default(),
+        )
+        .unwrap()
+    }
+
+    fn fields(out: &StagesOutput) -> (DisplacementField, DisplacementField) {
+        (
+            field_at(&out.pair.forward, 1).unwrap().clone(),
+            field_at(&out.pair.inverse, 0).unwrap().clone(),
+        )
+    }
+
+    fn max_diff(a: &DisplacementField, b: &DisplacementField) -> f64 {
+        a.data()
+            .iter()
+            .zip(b.data())
+            .fold(0.0f64, |m, (x, y)| m.max(f64::from((x - y).abs())))
+    }
+
+    fn fine_syn(iterations: u32) -> SynRecipe {
+        SynRecipe {
+            iterations: vec![iterations],
+            shrink_factors: vec![1],
+            smoothing_sigmas: vec![0.0],
+            convergence_threshold: -1.0,
+            ..SynRecipe::cohort()
+        }
+    }
+
+    #[test]
+    fn a_second_syn_stage_without_iterations_keeps_the_first_stage_s_fields() {
+        let one = run_plan(vec![small_syn()]);
+        let two = run_plan(vec![small_syn(), fine_syn(0)]);
+        let ((f1, i1), (f2, i2)) = (fields(&one), fields(&two));
+        assert!(max_diff(&f1, &f2) < 1e-6, "{}", max_diff(&f1, &f2));
+        assert_eq!(i1, i2);
+        assert_eq!(two.syn_levels.len(), 2);
+        assert_eq!(two.syn_levels[0], one.syn_levels[0]);
+        assert!(two.syn_levels[1][0].iterations.is_empty());
+        assert_eq!(two.total, one.total);
+        let worst = one
+            .warped
+            .data()
+            .iter()
+            .zip(two.warped.data())
+            .fold(0.0f64, |m, (a, b)| m.max((a - b).abs()));
+        assert!(worst < 1e-6, "{worst}");
+    }
+
+    #[test]
+    fn a_second_syn_stage_refines_and_a_zero_prior_changes_nothing() {
+        let one = run_plan(vec![small_syn()]);
+        let two = run_plan(vec![small_syn(), fine_syn(6)]);
+        let (fx, _) = pair();
+        let err = |out: &StagesOutput| {
+            fx[0]
+                .data()
+                .iter()
+                .zip(out.warped.data())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f64>()
+        };
+        assert!(err(&two) < err(&one), "{} {}", err(&two), err(&one));
+        assert_eq!(two.syn_levels[1][0].iterations.len(), 6);
+        let (f1, _) = fields(&one);
+        let (f2, _) = fields(&two);
+        assert!(max_diff(&f1, &f2) > 1e-2);
+
+        let (fx, mv) = pair();
+        let mut t = RegisterTimings::default();
+        let prepared = prepare_channels_with(
+            &fx,
+            &mv,
+            None,
+            Some((WINSORIZE_LOWER, WINSORIZE_UPPER)),
+            &mut t,
+        )
+        .unwrap();
+        let identity = AffineTransform::identity();
+        let recipe = fine_syn(4);
+        let alone = crate::syn::run_syn(
+            &CpuBackend,
+            &recipe,
+            &prepared.channels,
+            &identity,
+            &SynOptions::default(),
+        )
+        .unwrap();
+        let grid = *prepared.channels[0].fixed.grid();
+        let zero = PriorWarp {
+            warp: crate::field_ops::VectorField::zeros(grid),
+            inverse_warp: crate::field_ops::VectorField::zeros(grid),
+        };
+        let after_zero = crate::syn::run_syn_from(
+            &CpuBackend,
+            &recipe,
+            &prepared.channels,
+            SynStart {
+                affine: &identity,
+                prior: Some(&zero),
+            },
+            &SynOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(after_zero.warp, alone.warp);
+        assert_eq!(after_zero.levels, alone.levels);
+        assert!(max_diff(&after_zero.inverse_warp, &alone.inverse_warp) < 1e-6);
+    }
+
+    #[test]
+    fn a_fixed_mask_on_the_second_syn_stage_changes_the_field_near_the_mask_only() {
+        let (fx, _) = pair();
+        let g = *fx[0].grid();
+        let centre = [30.0, 20.0, 23.0];
+        let radius = 7.0;
+        let dist = |p: [f64; 3]| {
+            (0..3)
+                .map(|a| (p[a] - centre[a]).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        };
+        let mask = crate::mask::MaskVolume::from_volume(
+            Volume::from_vec(
+                g,
+                (0..g.num_voxels())
+                    .map(|idx| {
+                        let [i, j, k] = g.ijk(idx);
+                        f64::from(u8::from(
+                            dist(g.index_to_point([i as f64, j as f64, k as f64])) < radius,
+                        ))
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        let one = run_plan(vec![small_syn()]);
+        let second = SynRecipe {
+            fixed_mask: Some(mask),
+            ..fine_syn(8)
+        };
+        let two = run_plan(vec![small_syn(), second]);
+        let unmasked = run_plan(vec![small_syn(), fine_syn(8)]);
+        let (f1, _) = fields(&one);
+        let (f2, _) = fields(&two);
+        let (fu, _) = fields(&unmasked);
+        let (mut inside, mut far, mut far_unmasked) = (0.0f64, 0.0f64, 0.0f64);
+        for idx in 0..g.num_voxels() {
+            let [i, j, k] = g.ijk(idx);
+            let d = dist(g.index_to_point([i as f64, j as f64, k as f64]));
+            let change = |f: &DisplacementField| {
+                (0..3)
+                    .map(|a| f64::from(f.data()[3 * idx + a] - f1.data()[3 * idx + a]).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+            };
+            if d < radius {
+                inside = inside.max(change(&f2));
+            } else if d > radius + 14.0 {
+                far = far.max(change(&f2));
+                far_unmasked = far_unmasked.max(change(&fu));
+            }
+        }
+        eprintln!("largest change inside the mask {inside:.3e} mm, far from it {far:.3e} mm (unmasked {far_unmasked:.3e} mm)");
+        assert!(inside > 0.05, "{inside}");
+        assert!(far_unmasked > 0.05, "{far_unmasked}");
+        assert!(far < 1e-3 * inside, "{far} {inside}");
+    }
+
+    #[test]
+    fn a_third_syn_stage_collapses_onto_the_first_two() {
+        let two = run_plan(vec![small_syn(), fine_syn(4)]);
+        let three = run_plan(vec![small_syn(), fine_syn(4), fine_syn(0)]);
+        let refined = run_plan(vec![small_syn(), fine_syn(4), fine_syn(3)]);
+        assert_eq!(three.syn_levels.len(), 3);
+        assert_eq!(three.syn_levels[..2], two.syn_levels[..]);
+        let ((f2, i2), (f3, i3)) = (fields(&two), fields(&three));
+        assert!(max_diff(&f2, &f3) < 1e-6, "{}", max_diff(&f2, &f3));
+        assert_eq!(i2, i3);
+        let (fr, _) = fields(&refined);
+        assert!(max_diff(&fr, &f2) > 1e-3);
+        assert_eq!(refined.syn_levels[2][0].iterations.len(), 3);
+    }
+
+    #[test]
+    fn syn_stages_must_end_on_one_grid() {
+        let (fx, mv) = pair();
+        let coarse_end = SynRecipe {
+            shrink_factors: vec![2],
+            ..fine_syn(2)
+        };
+        let plan = StagePlan {
+            initial: InitialTransform::Identity,
+            linear: Vec::new(),
+            syn: vec![small_syn(), coarse_end],
+            winsorize: None,
+        };
+        let err = register_stages(
+            &CpuBackend,
+            &CpuLinearEngine,
+            &plan,
+            &fx,
+            &mv,
+            None,
+            &SynOptions::default(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("same last shrink factor"), "{err}");
     }
 
     #[test]
@@ -491,7 +742,7 @@ mod tests {
                 small(LinearRecipe::cohort_affine()),
                 small(LinearRecipe::cohort_rigid()),
             ],
-            syn: None,
+            syn: Vec::new(),
             winsorize: None,
         };
         let out = register_stages(
@@ -504,7 +755,7 @@ mod tests {
             &SynOptions::default(),
         )
         .unwrap();
-        assert!(!out.deformable && out.levels.is_empty());
+        assert!(!out.deformable && out.syn_levels.is_empty());
         assert_eq!(out.linear.len(), 3);
         assert_eq!(out.total.center, out.linear[2].affine.center);
         let c = 23.0;
@@ -548,7 +799,7 @@ mod tests {
         let plan = StagePlan {
             initial: InitialTransform::Identity,
             linear: Vec::new(),
-            syn: Some(small_syn()),
+            syn: vec![small_syn()],
             winsorize: Some((WINSORIZE_LOWER, WINSORIZE_UPPER)),
         };
         let out = register_stages(
@@ -563,7 +814,8 @@ mod tests {
         .unwrap();
         assert!(out.deformable && out.linear.is_empty());
         assert_eq!(out.total, AffineTransform::identity());
-        assert_eq!(out.levels.len(), 2);
+        assert_eq!(out.syn_levels.len(), 1);
+        assert_eq!(out.syn_levels[0].len(), 2);
         let d = tmp("synonly");
         let prefix = d.join("o_");
         let files = write_stage_outputs(&prefix, &out, OutputLayout::Split, false).unwrap();
@@ -610,7 +862,7 @@ mod tests {
         let plan = StagePlan {
             initial: InitialTransform::Affine(start),
             linear: vec![small(LinearRecipe::cohort_affine())],
-            syn: None,
+            syn: Vec::new(),
             winsorize: Some((WINSORIZE_LOWER, WINSORIZE_UPPER)),
         };
         let out = register_stages(
@@ -674,7 +926,7 @@ mod tests {
         let plan = StagePlan {
             initial: InitialTransform::Identity,
             linear: Vec::new(),
-            syn: Some(syn),
+            syn: vec![syn],
             winsorize: None,
         };
         let err = register_stages(
@@ -691,7 +943,7 @@ mod tests {
         let two = StagePlan {
             initial: InitialTransform::Identity,
             linear: vec![small(LinearRecipe::cohort_rigid())],
-            syn: None,
+            syn: Vec::new(),
             winsorize: None,
         };
         let fx2 = vec![fx[0].clone(), fx[0].clone()];
@@ -713,7 +965,7 @@ mod tests {
                 [0.0; 3],
             )),
             linear: vec![small(LinearRecipe::cohort_rigid())],
-            syn: None,
+            syn: Vec::new(),
             winsorize: None,
         };
         assert!(singular.validate().is_err());

@@ -58,10 +58,11 @@ pub use mi::GpuMiLevel;
 
 use crate::syn_kernels::{
     CcFinalU, CcPlanesU, ComposeU, ElementU, GaussU, InvBeginU, InvReduceU, InvResidualU,
-    InvUpdateU, NormU, ReduceU, SynKernels, WarpU, WARP_MULTIPLY, WARP_NEAREST,
+    InvUpdateU, NormU, ReduceU, SynKernels, WarpPreU, WarpU, WARP_MULTIPLY, WARP_NEAREST,
 };
 
 const SLOT_BYTES: u64 = 256;
+const _: () = assert!(std::mem::size_of::<WarpPreU>() as u64 <= SLOT_BYTES);
 const RING_SLOTS: u64 = 8192;
 const GAUSS_MAX_ERROR: f64 = 0.001;
 const SELFTEST_ATTEMPTS: u32 = 3;
@@ -298,6 +299,32 @@ fn warp_uniform(
             row4(&mi, 2, c0[2]),
         ],
         l: [row4(&a, 0, 0.0), row4(&a, 1, 0.0), row4(&a, 2, 0.0)],
+    })
+}
+
+/// The uniform of `k_warp_pre`: destination voxel indices (and their field vectors) to
+/// continuous indices of the earlier field on `pre`, then those (and the earlier field's
+/// vectors) through the optional affine to continuous indices of `src`.
+fn warp_pre_uniform(
+    dst: &Grid,
+    pre: &Grid,
+    src: &Grid,
+    affine: Option<&AffineTransform>,
+    nplanes: u32,
+) -> RegResult<WarpPreU> {
+    let first = warp_uniform(dst, pre, None, true, nplanes)?;
+    let second = warp_uniform(pre, src, affine, true, nplanes)?;
+    Ok(WarpPreU {
+        dims: first.dims,
+        pre_dims: first.src_dims,
+        src_dims: second.src_dims,
+        flags: 0,
+        nplanes,
+        pad: [0; 2],
+        mp: first.mi,
+        lp: first.l,
+        ms: second.mi,
+        ls: second.l,
     })
 }
 
@@ -1506,10 +1533,29 @@ impl Backend for WgpuBackend {
         &self,
         source: &GpuImage,
         field: &GpuField,
+        pre: Option<&GpuField>,
         affine: Option<&AffineTransform>,
     ) -> RegResult<GpuImage> {
         let grid = field.grid;
         let out = self.image_buffer(&grid)?;
+        if let Some(pre) = pre {
+            let uniform = warp_pre_uniform(&grid, &pre.grid, &source.grid, affine, 1)?;
+            self.run_pass("warp_pre", |pass| {
+                self.launch(
+                    pass,
+                    &self.kernels.warp_pre,
+                    &[
+                        source.buf.buffer(),
+                        field.buf.buffer(),
+                        pre.buf.buffer(),
+                        out.buffer(),
+                    ],
+                    &uniform,
+                    self.groups_3d(&grid),
+                )
+            })?;
+            return Ok(GpuImage { buf: out, grid });
+        }
         let uniform = warp_uniform(&grid, &source.grid, affine, true, 1)?;
         self.run_pass("warp", |pass| {
             self.launch(
@@ -1527,6 +1573,7 @@ impl Backend for WgpuBackend {
         &self,
         mask: &GpuImage,
         field: &GpuField,
+        pre: Option<&GpuField>,
         affine: Option<&AffineTransform>,
         product: Option<GpuImage>,
     ) -> RegResult<GpuImage> {
@@ -1538,6 +1585,25 @@ impl Backend for WgpuBackend {
             }
             None => (self.image_buffer(&grid)?, WARP_NEAREST),
         };
+        if let Some(pre) = pre {
+            let mut uniform = warp_pre_uniform(&grid, &pre.grid, &mask.grid, affine, 1)?;
+            uniform.flags |= flags;
+            self.run_pass("warp_mask_pre", |pass| {
+                self.launch(
+                    pass,
+                    &self.kernels.warp_pre,
+                    &[
+                        mask.buf.buffer(),
+                        field.buf.buffer(),
+                        pre.buf.buffer(),
+                        out.buffer(),
+                    ],
+                    &uniform,
+                    self.groups_3d(&grid),
+                )
+            })?;
+            return Ok(GpuImage { buf: out, grid });
+        }
         let mut uniform = warp_uniform(&grid, &mask.grid, affine, true, 1)?;
         uniform.flags |= flags;
         self.run_pass("warp_mask", |pass| {

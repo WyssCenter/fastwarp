@@ -201,7 +201,9 @@ for a displacement field, pass the matching inverse file (see
 
 `outputs="both"` writes these and the composites: five files after a SyN stage, three without
 one. The names are those of `--collapse-output-transforms 1`, ANTs' default; ANTs' per-stage
-files (`-z 0`) are not written. The fields are stored as `float32`, where ANTs writes `float64`.
+files (`-z 0`) are not written. After [several SyN stages](recipes.md#several-syn-stages) their
+fields are collapsed into one, so the files are the same: one `1Warp.nii.gz` and one
+`1InverseWarp.nii.gz`, as ANTs writes them. The fields are stored as `float32`, where ANTs writes `float64`.
 
 With split files the warp and the affine are listed separately, as ANTs users know them. A
 subject's scan in template space, and the template in the subject's space:

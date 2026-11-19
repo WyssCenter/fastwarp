@@ -66,26 +66,31 @@ pub trait Backend: Sync {
     fn copy_field(&self, field: &Self::Field) -> Result<Self::Field>;
 
     /// Resamples `source` onto the grid of `field`: output voxel `x` takes the linearly
-    /// interpolated value of `source` at `affine(x + field(x))` (the field first, then the
-    /// optional affine), and zero where that point lies outside `source`'s buffer.
+    /// interpolated value of `source` at `affine(q + pre(q))` with `q = x + field(x)` (the field
+    /// first, then the optional earlier field `pre`, then the optional affine), and zero where
+    /// that point lies outside `source`'s buffer. `pre` lives on its own grid: `pre(q)` is
+    /// interpolated linearly there and is zero where `q` lies outside its buffer, as ITK's
+    /// `DisplacementFieldTransform` maps a point. The image is interpolated once.
     fn warp_through_field(
         &self,
         source: &Self::Image,
         field: &Self::Field,
+        pre: Option<&Self::Field>,
         affine: Option<&AffineTransform>,
     ) -> Result<Self::Image>;
 
     /// Resamples a mask (an image of zeros and ones) onto the grid of `field` through the same
     /// map as [`Backend::warp_through_field`], with nearest-neighbour interpolation: output voxel
-    /// `x` is 1 where the mask voxel nearest to `affine(x + field(x))` (rounding half up, as
-    /// ITK's `NearestNeighborInterpolateImageFunction`) is not zero, and 0 where it is zero or
-    /// the point lies outside the mask's buffer. With `product` (an image on the grid of
+    /// `x` is 1 where the mask voxel nearest to `affine(q + pre(q))`, `q = x + field(x)`
+    /// (rounding half up, as ITK's `NearestNeighborInterpolateImageFunction`) is not zero, and 0
+    /// where it is zero or the point lies outside the mask's buffer. With `product` (an image on the grid of
     /// `field`), the result is multiplied into `product` voxel by voxel and returned in its
     /// buffer.
     fn warp_mask_through_field(
         &self,
         mask: &Self::Image,
         field: &Self::Field,
+        pre: Option<&Self::Field>,
         affine: Option<&AffineTransform>,
         product: Option<Self::Image>,
     ) -> Result<Self::Image>;

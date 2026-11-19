@@ -362,10 +362,8 @@ export UV_PYTHON=3.13
 uv sync --locked --no-install-project --group benchmark
 # FastWarp of this checkout (needs the Rust toolchain of rust-toolchain.toml):
 uv run --no-sync maturin develop --uv --release
-# or the released wheel from PyPI, checked against its pinned hashes (--no-config keeps the
-# project's scipy constraint, which --require-hashes refuses, out of this install; --python .venv
-# installs into the project environment even when another one is active):
-uv pip install --python .venv --no-config --no-deps --require-hashes --only-binary :all: -r benchmarks/fastwarp-pypi.txt
+# or the released wheel from PyPI, checked against its pinned hashes:
+uv pip install --no-deps --require-hashes --only-binary :all: -r benchmarks/fastwarp-pypi.txt
 uv run --no-sync python -c "import fastwarp; print(fastwarp.__version__, fastwarp.gpu_info())"
 ```
 

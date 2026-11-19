@@ -214,7 +214,21 @@ def test_the_capacity_check_follows_the_chain(tmp_path, monkeypatch):
     ("recipe", "match"),
     [
         ({"stages": []}, "is empty"),
-        ({"stages": [{"transform": "syn"}, {"transform": "rigid"}]}, "after the SyN stage"),
+        ({"stages": [{"transform": "syn"}, {"transform": "rigid"}]}, "linear stage after a SyN"),
+        (
+            {"stages": [{"transform": "affine", "moving_mask": False}]},
+            r"\['moving_mask'\] is not supported on a linear stage",
+        ),
+        ({"stages": [{"transform": "syn", "fixed_mask": "yes"}]}, "expected true or false"),
+        (
+            {
+                "stages": [
+                    {"transform": "syn", **SYN},
+                    {"transform": "syn", **SYN, "shrink_factors": [4, 2]},
+                ]
+            },
+            "same shrink factor",
+        ),
         ({"stages": [{"transform": "translation"}]}, "'rigid', 'affine' or 'syn'"),
         ({"stages": [{"transform": "rigid", "cc_radius": 2}]}, "unknown key 'cc_radius'"),
         ({"stages": [{"transform": "affine", "bins": 64}]}, r"\['stages'\]\[0\]\['bins'\]"),
@@ -261,3 +275,85 @@ def test_two_channels_need_a_syn_stage(tmp_path, monkeypatch):
             iso_mm=SPACING,
             recipe={"stages": [{"transform": "rigid"}]},
         )
+
+
+def _ball(centre_mm, radius_mm, inside=True):
+    img = phantom()
+    shape = img[0].shape
+    idx = np.indices(shape).astype(float) * SPACING
+    d = np.sqrt(sum((idx[a] - centre_mm[a]) ** 2 for a in range(3)))
+    m = (d < radius_mm) if inside else (d >= radius_mm)
+    return (m.astype(np.float64),) + tuple(img[1:])
+
+
+TWO_SYN = {
+    "initial": "identity",
+    "stages": [
+        {"transform": "affine", **LINEAR},
+        {"transform": "syn", **SYN, "fixed_mask": False},
+        {
+            "transform": "syn",
+            "iterations": [8],
+            "shrink_factors": [1],
+            "smoothing_sigmas": [0],
+            "cc_radius": 2,
+        },
+    ],
+}
+
+
+@needs_gpu
+def test_two_syn_stages_with_mask_switches_run_and_report_each_stage(tmp_path):
+    fixed, moving = phantom(), phantom(SHIFT_MM)
+    centre = [SPACING * (n - 1) / 2 for n in fixed[0].shape]
+    refine = _ball(centre, 10.0)
+    whole = g.register_syn(fixed, moving, tmp_path / "w_", iso_mm=SPACING, recipe=TWO_SYN)
+    assert len(whole["syn_stages"]) == 2
+    assert [len(s) for s in whole["syn_stages"]] == [2, 1]
+    assert whole["levels"] == whole["syn_stages"][0] + whole["syn_stages"][1]
+    assert [lvl[0] for lvl in whole["levels"]] == [0, 1, 0]
+    assert whole["syn_stages"][1][0][2] == 8
+    stages = whole["recipe"]["stages"]
+    assert [s["transform"] for s in stages] == ["affine", "syn", "syn"]
+    assert [s["fixed_mask"] for s in stages] == [True, False, True]
+    assert [s.get("moving_mask") for s in stages] == [None, True, True]
+    names = [Path(f).name for f in whole["files"]]
+    assert names == ["w_Composite.h5", "w_InverseComposite.h5", "w_0GenericAffine.mat"]
+    refined = g.register_syn(
+        fixed, moving, tmp_path / "r_", iso_mm=SPACING, recipe=TWO_SYN, fixed_mask=refine
+    )
+    assert refined["affine_parameters"] != whole["affine_parameters"]
+    assert _digest(tmp_path / "r_") != _digest(tmp_path / "w_")
+    linear_off = {
+        **TWO_SYN,
+        "stages": [{**TWO_SYN["stages"][0], "fixed_mask": False}, *TWO_SYN["stages"][1:]],
+    }
+    last_only = g.register_syn(
+        fixed, moving, tmp_path / "l_", iso_mm=SPACING, recipe=linear_off, fixed_mask=refine
+    )
+    assert last_only["affine_parameters"] == whole["affine_parameters"]
+    assert _digest(tmp_path / "l_") != _digest(tmp_path / "w_")
+    g.register_syn(
+        fixed,
+        moving,
+        tmp_path / "a_",
+        iso_mm=SPACING,
+        recipe=last_only["recipe"],
+        fixed_mask=refine,
+    )
+    assert _digest(tmp_path / "a_") == _digest(tmp_path / "l_")
+    assert g.fits_gpu(fixed, moving, iso_mm=SPACING, recipe=TWO_SYN, fixed_mask=refine)
+
+
+def test_a_mask_no_stage_uses_is_refused_before_any_work(tmp_path, monkeypatch):
+    monkeypatch.setenv("FASTWARP_GPU_ADAPTER", "no such adapter")
+    off = {"stages": [{"transform": "syn", **SYN, "fixed_mask": False, "moving_mask": False}]}
+    for kw, match in (
+        ({"fixed_mask": phantom()}, "every stage of the recipe switches it off"),
+        ({"moving_mask": phantom()}, "every SyN stage of the recipe switches it off"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            g.register_syn(phantom(), phantom(), tmp_path / "x_", iso_mm=SPACING, recipe=off, **kw)
+        with pytest.raises(ValueError, match=match):
+            g.fits_gpu(phantom(), iso_mm=SPACING, recipe=off, **kw)
+    assert not list(tmp_path.iterdir())

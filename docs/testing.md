@@ -113,7 +113,9 @@ FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-cli -
 The ignored tests of `crates/fastwarp-cli/tests/ants_mode.rs` run `antsRegistration` and
 `antsApplyTransforms` next to `fastwarp ants-registration` and compare the outputs, among them
 `syn_masks_agree_with_ants`: SyN with `-x [fixedMask,movingMask]` on a phantom with a cavity in
-the moving image. They need a GPU as well:
+the moving image, and `two_syn_stages_with_per_stage_masks_agree_with_ants`: two SyN stages,
+without masks, with a fixed mask on the second stage only and with a lesion mask on both. They need
+a GPU as well:
 
 ```bash
 FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-cli --run-ignored only \

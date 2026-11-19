@@ -116,10 +116,11 @@ direction it maps; the result's `files` lists the paths written.
 | `resample_s` | `float` | Seconds to resample the images to the registration grid. |
 | `preprocess_s` | `float` | Seconds to winsorize and rescale the images. |
 | `linear_s` | `float` | Seconds for the centre-of-mass start and the Rigid and Affine stages. |
-| `syn_s` | `float` | Seconds for the SyN stage. |
+| `syn_s` | `float` | Seconds for the SyN stages. |
 | `warp_s` | `float` | Seconds to warp the first moving image onto the registration grid. |
 | `write_s` | `float` | Seconds to write the output files. |
-| `levels` | `list[tuple]` | One tuple per SyN level, coarsest first (see below); empty without a SyN stage. |
+| `levels` | `list[tuple]` | One tuple per SyN level, coarsest first (see below); with [several SyN stages](recipes.md#several-syn-stages) the levels of each stage, one stage after the other; empty without a SyN stage. |
+| `syn_stages` | `list[list[tuple]]` | The same tuples grouped by SyN stage: one list per SyN stage, in order (`[levels]` with one SyN stage, `[]` without). |
 | `affine_parameters` | `list[float]` | The 12 parameters of the affine (the 3 × 3 matrix row by row, then the translation in millimetres): the start and every linear stage combined, as in `0GenericAffine.mat`. |
 | `affine_center` | `list[float]` | The centre of rotation of that affine, in LPS millimetres. |
 | `initial_parameters`, `initial_center` | `list[float]` | The start of the chain: the centre-of-mass translation, the identity, or the given affine. |
@@ -135,7 +136,7 @@ Each entry of `levels` is a tuple `(level, grid_size, iterations, converged, ene
 
 | Item | Type | Meaning |
 | --- | --- | --- |
-| `level` | `int` | Index of the level, from 0 (the coarsest). |
+| `level` | `int` | Index of the level in its SyN stage, from 0 (the coarsest). |
 | `grid_size` | `list[int]` | Voxels per axis of the level's grid. |
 | `iterations` | `int` | Iterations the level ran. |
 | `converged` | `bool` | `True` when the convergence test stopped the level before its iteration limit. |
@@ -182,12 +183,18 @@ The file names are placeholders for your own images. A mask can be an `ANTsImage
 `(array, spacing, origin, direction)`, on any grid; its non-zero voxels are inside.
 
 - `moving_mask` is in the space of the moving image, for example the subject's scan without its
-  cavity (`cavity == 0`, everything but the cavity). The SyN stage uses it; the rigid and affine
+  cavity (`cavity == 0`, everything but the cavity). The SyN stages use it; the rigid and affine
   stages do not, and a recipe without a SyN stage refuses it. A moving mask for the linear stages
   will follow.
 - `fixed_mask` is in the space of the fixed image, for example the template's brain. Every stage
   uses it: the linear stages sample only inside it, as a [linear fit](linear.md#masks) does, and
-  the SyN stage uses only the voxels inside it.
+  the SyN stages use only the voxels inside it.
+- A [stage-list recipe](recipes.md#mask-switches) can switch either mask off for single stages:
+  `"fixed_mask": False` on a stage, `"moving_mask": False` on a SyN stage. Both default to
+  `True`, so a mask applies to every stage it is allowed on, as `antsRegistration --masks` given
+  once. A mask that every stage switches off is refused. With switches, a second SyN stage can
+  refine the deformation inside a region of the template only (a "subcortical refine", see
+  [Several SyN stages](recipes.md#several-syn-stages)).
 - In every SyN iteration, the fixed mask is resampled onto the level's grid through the same
   transform as the fixed image, and the moving mask through the same transform as the moving
   image, with nearest-neighbour interpolation. A voxel counts only where both masks are inside:

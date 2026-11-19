@@ -195,11 +195,14 @@ fn register_syn<'py>(
     d.set_item("syn_s", run.timings.syn_s)?;
     d.set_item("warp_s", run.timings.warp_s)?;
     d.set_item("write_s", run.write_s)?;
+    let level =
+        |l: &engine::LevelSummary| (l.level, l.grid_size, l.iterations, l.converged, l.energy);
+    d.set_item("levels", run.levels.iter().map(level).collect::<Vec<_>>())?;
     d.set_item(
-        "levels",
-        run.levels
-            .iter()
-            .map(|l| (l.level, l.grid_size, l.iterations, l.converged, l.energy))
+        "syn_stages",
+        run.syn_stages()
+            .into_iter()
+            .map(|s| s.into_iter().map(level).collect::<Vec<_>>())
             .collect::<Vec<_>>(),
     )?;
     d.set_item("affine_parameters", run.affine_parameters)?;

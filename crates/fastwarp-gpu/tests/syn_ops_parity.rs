@@ -126,6 +126,7 @@ fn gpu_results_are_bit_identical_across_runs() {
             .warp_through_field(
                 &moving,
                 &f,
+                None,
                 Some(&AffineTransform::from_translation([0.4, -0.3, 0.2])),
             )
             .unwrap();
@@ -358,17 +359,19 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
         b.upload_image(&first).unwrap(),
         b.upload_image(&second).unwrap(),
     );
-    let single = b.warp_mask_through_field(&m1, &gf, None, None).unwrap();
+    let single = b
+        .warp_mask_through_field(&m1, &gf, None, None, None)
+        .unwrap();
     let single_gpu = b.download_image(&single).unwrap();
     let product = b
-        .warp_mask_through_field(&m2, &gg, Some(&affine), Some(single))
+        .warp_mask_through_field(&m2, &gg, None, Some(&affine), Some(single))
         .unwrap();
     let product_gpu = b.download_image(&product).unwrap();
     let single_cpu = cpu
-        .warp_mask_through_field(&first, &f0, None, None)
+        .warp_mask_through_field(&first, &f0, None, None, None)
         .unwrap();
     let product_cpu = cpu
-        .warp_mask_through_field(&second, &g0, Some(&affine), Some(single_cpu.clone()))
+        .warp_mask_through_field(&second, &g0, None, Some(&affine), Some(single_cpu.clone()))
         .unwrap();
     let n = grid.num_voxels();
     for (label, gpu, reference) in [
@@ -396,12 +399,13 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
     .unwrap();
     let zero = VectorField::zeros(level);
     let want = cpu
-        .warp_mask_through_field(&stripes, &zero, None, None)
+        .warp_mask_through_field(&stripes, &zero, None, None, None)
         .unwrap();
     let got = b
         .warp_mask_through_field(
             &b.upload_image(&stripes).unwrap(),
             &b.upload_field(&zero).unwrap(),
+            None,
             None,
             None,
         )
@@ -415,12 +419,13 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
     let ball = ball_mask(&fine, grid_centre(&fine), 13.0, Some((2, 4.0)));
     let zero = VectorField::zeros(coarse);
     let want = cpu
-        .warp_mask_through_field(&ball, &zero, None, None)
+        .warp_mask_through_field(&ball, &zero, None, None, None)
         .unwrap();
     let got = b
         .warp_mask_through_field(
             &b.upload_image(&ball).unwrap(),
             &b.upload_field(&zero).unwrap(),
+            None,
             None,
             None,
         )

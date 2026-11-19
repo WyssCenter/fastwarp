@@ -8,13 +8,20 @@ use std::time::Instant;
 
 use common::*;
 use fastwarp_gpu::capacity::SELFTEST_POOL_BYTES;
-use fastwarp_gpu::{plan_capacity_syn, plan_capacity_syn_masked, CapacityCaps, WgpuBackend};
+use fastwarp_gpu::{
+    plan_capacity_syn, plan_capacity_syn_masked, plan_capacity_syn_stages, CapacityCaps,
+    SynStageCapacity, WgpuBackend,
+};
 use fastwarp_reg::apply::{apply_chain, Interpolation};
 use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
+use fastwarp_reg::field_ops::VectorField;
 use fastwarp_reg::linalg::{Vec3, IDENTITY3};
 use fastwarp_reg::recipe::SynRecipe;
-use fastwarp_reg::syn::{run_syn, SynChannel, SynOptions, SynResult};
+use fastwarp_reg::stages::{register_stages, InitialTransform, StagePlan};
+use fastwarp_reg::syn::{
+    run_syn, run_syn_from, PriorWarp, SynChannel, SynOptions, SynResult, SynStart,
+};
 use fastwarp_reg::{AffineTransform, Grid, MaskVolume, Volume};
 
 /// A mask on `grid` that is inside everywhere except in a ball of `radius` mm around `hole`.
@@ -650,4 +657,230 @@ fn gpu_syn_result_applies_through_the_cpu_apply_path() {
     assert!(w.data().iter().all(|v| v.is_finite()));
     let name = gpu.name();
     assert!(name.starts_with("wgpu-f32"));
+}
+
+fn prior_of(r: &SynResult) -> PriorWarp {
+    PriorWarp {
+        warp: VectorField::from_displacement_field(&r.warp),
+        inverse_warp: VectorField::from_displacement_field(&r.inverse_warp),
+    }
+}
+
+fn two_stages<B: Backend>(
+    b: &B,
+    p: &Phantom,
+    first: &SynRecipe,
+    second: &SynRecipe,
+    ch: &[SynChannel],
+) -> (SynResult, SynResult) {
+    let one = run_syn(b, first, ch, &p.initial, &SynOptions::default()).unwrap();
+    let prior = prior_of(&one);
+    let two = run_syn_from(
+        b,
+        second,
+        ch,
+        SynStart {
+            affine: &p.initial,
+            prior: Some(&prior),
+        },
+        &SynOptions::default(),
+    )
+    .unwrap();
+    (one, two)
+}
+
+#[test]
+fn two_syn_stages_match_the_cpu_reference_with_and_without_masks() {
+    let Some(gpu) = backend() else { return };
+    let p = phantom(24, 2.0, 2.0);
+    let mut first = small_recipe(&[(2, 1.0, 12), (1, 0.0, 6)], 2);
+    first.convergence_threshold = -1.0;
+    let mut second = small_recipe(&[(2, 1.0, 6), (1, 0.0, 8)], 2);
+    second.convergence_threshold = -1.0;
+    second.gradient_step = 0.15;
+    let subcortical = Grid::new([17; 3], [1.5; 3], [-6.0, -9.5, -10.25], IDENTITY3).unwrap();
+    let inside_ball = |grid: Grid, centre: Vec3, radius: f64| {
+        let data = (0..grid.num_voxels())
+            .map(|idx| {
+                let [i, j, k] = grid.ijk(idx);
+                let q = grid.index_to_point([i as f64, j as f64, k as f64]);
+                let d2 = (0..3).map(|a| (q[a] - centre[a]).powi(2)).sum::<f64>();
+                f64::from(u8::from(d2 < radius * radius))
+            })
+            .collect();
+        MaskVolume::from_volume(Volume::from_vec(grid, data).unwrap())
+    };
+    let lesion = mask_without_ball(p.grid, [-7.0, 5.5, 4.5], 5.0);
+    let masked_first = SynRecipe {
+        moving_mask: Some(lesion.clone()),
+        ..first.clone()
+    };
+    let masked_second = SynRecipe {
+        fixed_mask: Some(inside_ball(subcortical, [5.0, 2.5, 1.75], 11.0)),
+        moving_mask: Some(lesion),
+        ..second.clone()
+    };
+    let ch = channels(&p, false);
+    for (label, a, b) in [
+        ("two SyN stages", &first, &second),
+        (
+            "two SyN stages, lesion mask, fixed mask on the second",
+            &masked_first,
+            &masked_second,
+        ),
+    ] {
+        let t = Instant::now();
+        let (cpu_one, cpu) = two_stages(&CpuBackend, &p, a, b, &ch);
+        let cpu_seconds = t.elapsed().as_secs_f64();
+        let t = Instant::now();
+        let (gpu_one, g) = two_stages(&gpu, &p, a, b, &ch);
+        let gpu_seconds = t.elapsed().as_secs_f64();
+        let (d1, r1) = rms_diff(&cpu_one.warp, &gpu_one.warp);
+        let (warp_rms_diff, warp_rms) = rms_diff(&cpu.warp, &g.warp);
+        let (inverse_rms_diff, inverse_rms) = rms_diff(&cpu.inverse_warp, &g.inverse_warp);
+        let (_, change) = rms_diff(&cpu.warp, &cpu_one.warp);
+        let (_, ncc_one) = warped_ncc(&p, &cpu_one, &p.moving, &p.fixed);
+        let (_, ncc_cpu) = warped_ncc(&p, &cpu, &p.moving, &p.fixed);
+        let (_, ncc_gpu) = warped_ncc(&p, &g, &p.moving, &p.fixed);
+        let mut max_energy_diff = 0.0f64;
+        for (x, y) in cpu.levels.iter().zip(&g.levels) {
+            for (u, v) in x.iterations.iter().zip(&y.iterations) {
+                max_energy_diff = max_energy_diff.max((u.energy - v.energy).abs());
+            }
+        }
+        let (second_change, _) = rms_diff(&cpu.warp, &cpu_one.warp);
+        eprintln!(
+            "[{label}] first stage: warp RMS diff {d1:.3e} of {r1:.3e} mm; collapsed: warp RMS diff {warp_rms_diff:.3e} of {warp_rms:.3e} mm (rel {:.2e}), inverse {inverse_rms_diff:.3e} of {inverse_rms:.3e} mm; the second stage moved the warp by {second_change:.3e} mm RMS (|warp| {change:.3e}); NCC after one stage {ncc_one:.6}, two stages cpu {ncc_cpu:.6} gpu {ncc_gpu:.6}; max energy diff {max_energy_diff:.3e}; consistency cpu {:.3} gpu {:.3} voxels; time cpu {cpu_seconds:.2} s gpu {gpu_seconds:.2} s",
+            warp_rms_diff / warp_rms,
+            inverse_consistency(&p, &cpu),
+            inverse_consistency(&p, &g),
+        );
+        assert!(
+            warp_rms_diff / warp_rms < 0.01,
+            "{label}: warp field differs"
+        );
+        assert!(
+            inverse_rms_diff / inverse_rms < 0.01,
+            "{label}: inverse field differs"
+        );
+        assert!((ncc_cpu - ncc_gpu).abs() < 2e-3, "{label}");
+        assert!(max_energy_diff < 2e-3, "{label}");
+        assert!(
+            second_change > 1e-2,
+            "{label}: the second stage changed nothing"
+        );
+        assert!(inverse_consistency(&p, &g) < 0.3, "{label}");
+        let again = two_stages(&gpu, &p, a, b, &ch).1;
+        assert_eq!(digest(&again), digest(&g), "{label}: not deterministic");
+    }
+}
+
+fn stage_capacity<'a>(r: &'a SynRecipe, mask_dims: &'a [[usize; 3]]) -> SynStageCapacity<'a> {
+    SynStageCapacity {
+        shrink_factors: &r.shrink_factors,
+        mask_dims,
+    }
+}
+
+#[test]
+fn the_capacity_plan_bounds_the_pool_peak_of_two_syn_stages() {
+    let n = 96usize;
+    let n_full = (n * n * n) as u64;
+    let h = head([n, n, n], 2.0, 3.0);
+    let caps = CapacityCaps {
+        max_storage_buffer_binding_size: u64::MAX,
+        memory_budget: u64::MAX,
+    };
+    let mask = mask_without_ball(h.grid, [20.0, 0.0, 10.0], 15.0);
+    let mut failures = Vec::new();
+    for (channels, masked) in [(1usize, false), (2, false), (1, true), (2, true)] {
+        let mut first = small_recipe(&[(2, 1.0, 1), (1, 0.0, 1)], 2);
+        first.channel_weights = vec![1.0 / channels as f64; channels];
+        first.convergence_threshold = -1.0;
+        let mut second = small_recipe(&[(1, 0.0, 2)], 2);
+        second.channel_weights = first.channel_weights.clone();
+        second.convergence_threshold = -1.0;
+        if masked {
+            first.moving_mask = Some(mask.clone());
+            second.fixed_mask = Some(mask.clone());
+            second.moving_mask = Some(mask.clone());
+        }
+        let mut fixed = vec![h.fixed.clone()];
+        let mut moving = vec![h.moving.clone()];
+        if channels == 2 {
+            fixed.push(remapped(&h.fixed, contrast2));
+            moving.push(remapped(&h.moving, contrast2));
+        }
+        let peak_of = |syn: Vec<SynRecipe>| -> Option<u64> {
+            let gpu = backend()?;
+            let plan = StagePlan {
+                initial: InitialTransform::Identity,
+                linear: Vec::new(),
+                syn,
+                winsorize: None,
+            };
+            register_stages(
+                &gpu,
+                &gpu,
+                &plan,
+                &fixed,
+                &moving,
+                None,
+                &SynOptions::default(),
+            )
+            .unwrap();
+            Some(gpu.peak_allocated_bytes())
+        };
+        let Some(one) = peak_of(vec![first.clone()]) else {
+            return;
+        };
+        let Some(two) = peak_of(vec![first.clone(), second.clone()]) else {
+            return;
+        };
+        let dims = |r: &SynRecipe| -> Vec<[usize; 3]> {
+            r.fixed_mask
+                .iter()
+                .chain(&r.moving_mask)
+                .map(|m| m.grid().size())
+                .collect()
+        };
+        let (d1, d2) = (dims(&first), dims(&second));
+        let plan_one = plan_capacity_syn_stages(
+            [n; 3],
+            [n; 3],
+            channels,
+            &[stage_capacity(&first, &d1)],
+            &caps,
+        )
+        .unwrap();
+        let plan_two = plan_capacity_syn_stages(
+            [n; 3],
+            [n; 3],
+            channels,
+            &[stage_capacity(&first, &d1), stage_capacity(&second, &d2)],
+            &caps,
+        )
+        .unwrap();
+        eprintln!(
+            "{n}^3 channels {channels} masked {masked}: one SyN stage peak {one} bytes = {:.1} B/voxel (plan {:.1}), two SyN stages peak {two} bytes = {:.1} B/voxel (plan {:.1}), the second stage adds {:.1} B/voxel",
+            one as f64 / n_full as f64,
+            plan_one.level_total_bytes as f64 / n_full as f64,
+            two as f64 / n_full as f64,
+            plan_two.level_total_bytes as f64 / n_full as f64,
+            two.saturating_sub(one) as f64 / n_full as f64,
+        );
+        failures.extend((two > plan_two.level_total_bytes).then(|| {
+            format!(
+                "channels {channels} masked {masked}: peak {two} above plan {}",
+                plan_two.level_total_bytes
+            )
+        }));
+        failures.extend((one > plan_one.level_total_bytes).then(|| {
+            format!(
+                "channels {channels} masked {masked}: one-stage peak {one} above plan {}",
+                plan_one.level_total_bytes
+            )
+        }));
+    }
+    assert!(failures.is_empty(), "{failures:?}");
 }
