@@ -425,7 +425,7 @@ pub struct RegistrationOutcome {
 /// Runs a parsed `antsRegistration` plan as `fastwarp ants-registration` does: the seed from
 /// `--random-seed`, else from `ants_random_seed` (the value of `ANTS_RANDOM_SEED`, passed in),
 /// else FastWarp's default; the output folders checked, the start file, masks and images read
-/// (from `images` where it holds them), the fixed images of two channels checked to share a
+/// (from `images` where it holds them), the fixed images of all channels checked to share a
 /// grid, all before the GPU is opened; then the registration and the files ANTs writes.
 pub fn run_registration(
     mut plan: RegistrationPlan,

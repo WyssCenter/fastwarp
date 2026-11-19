@@ -147,11 +147,11 @@ pub fn check_iso_mm(iso_mm: f64) -> Result<(), Failure> {
     }
 }
 
-/// Refuses anything but 1 or 2 fixed images and as many moving images.
+/// Refuses no fixed images and a different number of moving images.
 pub fn check_channels(fixed: usize, moving: usize) -> Result<(), Failure> {
-    if fixed == 0 || fixed > 2 || fixed != moving {
+    if fixed == 0 || fixed != moving {
         return Err(Failure::Invalid(
-            "give 1 or 2 fixed images and as many moving images".into(),
+            "give at least one fixed image and as many moving images".into(),
         ));
     }
     Ok(())
@@ -261,7 +261,7 @@ pub fn check_plan_capacity(
     Ok(())
 }
 
-/// Registers `moving` to `fixed` (1 or 2 channels each, checked by the caller with
+/// Registers `moving` to `fixed` (any number of channels, checked by the caller with
 /// [`check_channels`]) with `recipe` on the GPU, the registration grid isotropic at `iso_mm`.
 /// Checks the capacity of every stage first. Writes `outputs` when given.
 pub fn register_syn(
@@ -648,7 +648,10 @@ mod tests {
         assert!(check_channels(1, 1).is_ok());
         assert!(check_channels(2, 2).is_ok());
         assert!(matches!(check_channels(2, 1), Err(Failure::Invalid(_))));
-        assert!(matches!(check_channels(3, 3), Err(Failure::Invalid(_))));
+        assert!(check_channels(3, 3).is_ok());
+        assert!(check_channels(4, 4).is_ok());
+        assert!(check_channels(5, 5).is_ok());
+        assert!(matches!(check_channels(0, 0), Err(Failure::Invalid(_))));
         assert!(check_iso_mm(0.5).is_ok());
         assert!(check_iso_mm(0.0).is_err());
         assert!(check_iso_mm(f64::NAN).is_err());

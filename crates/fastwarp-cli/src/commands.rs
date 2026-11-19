@@ -78,7 +78,7 @@ pub(crate) fn read_json(path: &Path, what: &str) -> Result<Value, CliError> {
 
 pub(crate) fn load_recipe(path: Option<&Path>, channels: usize) -> Result<Recipe, CliError> {
     match path {
-        None => Ok(Recipe::cohort(channels)),
+        None => Recipe::try_cohort(channels).map_err(CliError::usage),
         Some(p) => {
             let v = read_json(p, "recipe")?;
             let base = p.parent().unwrap_or_else(|| Path::new(""));
@@ -147,27 +147,21 @@ fn register(
     if let Some(mm) = a.iso_mm {
         engine::check_iso_mm(mm)?;
     }
-    let mut fixed_paths = vec![a.fixed.clone()];
-    let mut moving_paths = vec![a.moving.clone()];
-    fixed_paths.extend(a.fixed2.clone());
-    moving_paths.extend(a.moving2.clone());
-    engine::check_channels(fixed_paths.len(), moving_paths.len())?;
-    let recipe = load_recipe(a.recipe.as_deref(), fixed_paths.len())?;
-    for (i, p) in fixed_paths.iter().enumerate() {
-        image::check_nifti_name(p, if i == 0 { "fixed image" } else { "--fixed2" })?;
+    let pairs = a.channel_pairs();
+    let recipe = load_recipe(a.recipe.as_deref(), pairs.len())?;
+    for (f, _, fixed_role, _) in &pairs {
+        image::check_nifti_name(f, fixed_role)?;
     }
-    for (i, p) in moving_paths.iter().enumerate() {
-        image::check_nifti_name(p, if i == 0 { "moving image" } else { "--moving2" })?;
+    for (_, m, _, moving_role) in &pairs {
+        image::check_nifti_name(m, moving_role)?;
     }
-    let fixed = fixed_paths
+    let fixed = pairs
         .iter()
-        .zip(["fixed image", "--fixed2"])
-        .map(|(p, role)| image::load(p, role))
+        .map(|(p, _, role, _)| image::load(p, role))
         .collect::<Result<Vec<_>, _>>()?;
-    let moving = moving_paths
+    let moving = pairs
         .iter()
-        .zip(["moving image", "--moving2"])
-        .map(|(p, role)| image::load(p, role))
+        .map(|(_, p, _, role)| image::load(p, role))
         .collect::<Result<Vec<_>, _>>()?;
     let outputs_layout = engine::output_layout(a.outputs.name())?;
     prepare_prefix(&a.output)?;
@@ -385,7 +379,8 @@ fn compose(a: ComposeArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> 
 }
 
 fn recipe(a: RecipeArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
-    print_json(out, &Recipe::cohort(usize::from(a.channels)).to_json())?;
+    let recipe = Recipe::try_cohort(a.channels as usize).map_err(CliError::usage)?;
+    print_json(out, &recipe.to_json())?;
     Ok(ExitStatus::Ok)
 }
 
@@ -422,7 +417,7 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         .as_deref()
         .map(|p| image::grid(p, "moving image").map(|g| engine::iso_dims(&g, iso_mm)))
         .transpose()?;
-    let channels = usize::from(a.channels);
+    let channels = a.channels as usize;
     let recipe = load_recipe(a.recipe.as_deref(), channels)?;
     let check = engine::capacity_check(
         dims,

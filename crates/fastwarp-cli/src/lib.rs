@@ -233,7 +233,24 @@ mod tests {
             &["register", "f.nii"],
             &["register", "f.nii", "m.nii"],
             &[
-                "register", "f.nii", "m.nii", "-o", "x_", "--fixed2", "f2.nii",
+                "register",
+                "f.nii",
+                "m.nii",
+                "-o",
+                "x_",
+                "--fixed2",
+                "f2.nii",
+                "--moving2",
+                "m2.nii",
+            ],
+            &[
+                "register",
+                "f.nii",
+                "m.nii",
+                "-o",
+                "x_",
+                "--channel",
+                "f3.nii",
             ],
             &["register", "f.nii", "m.nii", "-o", "x_", "--iso-mm", "abc"],
             &["apply", "-r", "r.nii", "-i", "i.nii", "-o", "o.nii"],
@@ -248,7 +265,7 @@ mod tests {
                 "--compression-level",
                 "10",
             ],
-            &["recipe", "--channels", "3"],
+            &["recipe", "--channels", "0"],
             &["linear", "f.nii", "m.nii", "--transform", "similarity"],
             &["linear", "f.nii", "m.nii", "--winsorize", "0.9,0.1"],
             &["bench", "f.nii"],
@@ -272,6 +289,20 @@ mod tests {
         let (_, out, _) = run_args(&["recipe", "--channels", "2"]);
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["syn"]["channel_weights"], serde_json::json!([0.5, 0.5]));
+        let (code, out, _) = run_args(&["recipe", "--channels", "4"]);
+        assert_eq!(code, 0);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["syn"]["channel_weights"],
+            serde_json::json!([0.25, 0.25, 0.25, 0.25])
+        );
+        let (code, out, _) = run_args(&["recipe", "--channels", "5"]);
+        assert_eq!(code, 0);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["syn"]["channel_weights"],
+            serde_json::json!([0.2, 0.2, 0.2, 0.2, 0.2])
+        );
     }
 
     #[test]
@@ -407,6 +438,88 @@ mod tests {
             "tar",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn channel_options_add_channels_in_order() {
+        let cli = args::Cli::try_parse_from([
+            "fastwarp",
+            "register",
+            "f1.nii",
+            "m1.nii",
+            "-o",
+            "x_",
+            "--channel",
+            "f2.nii",
+            "m2.nii",
+            "--channel",
+            "f3.nii",
+            "m3.nii",
+            "--channel",
+            "f4.nii",
+            "m4.nii",
+            "--channel",
+            "f5.nii",
+            "m5.nii",
+        ])
+        .unwrap();
+        match cli.command {
+            args::Command::Register(a) => {
+                let pairs = a.channel_pairs();
+                let names: Vec<_> = pairs
+                    .iter()
+                    .map(|(f, m, _, _)| {
+                        (
+                            f.to_string_lossy().into_owned(),
+                            m.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    names,
+                    [
+                        ("f1.nii", "m1.nii"),
+                        ("f2.nii", "m2.nii"),
+                        ("f3.nii", "m3.nii"),
+                        ("f4.nii", "m4.nii"),
+                        ("f5.nii", "m5.nii")
+                    ]
+                    .map(|(f, m)| (f.to_string(), m.to_string()))
+                );
+                assert_eq!(pairs[2].2, "fixed image of --channel 2");
+                assert_eq!(pairs[4].3, "moving image of --channel 4");
+            }
+            other => panic!("{other:?}"),
+        }
+        let cli = args::Cli::try_parse_from([
+            "fastwarp",
+            "register",
+            "f1.nii",
+            "m1.nii",
+            "-o",
+            "x_",
+            "--channel",
+            "f2.nii",
+            "m2.nii",
+        ])
+        .unwrap();
+        match cli.command {
+            args::Command::Register(a) => assert_eq!(a.channel_pairs().len(), 2),
+            other => panic!("{other:?}"),
+        }
+        for channels in ["3", "4", "5", "12"] {
+            assert!(
+                args::Cli::try_parse_from(["fastwarp", "recipe", "--channels", channels]).is_ok()
+            );
+            assert!(args::Cli::try_parse_from([
+                "fastwarp",
+                "fits",
+                "f.nii",
+                "--channels",
+                channels
+            ])
+            .is_ok());
+        }
     }
 
     #[test]

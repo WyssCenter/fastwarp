@@ -138,7 +138,7 @@ pub fn from_json<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>>
 pub fn from_dict(d: Option<&Bound<'_, PyDict>>, channels: usize) -> PyResult<Recipe> {
     match d {
         None => {
-            let r = Recipe::cohort(channels);
+            let r = Recipe::try_cohort(channels).map_err(value_err)?;
             r.check(channels).map_err(value_err)?;
             Ok(r)
         }

@@ -112,12 +112,12 @@ def register_syn(
     Parameters
     ----------
     fixed : ANTsImage, tuple or list
-        The image to register onto, or a list of two images (for example a T1-weighted and a
-        T2-weighted scan). An image is an ``ANTsImage`` or a tuple
+        The image to register onto, or a list of one or more images (for example a T1-weighted, a
+        T2-weighted and a FGATIR scan). An image is an ``ANTsImage`` or a tuple
         ``(array, spacing, origin, direction)`` in ITK (LPS) geometry.
     moving : ANTsImage, tuple or list
-        The image to register, or a list of as many images as ``fixed``. A second moving image
-        must already be aligned to the first one.
+        The image to register, or a list of as many images as ``fixed``. The further moving
+        images must already be aligned to the first one.
     out_prefix : str or os.PathLike
         Prefix of the output files, joined to the file names as text, as in ANTs: ``"out/sub_"``
         gives ``out/sub_Composite.h5``. A string that ends in a path separator, such as
@@ -253,7 +253,7 @@ def cohort_recipe(channels: int = 1) -> dict[str, dict[str, Any]]:
     Parameters
     ----------
     channels : int, default 1
-        Number of images per side, 1 or 2. With 2 the SyN stage weights each channel 0.5.
+        Number of images per side, at least 1. The SyN stage weights each channel ``1 / channels``.
 
     Returns
     -------
@@ -264,7 +264,7 @@ def cohort_recipe(channels: int = 1) -> dict[str, dict[str, Any]]:
     Raises
     ------
     ValueError
-        ``channels`` is not 1 or 2.
+        ``channels`` is less than 1.
     """
     return _cohort_recipe(channels)
 
@@ -316,7 +316,7 @@ def fits_gpu(
     Parameters
     ----------
     fixed : ANTsImage, tuple or list
-        The fixed image, or a list of one or two, as :func:`register_syn` takes them. The first
+        The fixed image, or a list of images, as :func:`register_syn` takes them. The first
         fixed image sets the registration grid.
     moving : ANTsImage, tuple or list, optional
         The moving image or images, as many as ``fixed``. The largest of their registration grids
@@ -325,8 +325,8 @@ def fits_gpu(
     iso_mm : float, default 1.0
         Voxel size of the registration grid, in millimetres. Must be positive.
     channels : int, optional
-        Number of channels, 1 or 2. Defaults to the number of fixed images. Give ``channels=2``
-        to ask about a second channel while passing one image.
+        Number of channels, at least 1. Defaults to the number of fixed images. Give ``channels=3``
+        to ask about three channels while passing one image.
     adapter : str, optional
         Check the GPU whose name contains this text.
     recipe : dict, optional
@@ -341,8 +341,8 @@ def fits_gpu(
     Raises
     ------
     ValueError
-        Not one or two fixed images, not as many moving images as fixed ones, ``channels`` not 1
-        or 2 or not equal to the number of fixed images in a list, ``iso_mm`` not positive, or an
+        No fixed images, not as many moving images as fixed ones, ``channels`` below 1
+        or not equal to the number of fixed images in a list, ``iso_mm`` not positive, or an
         invalid recipe.
 
     See Also
@@ -351,8 +351,8 @@ def fits_gpu(
     gpu_info : The GPU and its memory budget.
     """
     fixed_list = _as_list(fixed)
-    if not 1 <= len(fixed_list) <= 2:
-        raise ValueError("give 1 or 2 fixed images")
+    if not fixed_list:
+        raise ValueError("give at least one fixed image")
     moving_list = None if moving is None else _as_list(moving)
     if moving_list is not None and len(moving_list) != len(fixed_list):
         raise ValueError("give as many moving images as fixed images")
@@ -360,8 +360,8 @@ def fits_gpu(
         channels = len(fixed_list)
     elif isinstance(fixed, list) and channels != len(fixed_list):
         raise ValueError(f"channels={channels} does not match {len(fixed_list)} fixed images")
-    elif not 1 <= channels <= 2:
-        raise ValueError("channels must be 1 or 2")
+    elif channels < 1:
+        raise ValueError("channels must be at least 1")
     iso_mm = float(iso_mm)
     if not (math.isfinite(iso_mm) and iso_mm > 0.0):
         raise ValueError("iso_mm must be a positive number")

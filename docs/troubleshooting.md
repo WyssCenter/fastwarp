@@ -125,7 +125,7 @@ The message gives the grid, the bytes it needs and the memory budget. Choose one
 - **A coarser grid.** Each doubling of `iso_mm` divides the number of voxels, and so the memory,
   by about eight. `fastwarp.fits_gpu(fixed, moving, iso_mm=...)` tells which `iso_mm` fits;
   [What fits](guide/gpu.md#what-fits) gives the bytes per voxel.
-- **One channel instead of two**, if a second channel is not needed.
+- **Fewer channels**, if the further channels are not needed.
 - **No SyN stage**, if an affine result is enough: a
   [stage-list recipe](guide/recipes.md#stage-lists) with only rigid and affine stages needs much
   less GPU memory.

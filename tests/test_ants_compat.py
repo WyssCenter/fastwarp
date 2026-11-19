@@ -33,6 +33,10 @@ NAMES = {
     "mask": "MASK",
     "extra_fixed": "F2",
     "extra_moving": "M2",
+    "extra_fixed_1": "F3",
+    "extra_moving_1": "M3",
+    "extra_fixed_2": "F4",
+    "extra_moving_2": "M4",
 }
 
 
@@ -82,9 +86,9 @@ def test_without_antspy_argument_lists_run_and_images_need_it():
 def _antspy_argv(monkeypatch, R, fixed, moving, t, kw):
     labels = iter(["F", "M", "WF", "WM", "MASK"])
     by_id = {}
-    for extra in kw.get("multivariate_extras") or []:
-        by_id[id(extra[1])] = "F2"
-        by_id[id(extra[2])] = "M2"
+    for i, extra in enumerate(kw.get("multivariate_extras") or []):
+        by_id[id(extra[1])] = f"F{i + 2}"
+        by_id[id(extra[2])] = f"M{i + 2}"
     captured = []
 
     def lib(name):
@@ -168,6 +172,8 @@ T1_CASES = [
     ("antsRegistrationSyNQuick[a]", {}),
     ("antsRegistrationSyN[s]", {"multivariate_extras": "EXTRAS"}),
     ("antsRegistrationSyN[a]", {"mask": "MASK"}),
+    ("antsRegistrationSyN[s]", {"multivariate_extras": "EXTRAS3"}),
+    ("SyNOnly", {"syn_metric": "CC", "syn_sampling": 2, "multivariate_extras": "EXTRAS2"}),
 ]
 
 
@@ -177,6 +183,12 @@ def _resolve(ants, kw, fixed):
         out["mask"] = fixed
     if out.get("multivariate_extras") == "EXTRAS":
         out["multivariate_extras"] = [("CC", _img(ants, seed=2), _img(ants, seed=3), 0.5, 2)]
+    for key, n in (("EXTRAS2", 2), ("EXTRAS3", 3)):
+        if out.get("multivariate_extras") == key:
+            out["multivariate_extras"] = [
+                ("CC", _img(ants, seed=2 * i + 2), _img(ants, seed=2 * i + 3), 1.0 / (n + 1), 2)
+                for i in range(n)
+            ]
     return out
 
 
@@ -189,7 +201,7 @@ def test_t1_argument_list_is_antspys(ants, R, pair, monkeypatch, t, kw):
     theirs = _antspy_argv(monkeypatch, R, fixed, moving, t, kw)
     mine = _fastwarp_argv(ants, fixed, moving, t, kw, NAMES)
     assert mine == theirs
-    real = _fastwarp_argv(ants, fixed, moving, t, kw, fa._registration_names())
+    real = _fastwarp_argv(ants, fixed, moving, t, kw, fa._registration_names(3))
     parsed = g._core.ants_parse_registration(real)
     assert parsed["kind"] == "run"
     assert len(parsed["plan"]["recipe"]["stages"]) == real.count("--transform")
@@ -354,9 +366,10 @@ REFUSALS = [
         "first.",
     ),
     (
-        {"type_of_transform": "SyNOnly", **CC4, "multivariate_extras": "TWO"},
-        PREFIX + "multivariate_extras={extras!r} is not supported: FastWarp's SyN stage takes one "
-        "extra CC metric at most (two channels).",
+        {"type_of_transform": "SyNOnly", **CC4, "multivariate_extras": "EMPTY"},
+        PREFIX
+        + "multivariate_extras={extras!r} is not supported: FastWarp's SyN stage takes one or "
+        "more extra CC metrics.",
     ),
     (
         {"type_of_transform": "antsRegistrationSyN[s]", "multivariate_extras": "MI"},
@@ -366,7 +379,7 @@ REFUSALS = [
     (
         {"type_of_transform": "antsRegistrationSyN[so]", "multivariate_extras": "RADIUS4"},
         PREFIX + "multivariate_extras[0][4]=4 is not supported: FastWarp's SyN stage uses one CC "
-        "radius for both channels (2 here).",
+        "radius for all channels (2 here).",
     ),
 ]
 
@@ -379,7 +392,7 @@ def test_refusals_name_the_argument_before_any_work(ants, pair, monkeypatch, tmp
     f2, m2 = _img(ants, seed=2), _img(ants, seed=3)
     offgrid = ants.from_numpy(f2.numpy(), spacing=(1.5, 1.0, 1.0))
     extras = {
-        "TWO": [("CC", f2, m2, 1, 4), ("CC", f2, m2, 1, 4)],
+        "EMPTY": [],
         "MI": [("MI", f2, m2, 1, 2)],
         "RADIUS4": [("CC", f2, m2, 1, 4)],
         "OFFGRID": [("CC", offgrid, m2, 1, 2)],
@@ -564,9 +577,12 @@ def test_memory_images_reach_the_runner(ants, pair, monkeypatch, tmp_path):
     monkeypatch.setattr(fa._core, "ants_registration", version)
     fixed, moving = pair
     extras = [("CC", _img(ants, seed=2), _img(ants, seed=3), 0.5, 2)]
+    three = [("CC", _img(ants, seed=i), _img(ants, seed=i + 9), 0.25, 2) for i in range(3)]
     for t, kw in (
         ("Rigid", {"mask": fixed}),
         ("antsRegistrationSyN[s]", {"multivariate_extras": extras}),
+        ("antsRegistrationSyN[s]", {"multivariate_extras": three}),
+        ("antsRegistrationSyN[s]", {"multivariate_extras": three + extras}),
     ):
         with pytest.raises(KeyError):
             fa.registration(fixed, moving, t, outprefix=str(tmp_path / "o_"), **kw)
@@ -575,6 +591,16 @@ def test_memory_images_reach_the_runner(ants, pair, monkeypatch, tmp_path):
         [
             "<extra_fixed_0>.nii",
             "<extra_moving_0>.nii",
+            "<fixed>.nii",
+            "<moving>.nii",
+        ],
+        [
+            *[f"<extra_{k}_{i}>.nii" for k in ("fixed", "moving") for i in range(3)],
+            "<fixed>.nii",
+            "<moving>.nii",
+        ],
+        [
+            *[f"<extra_{k}_{i}>.nii" for k in ("fixed", "moving") for i in range(4)],
             "<fixed>.nii",
             "<moving>.nii",
         ],

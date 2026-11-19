@@ -11,7 +11,7 @@ FastWarp registers 3-D images on the GPU. It runs the rigid, affine and SyN regi
 ANTs, so the rest of an ANTs-based pipeline can stay as it is. It is meant for people who build
 or run neuroimaging pipelines, for example to normalize brain MRI onto a template.
 
-- A full normalization (centre of mass, Rigid, Affine, SyN) in one call, with one or two
+- A full normalization (centre of mass, Rigid, Affine, SyN) in one call, with one or more
   channels such as T1w + T2w.
 - Rigid and affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like `antsApplyTransforms`, on the CPU.
@@ -19,6 +19,8 @@ or run neuroimaging pipelines, for example to normalize brain MRI onto a templat
 - Runs on Vulkan (Linux, Windows), Metal (macOS) and DirectX 12 (Windows) through
   [wgpu](https://wgpu.rs). Before a normalization starts, it checks that a GPU is present and
   has enough memory, so a pipeline can fall back to ANTs.
+
+FastWarp is the registration engine of [Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), a tool for localizing deep brain stimulation electrodes, and also works on its own.
 
 **Documentation: <https://fastwarp.readthedocs.io>**
 

@@ -80,7 +80,7 @@ Any other name raises ANTsPy's `ValueError("... does not exist")`.
 | `aff_iterations`, `aff_shrink_factors`, `aff_smoothing_sigmas` | As in ANTsPy for the linear types. A list is taken like a tuple; ANTsPy builds a broken argument from a list. |
 | `write_composite_transform` | `Composite.h5` and `InverseComposite.h5` only, as ANTs writes them. |
 | `verbose` | Prints the `antsRegistration` arguments (images by their argument names) and FastWarp's report of the run. |
-| `multivariate_extras` | One `("CC", fixed2, moving2, weight, radius)` with the main CC radius, for `SyNOnly` and `antsRegistrationSyN[s|sr|so]`: a second channel. `fixed2` must lie on `fixed`'s grid. More extras or other metrics are refused. |
+| `multivariate_extras` | One or more `("CC", fixed2, moving2, weight, radius)` with the main CC radius, for `SyNOnly` and `antsRegistrationSyN[s|sr|so]`: a further channel each. Each `fixed2` must lie on `fixed`'s grid. Other metrics are refused. |
 | `restrict_transformation` | All ones only (no restriction). |
 | `smoothing_in_mm` | As in ANTsPy, for the linear types. |
 | `singleprecision` | Accepted; the GPU computes in `float32` either way. `True` (the default) writes `float32` warp fields, `False` `float64`, as ANTs does. |

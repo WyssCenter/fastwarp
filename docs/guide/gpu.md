@@ -98,6 +98,8 @@ voxels of the registration grid ({func}`~fastwarp.iso_grid_dims`) and on the num
 | --- | --- |
 | 1 | 168 |
 | 2 | 188 |
+| 3 | 208 |
+| 4 | 228 |
 
 These figures come from the engine's {term}`capacity check` (`crates/fastwarp-gpu/src/capacity.rs`),
 which bounds the measured peak allocation of a SyN run. The check adds what the coarser SyN
@@ -130,6 +132,11 @@ For the 1 mm MNI template that ANTsPy ships (182 × 218 × 182 voxels), at three
 The `mni-0.5mm` size of [`fastwarp bench`](../cli.md#bench), 364 × 436 × 364 voxels, is a
 synthetic volume with the MNI field of view, not this template's grid, so its memory need is
 close to the last row but not equal to it.
+
+Every further channel adds about as much again as the second: the capacity plan counts 20 bytes
+per voxel of the grid for each, about 0.14 GiB at 1 mm and 1.1 GiB at 0.5 mm. These are figures
+from the model, not measurements per grid; the GPU test suite checks that the plan stays above
+the measured peak for one to four channels.
 
 With the 1 GiB reserve, a 1 mm registration of one channel on this template needs a discrete
 GPU that reports a little over 2.1 GiB of free memory. The earlier measurements on the
@@ -170,7 +177,7 @@ returned `True` at 0.5 mm as well (see [Stage lists](recipes.md#stage-lists)).
 
 Without `moving`, {func}`~fastwarp.fits_gpu` assumes that the moving image has the fixed image's
 grid, which undercounts when the moving image is larger; pass it for the exact answer. Arguments
-that {func}`~fastwarp.register_syn` would refuse, such as three fixed images or a non-positive
+that {func}`~fastwarp.register_syn` would refuse, such as fixed and moving lists of different lengths or a non-positive
 `iso_mm`, raise `ValueError`.
 
 A {class}`~fastwarp.LinearSession` has no capacity check: a session that does not fit fails with

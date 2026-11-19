@@ -16,18 +16,47 @@ use fastwarp_reg::recipe::SynRecipe;
 use fastwarp_reg::syn::{run_syn, SynChannel, SynOptions, SynResult};
 use fastwarp_reg::{AffineTransform, Volume};
 
-fn channels(p: &Phantom, two: bool) -> Vec<SynChannel> {
+fn contrast3(v: f64) -> f64 {
+    (1.5 * v).sin()
+}
+
+fn contrast4(v: f64) -> f64 {
+    (v - 0.5).abs()
+}
+
+fn remapped(v: &Volume<f64>, f: fn(f64) -> f64) -> Volume<f64> {
+    Volume::from_vec(*v.grid(), v.data().iter().map(|x| f(*x)).collect()).unwrap()
+}
+
+fn channels_n(p: &Phantom, n: usize) -> Vec<SynChannel> {
     let mut c = vec![SynChannel {
         fixed: p.fixed.clone(),
         moving: p.moving.clone(),
     }];
-    if two {
+    if n >= 2 {
         c.push(SynChannel {
             fixed: p.fixed2.clone(),
             moving: p.moving2.clone(),
         });
     }
+    if n >= 3 {
+        c.push(SynChannel {
+            fixed: remapped(&p.fixed, contrast3),
+            moving: remapped(&p.moving, contrast3),
+        });
+    }
+    if n >= 4 {
+        c.push(SynChannel {
+            fixed: remapped(&p.fixed, contrast4),
+            moving: remapped(&p.moving, contrast4),
+        });
+    }
+    assert_eq!(c.len(), n);
     c
+}
+
+fn channels(p: &Phantom, two: bool) -> Vec<SynChannel> {
+    channels_n(p, if two { 2 } else { 1 })
 }
 
 struct Comparison {
@@ -83,7 +112,17 @@ fn compare(
     two: bool,
     options: &SynOptions,
 ) -> Comparison {
-    let ch = channels(p, two);
+    compare_n(gpu, p, recipe, if two { 2 } else { 1 }, options)
+}
+
+fn compare_n(
+    gpu: &WgpuBackend,
+    p: &Phantom,
+    recipe: &SynRecipe,
+    n: usize,
+    options: &SynOptions,
+) -> Comparison {
+    let ch = channels_n(p, n);
     let t = Instant::now();
     let cpu = run_syn(&CpuBackend, recipe, &ch, &p.initial, options).unwrap();
     let cpu_seconds = t.elapsed().as_secs_f64();
@@ -200,6 +239,20 @@ fn multispectral_syn_matches_the_cpu_reference() {
 }
 
 #[test]
+fn three_channel_syn_matches_the_cpu_reference() {
+    let Some(gpu) = backend() else { return };
+    let p = phantom(16, 2.0, 1.5);
+    let mut recipe = small_recipe(&[(2, 1.0, 12), (1, 0.0, 6)], 2);
+    recipe.channel_weights = vec![1.0 / 3.0; 3];
+    recipe.convergence_threshold = -1.0;
+    let c = compare_n(&gpu, &p, &recipe, 3, &SynOptions::default());
+    report("blob 16^3 three channels", &c);
+    assert!(c.warp_rms_diff / c.warp_rms < 0.05);
+    assert!((c.ncc_cpu - c.ncc_gpu).abs() < 2e-3);
+    assert!(c.max_energy_diff < 2e-3);
+}
+
+#[test]
 fn the_convergence_monitor_stops_the_same_levels() {
     let Some(gpu) = backend() else { return };
     let p = phantom(16, 2.0, 1.0);
@@ -295,11 +348,8 @@ fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, factors: &[u32], it
         let spacing = (n - 1) as f64 * 2.0 / (moving_n - 1) as f64;
         h.moving = head([moving_n; 3], spacing, 3.0).moving;
     }
-    let contrast = |v: &Volume<f64>| {
-        Volume::from_vec(*v.grid(), v.data().iter().map(|x| contrast2(*x)).collect()).unwrap()
-    };
     let mut failures = Vec::new();
-    for channels in [1usize, 2] {
+    for channels in [1usize, 2, 3, 4] {
         let Some(gpu) = backend() else { return };
         let levels: Vec<(u32, f64, u32)> = factors
             .iter()
@@ -310,13 +360,14 @@ fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, factors: &[u32], it
             fixed: h.fixed.clone(),
             moving: h.moving.clone(),
         }];
-        if channels == 2 {
-            recipe.channel_weights = vec![0.5, 0.5];
+        let contrasts: [fn(f64) -> f64; 3] = [contrast2, contrast3, contrast4];
+        for contrast in contrasts.iter().take(channels - 1) {
             ch.push(SynChannel {
-                fixed: contrast(&h.fixed),
-                moving: contrast(&h.moving),
+                fixed: remapped(&h.fixed, *contrast),
+                moving: remapped(&h.moving, *contrast),
             });
         }
+        recipe.channel_weights = vec![1.0 / channels as f64; channels];
         recipe.convergence_threshold = -1.0;
         run_syn(
             &gpu,
