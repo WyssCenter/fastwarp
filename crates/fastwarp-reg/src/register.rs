@@ -8,8 +8,8 @@
 //! [`register`] runs only the SyN stage: the caller supplies the affine that the earlier stages
 //! produced (for example element 0 of an ANTs `Composite.h5`).
 
+use fastwarp_core::Stopwatch;
 use std::path::Path;
-use std::time::Instant;
 
 use rayon::prelude::*;
 
@@ -222,7 +222,7 @@ pub fn prepare_channels_with(
             "an input image has non-finite (NaN or infinite) voxels",
         ));
     }
-    let t0 = Instant::now();
+    let t0 = Stopwatch::start();
     let resample = |v: &Volume<f64>| match iso_mm {
         Some(mm) => resample_isotropic(v, mm),
         None => Ok(v.clone()),
@@ -230,7 +230,7 @@ pub fn prepare_channels_with(
     let fixed_raw = fixed.iter().map(resample).collect::<Result<Vec<_>>>()?;
     let moving_raw = moving.iter().map(resample).collect::<Result<Vec<_>>>()?;
     timings.resample_s += t0.elapsed().as_secs_f64();
-    let t1 = Instant::now();
+    let t1 = Stopwatch::start();
     let mut channels = Vec::with_capacity(fixed_raw.len());
     for (f, m) in fixed_raw.iter().zip(&moving_raw) {
         channels.push(SynChannel {
@@ -257,13 +257,13 @@ pub fn register<B: Backend>(
     let (channels, mut moving_r) =
         prepare_channels(input.fixed, input.moving, input.iso_mm, &mut timings)?;
     moving_r.truncate(1);
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let (pair, levels) =
         run_syn_pair_cached(backend, recipe, &channels, &input.initial, options, None)?;
     timings.syn_s = t.elapsed().as_secs_f64();
     let grid = *channels[0].fixed.grid();
     drop(channels);
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let warped = apply_chain(
         &moving_r[0],
         &grid,
@@ -321,7 +321,7 @@ pub fn register_full<B: Backend, E: LinearEngine>(
         fixed_raw,
         moving_raw,
     } = prepare_channels_full(fixed, moving, iso_mm, &mut timings)?;
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let mut cache = SmoothCache::default();
     let chain = run_linear_chain_cached(
         engine,
@@ -340,7 +340,7 @@ pub fn register_full<B: Backend, E: LinearEngine>(
         .into_iter()
         .next()
         .ok_or_else(|| invalid("register", "no moving channel"))?;
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let syn = run_syn_pair_cached(
         backend,
         recipe,
@@ -354,7 +354,7 @@ pub fn register_full<B: Backend, E: LinearEngine>(
     timings.syn_s = t.elapsed().as_secs_f64();
     let grid = *channels[0].fixed.grid();
     drop(channels);
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let warped = apply_chain(
         &moving_first,
         &grid,

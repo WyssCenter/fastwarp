@@ -735,6 +735,42 @@ mod tests {
         std::env::remove_var(MEMORY_BUDGET_ENV);
     }
 
+    #[test]
+    fn the_planner_follows_the_webgpu_default_limits() {
+        let limits = wgpu::Limits::default();
+        let granted = GpuCaps::from_limits(&limits);
+        assert_eq!(
+            granted.max_storage_buffer_binding_size,
+            limits.max_storage_buffer_binding_size
+        );
+        assert_eq!(granted.max_buffer_size, limits.max_buffer_size);
+        let cohort = [193, 229, 193];
+        let derived = CapacityCaps {
+            max_storage_buffer_binding_size: granted.max_storage_buffer_binding_size,
+            memory_budget: 0,
+        };
+        match plan_capacity(cohort, 1, &derived) {
+            Err(CapacityError::Memory {
+                budget: 0, need, ..
+            }) => assert!(need > 0),
+            other => panic!("expected a memory refusal at budget 0, got {other:?}"),
+        }
+        let budgeted = CapacityCaps {
+            memory_budget: 8 * GIB,
+            ..derived
+        };
+        let plan = plan_capacity(cohort, 1, &budgeted).unwrap();
+        assert!(plan.largest_binding_bytes <= limits.max_storage_buffer_binding_size);
+        assert_eq!(plan.binding_limit, limits.max_storage_buffer_binding_size);
+        match plan_capacity([256, 256, 256], 1, &budgeted) {
+            Err(CapacityError::Binding { limit, need, .. }) => {
+                assert_eq!(limit, limits.max_storage_buffer_binding_size);
+                assert!(need > limit);
+            }
+            other => panic!("expected a binding refusal, got {other:?}"),
+        }
+    }
+
     fn vulkan(bytes: u64) -> Option<DeviceMemory> {
         Some(DeviceMemory {
             bytes,

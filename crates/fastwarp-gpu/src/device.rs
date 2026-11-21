@@ -44,6 +44,9 @@ impl BackendChoice {
     }
 
     fn candidates(self) -> Vec<wgpu::Backends> {
+        if cfg!(all(target_arch = "wasm32", target_os = "unknown")) {
+            return vec![wgpu::Backends::BROWSER_WEBGPU];
+        }
         match self {
             BackendChoice::Vulkan => vec![wgpu::Backends::VULKAN],
             BackendChoice::Dx12 => vec![wgpu::Backends::DX12],
@@ -282,11 +285,22 @@ pub fn optional_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 pub fn request_device(
     adapter: &wgpu::Adapter,
 ) -> GpuResult<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
-    let features = optional_features(adapter);
+    request_device_with(
+        adapter,
+        required_limits(adapter),
+        optional_features(adapter),
+    )
+}
+
+fn request_device_with(
+    adapter: &wgpu::Adapter,
+    required_limits: wgpu::Limits,
+    features: wgpu::Features,
+) -> GpuResult<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("fastwarp-gpu"),
         required_features: features,
-        required_limits: required_limits(adapter),
+        required_limits,
         memory_hints: wgpu::MemoryHints::Performance,
         ..Default::default()
     }))
@@ -320,6 +334,22 @@ impl GpuContext {
     /// tried; the error lists every attempt when all of them fail.
     pub fn new_with<T>(
         sel: &BackendSelect,
+        accept: impl FnMut(GpuContext) -> GpuResult<T>,
+    ) -> GpuResult<T> {
+        Self::new_with_limits(sel, false, accept)
+    }
+
+    #[doc(hidden)]
+    pub fn new_with_webgpu_default_limits<T>(
+        sel: &BackendSelect,
+        accept: impl FnMut(GpuContext) -> GpuResult<T>,
+    ) -> GpuResult<T> {
+        Self::new_with_limits(sel, true, accept)
+    }
+
+    fn new_with_limits<T>(
+        sel: &BackendSelect,
+        webgpu_defaults: bool,
         mut accept: impl FnMut(GpuContext) -> GpuResult<T>,
     ) -> GpuResult<T> {
         let mut tried = Vec::new();
@@ -331,7 +361,9 @@ impl GpuContext {
             match pick(adapters, sel) {
                 Some(adapter) => {
                     let name = adapter.get_info().name;
-                    match Self::from_adapter(instance, adapter).and_then(&mut accept) {
+                    match Self::from_adapter(instance, adapter, webgpu_defaults)
+                        .and_then(&mut accept)
+                    {
                         Ok(v) => return Ok(v),
                         Err(e) => {
                             tried.push(format!("{backends:?}: {name}: {e}"));
@@ -362,9 +394,18 @@ impl GpuContext {
         Err(GpuError::NoAdapter(why))
     }
 
-    fn from_adapter(instance: wgpu::Instance, adapter: wgpu::Adapter) -> GpuResult<Self> {
+    fn from_adapter(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        webgpu_defaults: bool,
+    ) -> GpuResult<Self> {
         let info = AdapterRecord::from_info(&adapter.get_info());
-        let (device, queue, features) = request_device(&adapter)?;
+        let (limits, wanted) = if webgpu_defaults {
+            (wgpu::Limits::default(), wgpu::Features::empty())
+        } else {
+            (required_limits(&adapter), optional_features(&adapter))
+        };
+        let (device, queue, features) = request_device_with(&adapter, limits, wanted)?;
         let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = errors.clone();
         device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
@@ -382,7 +423,11 @@ impl GpuContext {
                 .unwrap_or_else(|p| p.into_inner())
                 .push(format!("device lost ({reason:?}): {msg}"));
         });
-        let mut caps = GpuCaps::from_adapter(&adapter);
+        let mut caps = if webgpu_defaults {
+            GpuCaps::from_device(&device)
+        } else {
+            GpuCaps::from_adapter(&adapter)
+        };
         caps.timestamp_period_ns = Some(queue.get_timestamp_period());
         let profiler = Profiler::new(&device, features);
         let memory = device_memory(&adapter);

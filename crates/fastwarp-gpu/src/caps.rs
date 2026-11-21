@@ -77,8 +77,18 @@ pub struct GpuCaps {
 impl GpuCaps {
     /// Reads limits and features from an adapter.
     pub fn from_adapter(adapter: &wgpu::Adapter) -> Self {
-        let l = adapter.limits();
-        let f = adapter.features();
+        Self::from_parts(&adapter.limits(), adapter.features())
+    }
+
+    pub fn from_limits(limits: &wgpu::Limits) -> Self {
+        Self::from_parts(limits, wgpu::Features::empty())
+    }
+
+    pub fn from_device(device: &wgpu::Device) -> Self {
+        Self::from_parts(&device.limits(), device.features())
+    }
+
+    fn from_parts(l: &wgpu::Limits, f: wgpu::Features) -> Self {
         GpuCaps {
             max_storage_buffer_binding_size: l.max_storage_buffer_binding_size,
             max_buffer_size: l.max_buffer_size,

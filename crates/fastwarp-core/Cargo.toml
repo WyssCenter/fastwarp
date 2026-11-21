@@ -17,6 +17,9 @@ nifti = ["dep:nifti"]
 [dependencies]
 nifti = { version = "0.18", optional = true }
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { version = "0.3", default-features = false }
+
 [lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"

@@ -341,6 +341,7 @@ dependencies = [
 name = "fastwarp-core"
 version = "0.2.0"
 dependencies = [
+ "js-sys",
  "nifti",
 ]
 
@@ -351,7 +352,9 @@ dependencies = [
  "ash",
  "bytemuck",
  "clap",
+ "fastwarp-core",
  "fastwarp-reg",
+ "flate2",
  "objc2-metal",
  "pollster",
  "rayon",

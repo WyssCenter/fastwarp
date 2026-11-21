@@ -41,7 +41,7 @@ use crate::error::{fmt_err, unsupported, RegError, Result};
 const H5: &str = "HDF5";
 const SIGNATURE: [u8; 8] = [0x89, b'H', b'D', b'F', 0x0d, 0x0a, 0x1a, 0x0a];
 const UNDEF: u64 = u64::MAX;
-const MAX_DATASET_BYTES: usize = 1 << 34;
+const MAX_DATASET_BYTES: u64 = 1 << 34;
 const MAX_DEFLATE_RATIO: usize = 1032;
 
 fn rotl(x: u32, k: u32) -> u32 {
@@ -800,7 +800,7 @@ impl H5File {
         let total = usize::try_from(count)
             .ok()
             .and_then(|c| c.checked_mul(elem))
-            .filter(|t| *t <= MAX_DATASET_BYTES)
+            .filter(|t| u64::try_from(*t).is_ok_and(|t| t <= MAX_DATASET_BYTES))
             .ok_or_else(|| fmt_err(H5, "dataset too large"))?;
         let raw = match layout {
             Layout::Compact(mut d) => {

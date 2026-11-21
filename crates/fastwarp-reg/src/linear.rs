@@ -30,9 +30,9 @@
 //! The linear stages of an `antsRegistration` run (centre-of-mass initialisation, `Rigid`,
 //! `Affine`, both with Mattes mutual information) over an engine that evaluates the metric.
 
+use fastwarp_core::Stopwatch;
 use std::borrow::Cow;
 use std::sync::atomic::AtomicBool;
-use std::time::Instant;
 
 use rayon::prelude::*;
 
@@ -666,7 +666,7 @@ pub fn run_linear_stage_cached<E: LinearEngine>(
     let mut levels = Vec::with_capacity(recipe.levels());
     for level in 0..recipe.levels() {
         check_cancel(cancel)?;
-        let t0 = Instant::now();
+        let t0 = Stopwatch::start();
         let factors =
             shrink_factors_per_dimension(recipe.shrink_factors[level], fixed_grid.spacing());
         let grid = level_virtual_grid(&fixed_grid, factors)?;
