@@ -30,6 +30,12 @@ pub type InversionPair<F> = (Inversion<F>, Inversion<F>);
 ///
 /// Scalar images ([`Backend::Image`]) and displacement fields ([`Backend::Field`]) are opaque
 /// buffers owned by the backend. Fields always live on the grid they were created with.
+///
+/// Every operation on images and fields is `async`, so that a backend can wait for its device
+/// without blocking (WebGPU in a browser). The futures are not required to be `Send`: the loops
+/// drive them on the thread that calls them, and on a native backend every future is ready when
+/// it is first polled.
+#[allow(async_fn_in_trait)]
 pub trait Backend: Sync {
     /// A scalar volume buffer.
     type Image: Send + Sync;
@@ -44,26 +50,26 @@ pub trait Backend: Sync {
     fn release_idle_buffers(&self) {}
 
     /// Moves a volume onto the backend.
-    fn upload_image(&self, volume: &Volume<f64>) -> Result<Self::Image>;
+    async fn upload_image(&self, volume: &Volume<f64>) -> Result<Self::Image>;
 
-    fn upload_image_owned(&self, volume: Volume<f64>) -> Result<Self::Image> {
-        self.upload_image(&volume)
+    async fn upload_image_owned(&self, volume: Volume<f64>) -> Result<Self::Image> {
+        self.upload_image(&volume).await
     }
 
     /// A zero displacement field on `grid`.
-    fn zero_field(&self, grid: &Grid) -> Result<Self::Field>;
+    async fn zero_field(&self, grid: &Grid) -> Result<Self::Field>;
 
     /// Moves a field onto the backend.
-    fn upload_field(&self, field: &VectorField) -> Result<Self::Field>;
+    async fn upload_field(&self, field: &VectorField) -> Result<Self::Field>;
 
     /// Brings a field back to the host.
-    fn download_field(&self, field: &Self::Field) -> Result<VectorField>;
+    async fn download_field(&self, field: &Self::Field) -> Result<VectorField>;
 
     /// The grid of a field.
     fn field_grid(&self, field: &Self::Field) -> Grid;
 
     /// A copy of a field.
-    fn copy_field(&self, field: &Self::Field) -> Result<Self::Field>;
+    async fn copy_field(&self, field: &Self::Field) -> Result<Self::Field>;
 
     /// Resamples `source` onto the grid of `field`: output voxel `x` takes the linearly
     /// interpolated value of `source` at `affine(q + pre(q))` with `q = x + field(x)` (the field
@@ -71,7 +77,7 @@ pub trait Backend: Sync {
     /// that point lies outside `source`'s buffer. `pre` lives on its own grid: `pre(q)` is
     /// interpolated linearly there and is zero where `q` lies outside its buffer, as ITK's
     /// `DisplacementFieldTransform` maps a point. The image is interpolated once.
-    fn warp_through_field(
+    async fn warp_through_field(
         &self,
         source: &Self::Image,
         field: &Self::Field,
@@ -86,7 +92,7 @@ pub trait Backend: Sync {
     /// where it is zero or the point lies outside the mask's buffer. With `product` (an image on the grid of
     /// `field`), the result is multiplied into `product` voxel by voxel and returned in its
     /// buffer.
-    fn warp_mask_through_field(
+    async fn warp_mask_through_field(
         &self,
         mask: &Self::Image,
         field: &Self::Field,
@@ -98,7 +104,7 @@ pub trait Backend: Sync {
     /// ANTs neighbourhood cross-correlation of two images on the same grid: the metric value
     /// (`-mean(localCC)`) and the dense image-space derivative with respect to the moving image
     /// (`coefficient * grad(moving)` per voxel, not divided by the voxel count).
-    fn cc_value_derivative(
+    async fn cc_value_derivative(
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
@@ -108,14 +114,14 @@ pub trait Backend: Sync {
     /// Both directions of [`Backend::cc_value_derivative`] on one image pair: first
     /// `(fixed, moving)`, then `(moving, fixed)`. The default evaluates them one after the other;
     /// a backend that can share the symmetric window sums overrides it with bit-identical results.
-    fn cc_value_derivative_pair(
+    async fn cc_value_derivative_pair(
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
         radius: usize,
     ) -> Result<MetricPair<Self::Field>> {
-        let forward = self.cc_value_derivative(fixed, moving, radius)?;
-        let backward = self.cc_value_derivative(moving, fixed, radius)?;
+        let forward = self.cc_value_derivative(fixed, moving, radius).await?;
+        let backward = self.cc_value_derivative(moving, fixed, radius).await?;
         Ok((forward, backward))
     }
 
@@ -125,7 +131,7 @@ pub trait Backend: Sync {
     /// their voxel count take only valid voxels, a voxel that is not valid has no value and a
     /// zero derivative, and each value is the mean over the valid voxels. Fails when no voxel is
     /// valid.
-    fn cc_value_derivative_pair_masked(
+    async fn cc_value_derivative_pair_masked(
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
@@ -136,62 +142,77 @@ pub trait Backend: Sync {
     /// [`Backend::cc_value_derivative_pair_masked`] with the [`Backend::l2_norm`] of both
     /// derivatives, in the same order. The default calls them one after the other; a backend
     /// that can return all the scalars at once overrides it with bit-identical results.
-    fn cc_value_derivative_pair_masked_with_norms(
+    async fn cc_value_derivative_pair_masked_with_norms(
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
         valid: &Self::Image,
         radius: usize,
     ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
-        let pair = self.cc_value_derivative_pair_masked(fixed, moving, valid, radius)?;
-        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        let pair = self
+            .cc_value_derivative_pair_masked(fixed, moving, valid, radius)
+            .await?;
+        let norms = [
+            self.l2_norm(&pair.0 .1).await?,
+            self.l2_norm(&pair.1 .1).await?,
+        ];
         Ok((pair, norms))
     }
 
     /// [`Backend::cc_value_derivative_pair`] with the [`Backend::l2_norm`] of both derivatives,
     /// in the same order. The default calls them one after the other; a backend that can return
     /// all the scalars at once overrides it with bit-identical results.
-    fn cc_value_derivative_pair_with_norms(
+    async fn cc_value_derivative_pair_with_norms(
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
         radius: usize,
     ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
-        let pair = self.cc_value_derivative_pair(fixed, moving, radius)?;
-        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        let pair = self.cc_value_derivative_pair(fixed, moving, radius).await?;
+        let norms = [
+            self.l2_norm(&pair.0 .1).await?,
+            self.l2_norm(&pair.1 .1).await?,
+        ];
         Ok((pair, norms))
     }
 
     /// SyN's Gaussian smoothing of a field (`variance` in squared voxels of the field's grid,
     /// faces pinned to zero). Takes the field so that `variance <= 0` returns it unchanged
     /// without a copy.
-    fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field>;
+    async fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field>;
 
     /// Largest `|u / spacing|` over the field.
-    fn max_scaled_norm(&self, field: &Self::Field) -> Result<f64>;
+    async fn max_scaled_norm(&self, field: &Self::Field) -> Result<f64>;
 
     /// [`Backend::max_scaled_norm`] of two fields, `(a, b)`. The default calls it twice; a
     /// backend that can return both values at once overrides it with bit-identical results.
-    fn max_scaled_norm_pair(&self, a: &Self::Field, b: &Self::Field) -> Result<(f64, f64)> {
-        Ok((self.max_scaled_norm(a)?, self.max_scaled_norm(b)?))
+    async fn max_scaled_norm_pair(&self, a: &Self::Field, b: &Self::Field) -> Result<(f64, f64)> {
+        Ok((
+            self.max_scaled_norm(a).await?,
+            self.max_scaled_norm(b).await?,
+        ))
     }
 
     /// Euclidean norm of the whole field as one vector.
-    fn l2_norm(&self, field: &Self::Field) -> Result<f64>;
+    async fn l2_norm(&self, field: &Self::Field) -> Result<f64>;
 
     /// `field *= s`.
-    fn scale(&self, field: &mut Self::Field, s: f64) -> Result<()>;
+    async fn scale(&self, field: &mut Self::Field, s: f64) -> Result<()>;
 
     /// `acc += a * x`.
-    fn axpy(&self, acc: &mut Self::Field, a: f64, x: &Self::Field) -> Result<()>;
+    async fn axpy(&self, acc: &mut Self::Field, a: f64, x: &Self::Field) -> Result<()>;
 
     /// `out(x) = warping(x) + displacement(x + warping(x))`, zero displacement outside the
     /// buffer (ITK `ComposeDisplacementFieldsImageFilter`).
-    fn compose(&self, displacement: &Self::Field, warping: &Self::Field) -> Result<Self::Field>;
+    async fn compose(
+        &self,
+        displacement: &Self::Field,
+        warping: &Self::Field,
+    ) -> Result<Self::Field>;
 
     /// ITK's fixed-point inverse of `field` starting from `initial`; `initial`'s buffer is
     /// updated in place and returned as the inverse.
-    fn invert(
+    async fn invert(
         &self,
         field: &Self::Field,
         initial: Self::Field,
@@ -202,17 +223,17 @@ pub trait Backend: Sync {
     /// `inverse = invert(field, initial = inverse)`, then `field = invert(inverse, initial =
     /// field)`. The default calls [`Backend::invert`] twice; a backend that can return both
     /// statistics at once overrides it with bit-identical results.
-    fn invert_pair(
+    async fn invert_pair(
         &self,
         field: Self::Field,
         inverse: Self::Field,
         params: &InvertParams,
     ) -> Result<InversionPair<Self::Field>> {
-        let inverse = self.invert(&field, inverse, params)?;
-        let field = self.invert(&inverse.0, field, params)?;
+        let inverse = self.invert(&field, inverse, params).await?;
+        let field = self.invert(&inverse.0, field, params).await?;
         Ok((inverse, field))
     }
 
     /// The field resampled onto `grid` (linear, zero outside the old buffer).
-    fn resample_field(&self, field: &Self::Field, grid: &Grid) -> Result<Self::Field>;
+    async fn resample_field(&self, field: &Self::Field, grid: &Grid) -> Result<Self::Field>;
 }

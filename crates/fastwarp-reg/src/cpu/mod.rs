@@ -9,7 +9,7 @@
 
 use rayon::prelude::*;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, InversionPair, MetricPair};
 use crate::error::{invalid, Result};
 use crate::field_ops::{
     compose_displacement_fields, gaussian_smooth_displacement_field, invert_displacement_field,
@@ -26,49 +26,43 @@ use crate::volume::Volume;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CpuBackend;
 
-impl Backend for CpuBackend {
-    type Image = Volume<f64>;
-    type Field = VectorField;
-
-    fn name(&self) -> String {
-        "cpu-f64".to_string()
-    }
-
-    fn upload_image(&self, volume: &Volume<f64>) -> Result<Self::Image> {
+impl CpuBackend {
+    #[doc(hidden)]
+    pub fn upload_image(&self, volume: &Volume<f64>) -> Result<Volume<f64>> {
         Ok(volume.clone())
     }
 
-    fn upload_image_owned(&self, volume: Volume<f64>) -> Result<Self::Image> {
+    pub(crate) fn upload_image_owned(&self, volume: Volume<f64>) -> Result<Volume<f64>> {
         Ok(volume)
     }
 
-    fn zero_field(&self, grid: &Grid) -> Result<Self::Field> {
+    #[doc(hidden)]
+    pub fn zero_field(&self, grid: &Grid) -> Result<VectorField> {
         Ok(VectorField::zeros(*grid))
     }
 
-    fn upload_field(&self, field: &VectorField) -> Result<Self::Field> {
+    #[doc(hidden)]
+    pub fn upload_field(&self, field: &VectorField) -> Result<VectorField> {
         Ok(field.clone())
     }
 
-    fn download_field(&self, field: &Self::Field) -> Result<VectorField> {
+    pub(crate) fn download_field(&self, field: &VectorField) -> Result<VectorField> {
         Ok(field.clone())
     }
 
-    fn field_grid(&self, field: &Self::Field) -> Grid {
-        *field.grid()
-    }
-
-    fn copy_field(&self, field: &Self::Field) -> Result<Self::Field> {
+    #[doc(hidden)]
+    pub fn copy_field(&self, field: &VectorField) -> Result<VectorField> {
         Ok(field.clone())
     }
 
-    fn warp_through_field(
+    #[doc(hidden)]
+    pub fn warp_through_field(
         &self,
-        source: &Self::Image,
-        field: &Self::Field,
-        pre: Option<&Self::Field>,
+        source: &Volume<f64>,
+        field: &VectorField,
+        pre: Option<&VectorField>,
         affine: Option<&AffineTransform>,
-    ) -> Result<Self::Image> {
+    ) -> Result<Volume<f64>> {
         let grid = *field.grid();
         let data: Vec<f64> = field
             .data()
@@ -90,14 +84,15 @@ impl Backend for CpuBackend {
         Volume::from_vec(grid, data)
     }
 
-    fn warp_mask_through_field(
+    #[doc(hidden)]
+    pub fn warp_mask_through_field(
         &self,
-        mask: &Self::Image,
-        field: &Self::Field,
-        pre: Option<&Self::Field>,
+        mask: &Volume<f64>,
+        field: &VectorField,
+        pre: Option<&VectorField>,
         affine: Option<&AffineTransform>,
-        product: Option<Self::Image>,
-    ) -> Result<Self::Image> {
+        product: Option<Volume<f64>>,
+    ) -> Result<Volume<f64>> {
         let grid = *field.grid();
         if let Some(p) = &product {
             if p.grid() != &grid {
@@ -135,13 +130,14 @@ impl Backend for CpuBackend {
         Volume::from_vec(grid, data)
     }
 
-    fn cc_value_derivative_pair_masked(
+    #[doc(hidden)]
+    pub fn cc_value_derivative_pair_masked(
         &self,
-        fixed: &Self::Image,
-        moving: &Self::Image,
-        valid: &Self::Image,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        valid: &Volume<f64>,
         radius: usize,
-    ) -> Result<crate::backend::MetricPair<Self::Field>> {
+    ) -> Result<MetricPair<VectorField>> {
         let identity = TransformChain::new();
         let grid = *fixed.grid();
         let metric = CcMetric::new(radius);
@@ -165,12 +161,13 @@ impl Backend for CpuBackend {
         Ok((first, second))
     }
 
-    fn cc_value_derivative(
+    #[doc(hidden)]
+    pub fn cc_value_derivative(
         &self,
-        fixed: &Self::Image,
-        moving: &Self::Image,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
         radius: usize,
-    ) -> Result<(f64, Self::Field)> {
+    ) -> Result<(f64, VectorField)> {
         let identity = TransformChain::new();
         let grid = *fixed.grid();
         let evaluation = CcMetric::new(radius).evaluate(
@@ -189,45 +186,270 @@ impl Backend for CpuBackend {
         ))
     }
 
-    fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field> {
+    #[doc(hidden)]
+    pub fn smooth_field(&self, field: VectorField, variance: f64) -> Result<VectorField> {
         if variance <= 0.0 {
             return Ok(field);
         }
         Ok(gaussian_smooth_displacement_field(&field, variance))
     }
 
-    fn max_scaled_norm(&self, field: &Self::Field) -> Result<f64> {
+    #[doc(hidden)]
+    pub fn max_scaled_norm(&self, field: &VectorField) -> Result<f64> {
         Ok(field.max_scaled_norm())
     }
 
-    fn l2_norm(&self, field: &Self::Field) -> Result<f64> {
+    #[doc(hidden)]
+    pub fn l2_norm(&self, field: &VectorField) -> Result<f64> {
         Ok(field.l2_norm())
     }
 
-    fn scale(&self, field: &mut Self::Field, s: f64) -> Result<()> {
+    #[doc(hidden)]
+    pub fn scale(&self, field: &mut VectorField, s: f64) -> Result<()> {
         field.scale(s);
         Ok(())
     }
 
-    fn axpy(&self, acc: &mut Self::Field, a: f64, x: &Self::Field) -> Result<()> {
+    #[doc(hidden)]
+    pub fn axpy(&self, acc: &mut VectorField, a: f64, x: &VectorField) -> Result<()> {
         acc.axpy(a, x)
     }
 
-    fn compose(&self, displacement: &Self::Field, warping: &Self::Field) -> Result<Self::Field> {
+    #[doc(hidden)]
+    pub fn compose(
+        &self,
+        displacement: &VectorField,
+        warping: &VectorField,
+    ) -> Result<VectorField> {
         compose_displacement_fields(displacement, warping)
     }
 
-    fn invert(
+    #[doc(hidden)]
+    pub fn invert(
+        &self,
+        field: &VectorField,
+        initial: VectorField,
+        params: &InvertParams,
+    ) -> Result<(VectorField, InvertStats)> {
+        invert_displacement_field(field, Some(&initial), params)
+    }
+
+    #[doc(hidden)]
+    pub fn resample_field(&self, field: &VectorField, grid: &Grid) -> Result<VectorField> {
+        resample_field(field, grid)
+    }
+
+    #[doc(hidden)]
+    pub fn cc_value_derivative_pair(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        radius: usize,
+    ) -> Result<MetricPair<VectorField>> {
+        let forward = self.cc_value_derivative(fixed, moving, radius)?;
+        let backward = self.cc_value_derivative(moving, fixed, radius)?;
+        Ok((forward, backward))
+    }
+
+    pub(crate) fn cc_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        valid: &Volume<f64>,
+        radius: usize,
+    ) -> Result<(MetricPair<VectorField>, [f64; 2])> {
+        let pair = self.cc_value_derivative_pair_masked(fixed, moving, valid, radius)?;
+        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        Ok((pair, norms))
+    }
+
+    pub(crate) fn cc_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        radius: usize,
+    ) -> Result<(MetricPair<VectorField>, [f64; 2])> {
+        let pair = self.cc_value_derivative_pair(fixed, moving, radius)?;
+        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        Ok((pair, norms))
+    }
+
+    pub(crate) fn max_scaled_norm_pair(
+        &self,
+        a: &VectorField,
+        b: &VectorField,
+    ) -> Result<(f64, f64)> {
+        Ok((self.max_scaled_norm(a)?, self.max_scaled_norm(b)?))
+    }
+
+    pub(crate) fn invert_pair(
+        &self,
+        field: VectorField,
+        inverse: VectorField,
+        params: &InvertParams,
+    ) -> Result<InversionPair<VectorField>> {
+        let inverse = self.invert(&field, inverse, params)?;
+        let field = self.invert(&inverse.0, field, params)?;
+        Ok((inverse, field))
+    }
+}
+
+impl Backend for CpuBackend {
+    type Image = Volume<f64>;
+    type Field = VectorField;
+
+    fn name(&self) -> String {
+        "cpu-f64".to_string()
+    }
+
+    async fn upload_image(&self, volume: &Volume<f64>) -> Result<Self::Image> {
+        CpuBackend::upload_image(self, volume)
+    }
+
+    async fn upload_image_owned(&self, volume: Volume<f64>) -> Result<Self::Image> {
+        CpuBackend::upload_image_owned(self, volume)
+    }
+
+    async fn zero_field(&self, grid: &Grid) -> Result<Self::Field> {
+        CpuBackend::zero_field(self, grid)
+    }
+
+    async fn upload_field(&self, field: &VectorField) -> Result<Self::Field> {
+        CpuBackend::upload_field(self, field)
+    }
+
+    async fn download_field(&self, field: &Self::Field) -> Result<VectorField> {
+        CpuBackend::download_field(self, field)
+    }
+
+    fn field_grid(&self, field: &Self::Field) -> Grid {
+        *field.grid()
+    }
+
+    async fn copy_field(&self, field: &Self::Field) -> Result<Self::Field> {
+        CpuBackend::copy_field(self, field)
+    }
+
+    async fn warp_through_field(
+        &self,
+        source: &Self::Image,
+        field: &Self::Field,
+        pre: Option<&Self::Field>,
+        affine: Option<&AffineTransform>,
+    ) -> Result<Self::Image> {
+        CpuBackend::warp_through_field(self, source, field, pre, affine)
+    }
+
+    async fn warp_mask_through_field(
+        &self,
+        mask: &Self::Image,
+        field: &Self::Field,
+        pre: Option<&Self::Field>,
+        affine: Option<&AffineTransform>,
+        product: Option<Self::Image>,
+    ) -> Result<Self::Image> {
+        CpuBackend::warp_mask_through_field(self, mask, field, pre, affine, product)
+    }
+
+    async fn cc_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        valid: &Self::Image,
+        radius: usize,
+    ) -> Result<MetricPair<Self::Field>> {
+        CpuBackend::cc_value_derivative_pair_masked(self, fixed, moving, valid, radius)
+    }
+
+    async fn cc_value_derivative(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        radius: usize,
+    ) -> Result<(f64, Self::Field)> {
+        CpuBackend::cc_value_derivative(self, fixed, moving, radius)
+    }
+
+    async fn cc_value_derivative_pair(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        radius: usize,
+    ) -> Result<MetricPair<Self::Field>> {
+        CpuBackend::cc_value_derivative_pair(self, fixed, moving, radius)
+    }
+
+    async fn cc_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        valid: &Self::Image,
+        radius: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        CpuBackend::cc_value_derivative_pair_masked_with_norms(self, fixed, moving, valid, radius)
+    }
+
+    async fn cc_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        radius: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        CpuBackend::cc_value_derivative_pair_with_norms(self, fixed, moving, radius)
+    }
+
+    async fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field> {
+        CpuBackend::smooth_field(self, field, variance)
+    }
+
+    async fn max_scaled_norm(&self, field: &Self::Field) -> Result<f64> {
+        CpuBackend::max_scaled_norm(self, field)
+    }
+
+    async fn max_scaled_norm_pair(&self, a: &Self::Field, b: &Self::Field) -> Result<(f64, f64)> {
+        CpuBackend::max_scaled_norm_pair(self, a, b)
+    }
+
+    async fn l2_norm(&self, field: &Self::Field) -> Result<f64> {
+        CpuBackend::l2_norm(self, field)
+    }
+
+    async fn scale(&self, field: &mut Self::Field, s: f64) -> Result<()> {
+        CpuBackend::scale(self, field, s)
+    }
+
+    async fn axpy(&self, acc: &mut Self::Field, a: f64, x: &Self::Field) -> Result<()> {
+        CpuBackend::axpy(self, acc, a, x)
+    }
+
+    async fn compose(
+        &self,
+        displacement: &Self::Field,
+        warping: &Self::Field,
+    ) -> Result<Self::Field> {
+        CpuBackend::compose(self, displacement, warping)
+    }
+
+    async fn invert(
         &self,
         field: &Self::Field,
         initial: Self::Field,
         params: &InvertParams,
     ) -> Result<(Self::Field, InvertStats)> {
-        invert_displacement_field(field, Some(&initial), params)
+        CpuBackend::invert(self, field, initial, params)
     }
 
-    fn resample_field(&self, field: &Self::Field, grid: &Grid) -> Result<Self::Field> {
-        resample_field(field, grid)
+    async fn invert_pair(
+        &self,
+        field: Self::Field,
+        inverse: Self::Field,
+        params: &InvertParams,
+    ) -> Result<InversionPair<Self::Field>> {
+        CpuBackend::invert_pair(self, field, inverse, params)
+    }
+
+    async fn resample_field(&self, field: &Self::Field, grid: &Grid) -> Result<Self::Field> {
+        CpuBackend::resample_field(self, field, grid)
     }
 }
 

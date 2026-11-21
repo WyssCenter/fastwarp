@@ -30,6 +30,7 @@ pub mod backend;
 pub mod convergence;
 pub mod cpu;
 pub mod error;
+mod exec;
 pub mod field_ops;
 pub mod grid;
 pub mod init;

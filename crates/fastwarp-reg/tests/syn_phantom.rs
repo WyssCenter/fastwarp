@@ -5,7 +5,6 @@
 use std::time::Instant;
 
 use fastwarp_reg::apply::{apply_chain, Interpolation};
-use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
 use fastwarp_reg::field_ops::VectorField;
 use fastwarp_reg::linalg::{Vec3, IDENTITY3};
