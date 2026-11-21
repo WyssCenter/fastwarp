@@ -6,14 +6,14 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::error::{unsupported, Result};
+use crate::error::{unsupported, RegError, Result};
 use crate::transform::affine::AffineTransform;
 use crate::transform::composite::{TransformChain, TransformElem};
 use crate::transform::field::DisplacementField;
-use crate::transform::field_nifti::read_field_nifti;
-use crate::transform::itk_h5::{read_h5_file, write_h5_file};
-use crate::transform::itk_mat::read_mat_file;
-use crate::transform::itk_txt::read_text_file;
+use crate::transform::field_nifti::{parse_field_nifti, read_field_nifti};
+use crate::transform::itk_h5::{parse_h5, read_h5_file, write_h5_file};
+use crate::transform::itk_mat::{parse_mat, read_mat_file};
+use crate::transform::itk_txt::{parse_text, read_text_file};
 
 /// Suffix of the forward composite, appended to an output prefix.
 pub const COMPOSITE_SUFFIX: &str = "Composite.h5";
@@ -57,6 +57,33 @@ pub fn read_transform_file(path: &Path) -> Result<TransformChain> {
         Err(unsupported(
             "transform file",
             format!("file extension of {}", path.display()),
+        ))
+    }
+}
+
+/// In-memory counterpart of [`read_transform_file`]: `name` only selects the reader by its
+/// extension, the content is `bytes`.
+pub fn parse_transform(name: &str, bytes: Vec<u8>) -> Result<TransformChain> {
+    let lower = name.to_ascii_lowercase();
+    let name_lc = lower.as_str();
+    if name_lc.ends_with(".h5") || name_lc.ends_with(".hdf5") || name_lc.ends_with(".hdf") {
+        parse_h5(bytes)
+    } else if name_lc.ends_with(".mat") {
+        Ok(TransformChain::from_queue(parse_mat(&bytes)?))
+    } else if name_lc.ends_with(".txt") || name_lc.ends_with(".tfm") {
+        let text = String::from_utf8(bytes).map_err(|e| RegError::Format {
+            format: "ITK text transform",
+            message: format!("{name}: {e}"),
+        })?;
+        Ok(TransformChain::from_queue(parse_text(&text)?))
+    } else if name_lc.ends_with(".nii") || name_lc.ends_with(".nii.gz") {
+        Ok(TransformChain::from_queue(vec![
+            TransformElem::DisplacementField(parse_field_nifti(name, bytes)?),
+        ]))
+    } else {
+        Err(unsupported(
+            "transform file",
+            format!("file extension of {name}"),
         ))
     }
 }

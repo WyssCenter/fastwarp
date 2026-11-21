@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Internal: every input and output of a registration can go through bytes in memory (for a browser without a file system): `NiftiFile::from_bytes` (gzip detected by its magic bytes), `WriterOptions::in_memory` with `to_bytes` and `write_nifti_to`, `Volume::from_nifti_bytes` and `to_nifti_bytes`, `parse_field_nifti` and `format_field_nifti`, `parse_nifti_grid`, `parse_transform`, and `stages::stage_output_files` / `visit_stage_outputs`; `write_stage_outputs` writes each file in turn through the visitor, so its memory use and the files written are unchanged.
 - Internal: the engine crates `fastwarp-reg` and `fastwarp-gpu` build for `wasm32-unknown-unknown` (timing without `std::time::Instant`, the WebGPU backend on wasm32, a 32-bit safe size limit in the HDF5 reader), and the GPU kernels compile and pass their self-tests under the WebGPU default limits; native behaviour is unchanged.
 - The SyN stage registers any number of channels (for example T1w + T2w + FGATIR), not 1 or 2.
   `register_syn`, `fits_gpu` and `cohort_recipe` take one or more images or channels; each channel
