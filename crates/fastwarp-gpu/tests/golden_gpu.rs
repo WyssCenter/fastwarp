@@ -24,15 +24,25 @@ use golden::{
 const WINDOWS_ARC_140V_VULKAN: &str =
     "windows-x86_64 | Intel(R) Arc(TM) 140V GPU (16GB) | Vulkan | 101.8991";
 
-const TABLES: Tables = &[(
-    WINDOWS_ARC_140V_VULKAN,
-    WINDOWS_ARC_140V_VULKAN_REGISTRATION,
-)];
+const LINUX_LLVMPIPE_VULKAN: &str = "linux-x86_64 | llvmpipe (LLVM 21.1.8, 256 bits) | Vulkan | Mesa 26.0.8-1ubuntu0.3 (LLVM 21.1.8)";
 
-const TABLES_TWO_CHANNEL: Tables =
-    &[(WINDOWS_ARC_140V_VULKAN, WINDOWS_ARC_140V_VULKAN_TWO_CHANNEL)];
+const TABLES: Tables = &[
+    (
+        WINDOWS_ARC_140V_VULKAN,
+        WINDOWS_ARC_140V_VULKAN_REGISTRATION,
+    ),
+    (LINUX_LLVMPIPE_VULKAN, LINUX_LLVMPIPE_VULKAN_REGISTRATION),
+];
 
-const TABLES_N4: Tables = &[(WINDOWS_ARC_140V_VULKAN, WINDOWS_ARC_140V_VULKAN_N4)];
+const TABLES_TWO_CHANNEL: Tables = &[
+    (WINDOWS_ARC_140V_VULKAN, WINDOWS_ARC_140V_VULKAN_TWO_CHANNEL),
+    (LINUX_LLVMPIPE_VULKAN, LINUX_LLVMPIPE_VULKAN_TWO_CHANNEL),
+];
+
+const TABLES_N4: Tables = &[
+    (WINDOWS_ARC_140V_VULKAN, WINDOWS_ARC_140V_VULKAN_N4),
+    (LINUX_LLVMPIPE_VULKAN, LINUX_LLVMPIPE_VULKAN_N4),
+];
 
 const WINDOWS_ARC_140V_VULKAN_REGISTRATION: Table = &[
     (
@@ -112,6 +122,87 @@ const WINDOWS_ARC_140V_VULKAN_N4: Table = &[
     (
         "n4_bias_field",
         "c57f66bd5e14272512b841c2c1d6b01446515a366dfca8e2ae61b1df8d625a9b",
+    ),
+];
+
+const LINUX_LLVMPIPE_VULKAN_REGISTRATION: Table = &[
+    (
+        "golden_Composite.h5",
+        "f8d726726eed0a8eb48f6dc0c7c3407d65de62c06461649baa4839f4ed1a47f5",
+    ),
+    (
+        "golden_Composite.h5#numeric",
+        "ee672b9af5127d8aaa18622940db3a248f85ab78f72e6f1220742102b9b3eaff",
+    ),
+    (
+        "golden_InverseComposite.h5",
+        "80d6fa1e5c0c64a67da5234ff1386689372d751cb28a363d6c9af6f14edd6216",
+    ),
+    (
+        "golden_InverseComposite.h5#numeric",
+        "e1ab5134e41033b0310e9fe5c5d5ed4718557eb1f67dc2febcd16704b713a1a2",
+    ),
+    (
+        "golden_0GenericAffine.mat",
+        "58c19d4e6b5e6d73758a4ade285045f7437cad3859200c4a3d2b26c526a4dbbe",
+    ),
+    (
+        "golden_1Warp.nii.gz",
+        "9bc0a276db4f2b7ab2205a9af0f8aea6514adbd0f9d242ebe46a1a1e36d47f9e",
+    ),
+    (
+        "golden_1InverseWarp.nii.gz",
+        "c6ff1bf2050b5d263bfd2991ada151c88ec4a66eb77da364ae009f8eb7652e02",
+    ),
+    (
+        "golden__Warped.nii.gz",
+        "69dcf42d936d16b0163b0a1c982f84e8f20add6760546fa5bba168ff9bb195bf",
+    ),
+];
+
+const LINUX_LLVMPIPE_VULKAN_TWO_CHANNEL: Table = &[
+    (
+        "golden_Composite.h5",
+        "c0a74d96f5ca9e57a4aff74c779d5b450721f3e2b5f74ac91ad5cb347a465e24",
+    ),
+    (
+        "golden_Composite.h5#numeric",
+        "f5d84a71033f88bba80a78fda89dc862ecdbd6ba0000e36f37289f7a922f8a32",
+    ),
+    (
+        "golden_InverseComposite.h5",
+        "64f51b2e678052e6a7eba5bd2f213ecf741d6a05ae1147999716bfb64174b998",
+    ),
+    (
+        "golden_InverseComposite.h5#numeric",
+        "034d79a3577dcf4eb0ee945a45b0808b283253e86430db1a31129a6114061e37",
+    ),
+    (
+        "golden_0GenericAffine.mat",
+        "58c19d4e6b5e6d73758a4ade285045f7437cad3859200c4a3d2b26c526a4dbbe",
+    ),
+    (
+        "golden_1Warp.nii.gz",
+        "546b515f9650cf4db280b0b3c3f3d70719f7df4964f8fac9495fddca49b2f163",
+    ),
+    (
+        "golden_1InverseWarp.nii.gz",
+        "a7055b3b114b2e283d7250427c08810a3de0cee203faaac9519e5ba46692abcd",
+    ),
+    (
+        "golden__Warped.nii.gz",
+        "c2b590edf3035e8e11dd925ee8173e8604bdb976698d219de1f1bbbc0c4873b7",
+    ),
+];
+
+const LINUX_LLVMPIPE_VULKAN_N4: Table = &[
+    (
+        "n4_corrected",
+        "45e953888f1bd8132866fdf97f999440af624dd9322d2e7c440c5b65e82c6d64",
+    ),
+    (
+        "n4_bias_field",
+        "ce0bb4cf9441ff3cdbb9f5aab4be963aea0c65f9fd5f08ef3c0afba703de01ef",
     ),
 ];
 

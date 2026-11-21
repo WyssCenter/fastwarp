@@ -21,11 +21,20 @@ use support::golden::{
 
 const IDENTITY3: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
-const TABLES: Tables = &[("windows-x86_64", WINDOWS_X86_64)];
+const TABLES: Tables = &[
+    ("windows-x86_64", WINDOWS_X86_64),
+    ("linux-x86_64", LINUX_X86_64),
+];
 
-const TABLES_TWO_CHANNEL: Tables = &[("windows-x86_64", TWO_CHANNEL_WINDOWS_X86_64)];
+const TABLES_TWO_CHANNEL: Tables = &[
+    ("windows-x86_64", TWO_CHANNEL_WINDOWS_X86_64),
+    ("linux-x86_64", TWO_CHANNEL_LINUX_X86_64),
+];
 
-const TABLES_N4: Tables = &[("windows-x86_64", N4_WINDOWS_X86_64)];
+const TABLES_N4: Tables = &[
+    ("windows-x86_64", N4_WINDOWS_X86_64),
+    ("linux-x86_64", N4_LINUX_X86_64),
+];
 
 const WINDOWS_X86_64: Table = &[
     (
@@ -105,6 +114,87 @@ const N4_WINDOWS_X86_64: Table = &[
     (
         "n4_bias_field",
         "0f1132685717a425e8077f4e340a2e85525bbfd0bff801a7ae8b9caf126ea5f2",
+    ),
+];
+
+const LINUX_X86_64: Table = &[
+    (
+        "golden_Composite.h5",
+        "1517cb506e4222f8f135ce3c12e81becae4e12c3b9bf40a9cedff8357d8f9846",
+    ),
+    (
+        "golden_Composite.h5#numeric",
+        "e17c2f90a0e70575ca229a342d6c67d772002248bc68e4557cf8760fcbfab46c",
+    ),
+    (
+        "golden_InverseComposite.h5",
+        "9e7a33d2a009a5532520daf538c151ebced01cb72d898eea14198eb77e994594",
+    ),
+    (
+        "golden_InverseComposite.h5#numeric",
+        "5081d80dccd1c2b8b45f77e44830216897fb9d787cf0b86a08b611ca47c5b35b",
+    ),
+    (
+        "golden_0GenericAffine.mat",
+        "c960b993a6e7a48b306728ae88c1676a374ebd0bc46354ac8ff880f259a5d5f8",
+    ),
+    (
+        "golden_1Warp.nii.gz",
+        "de0e496af90a318d6240b06827d4b1a99bb2cc8e43d31ed4e673e151ce703231",
+    ),
+    (
+        "golden_1InverseWarp.nii.gz",
+        "2c6c0b3d6fdacc4e07c89331e8328d720564c78f9559d114c9ba4346aab668cf",
+    ),
+    (
+        "golden__Warped.nii.gz",
+        "ca47e1b268c6befb64c0748ab72cad35446e51d08ecace420026b8d224f24642",
+    ),
+];
+
+const TWO_CHANNEL_LINUX_X86_64: Table = &[
+    (
+        "golden_Composite.h5",
+        "10316015c8f78ffc868c2b39786418408ae191ee01d978dd01989a285e32de2d",
+    ),
+    (
+        "golden_Composite.h5#numeric",
+        "3ff3c2cf2a1de12b3d0973086df42873d134940ce9b726715b165da6e98ddfd3",
+    ),
+    (
+        "golden_InverseComposite.h5",
+        "b1a82ec5499275fe53d98dd80ab9e3e0dffb80d3c94b90abbd7ddf6ee709621d",
+    ),
+    (
+        "golden_InverseComposite.h5#numeric",
+        "fb6b1ec5f812cd6094fef61a2a58b2e3ea4024d62de9d0476506de264d390dee",
+    ),
+    (
+        "golden_0GenericAffine.mat",
+        "c960b993a6e7a48b306728ae88c1676a374ebd0bc46354ac8ff880f259a5d5f8",
+    ),
+    (
+        "golden_1Warp.nii.gz",
+        "e0d7fd3fc5c2770908089b2418efd6919609aa5cf02f5c6265702b30d40a7b20",
+    ),
+    (
+        "golden_1InverseWarp.nii.gz",
+        "02c4d2e9fb7e63907e95211db39625dc561957d42072a0baa59d1ed2ae917b40",
+    ),
+    (
+        "golden__Warped.nii.gz",
+        "8903ab79f520bdd3d164756f72c42683d96f13592f90a702b0f269bdc2e1961a",
+    ),
+];
+
+const N4_LINUX_X86_64: Table = &[
+    (
+        "n4_corrected",
+        "65254ad200f675df87b4b438748a7a8ecb8e54c1a25d2a002fa05f73dcd919a2",
+    ),
+    (
+        "n4_bias_field",
+        "95e11d8c13657be42d17f2c5e62d1c4e1a9778607444a8bec700efcfbd020395",
     ),
 ];
 
