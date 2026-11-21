@@ -7,7 +7,6 @@
 //! level-1 tests on larger awkward grids. Every operation reports its largest absolute error, the
 //! reference range it is judged against, and the tolerance of the plan's `f32` budget.
 
-use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
 use fastwarp_reg::error::{RegError, Result as RegResult};
 use fastwarp_reg::field_ops::{InvertParams, VectorField};

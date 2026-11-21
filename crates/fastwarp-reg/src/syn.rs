@@ -62,6 +62,7 @@ use std::sync::atomic::AtomicBool;
 use crate::backend::Backend;
 use crate::convergence::WindowConvergenceMonitor;
 use crate::error::{check_cancel, invalid, Result};
+use crate::exec::block_ready;
 use crate::field_ops::{InvertParams, InvertStats, VectorField};
 use crate::grid::Grid;
 use crate::linear::SmoothCache;
@@ -212,7 +213,7 @@ impl<B: Backend> SideAccumulator<B> {
         }
     }
 
-    fn add(
+    async fn add(
         &mut self,
         backend: &B,
         weight: f64,
@@ -229,7 +230,7 @@ impl<B: Backend> SideAccumulator<B> {
             Some(acc) => acc,
             None => {
                 let grid = backend.field_grid(&derivative);
-                self.gradient.insert(backend.zero_field(&grid)?)
+                self.gradient.insert(backend.zero_field(&grid).await?)
             }
         };
         if !magnitude.is_finite() {
@@ -237,12 +238,12 @@ impl<B: Backend> SideAccumulator<B> {
         }
         self.total_magnitude += magnitude;
         if magnitude > f64::EPSILON {
-            backend.axpy(acc, weight / magnitude, &derivative)?;
+            backend.axpy(acc, weight / magnitude, &derivative).await?;
         }
         Ok(())
     }
 
-    fn smoothed(
+    async fn smoothed(
         self,
         backend: &B,
         recipe: &SynRecipe,
@@ -256,10 +257,14 @@ impl<B: Backend> SideAccumulator<B> {
         let weighted_value = if channels == 1 {
             first_value
         } else {
-            backend.scale(&mut gradient, self.total_magnitude / channels as f64)?;
+            backend
+                .scale(&mut gradient, self.total_magnitude / channels as f64)
+                .await?;
             self.values.iter().zip(normalised).map(|(v, w)| v * w).sum()
         };
-        let gradient = backend.smooth_field(gradient, recipe.update_field_variance)?;
+        let gradient = backend
+            .smooth_field(gradient, recipe.update_field_variance)
+            .await?;
         Ok(SmoothedSide {
             gradient,
             first_value,
@@ -275,13 +280,13 @@ struct SmoothedSide<B: Backend> {
 }
 
 impl<B: Backend> SmoothedSide<B> {
-    fn finish(self, backend: &B, recipe: &SynRecipe, max_norm: f64) -> Result<SideUpdate<B>> {
+    async fn finish(self, backend: &B, recipe: &SynRecipe, max_norm: f64) -> Result<SideUpdate<B>> {
         let mut scale = recipe.gradient_step;
         if max_norm > 0.0 {
             scale /= max_norm;
         }
         let mut gradient = self.gradient;
-        backend.scale(&mut gradient, scale)?;
+        backend.scale(&mut gradient, scale).await?;
         Ok(SideUpdate {
             update: gradient,
             scale,
@@ -291,7 +296,7 @@ impl<B: Backend> SmoothedSide<B> {
     }
 }
 
-fn side_updates<B: Backend>(
+async fn side_updates<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
     fixed_mid: &[B::Image],
@@ -308,64 +313,78 @@ fn side_updates<B: Backend>(
         let (((fixed_value, fixed_derivative), (moving_value, moving_derivative)), norms) =
             match (channels == 1, valid) {
                 (true, None) => (
-                    backend.cc_value_derivative_pair(fixed, moving, radius)?,
+                    backend
+                        .cc_value_derivative_pair(fixed, moving, radius)
+                        .await?,
                     None,
                 ),
                 (true, Some(valid)) => (
-                    backend.cc_value_derivative_pair_masked(fixed, moving, valid, radius)?,
+                    backend
+                        .cc_value_derivative_pair_masked(fixed, moving, valid, radius)
+                        .await?,
                     None,
                 ),
                 (false, None) => {
-                    let (pair, norms) =
-                        backend.cc_value_derivative_pair_with_norms(fixed, moving, radius)?;
+                    let (pair, norms) = backend
+                        .cc_value_derivative_pair_with_norms(fixed, moving, radius)
+                        .await?;
                     (pair, Some(norms))
                 }
                 (false, Some(valid)) => {
                     let (pair, norms) = backend
-                        .cc_value_derivative_pair_masked_with_norms(fixed, moving, valid, radius)?;
+                        .cc_value_derivative_pair_masked_with_norms(fixed, moving, valid, radius)
+                        .await?;
                     (pair, Some(norms))
                 }
             };
-        fixed_side.add(
-            backend,
-            normalised[c],
-            fixed_value,
-            fixed_derivative,
-            norms.map(|n| n[0]),
-        )?;
-        moving_side.add(
-            backend,
-            normalised[c],
-            moving_value,
-            moving_derivative,
-            norms.map(|n| n[1]),
-        )?;
+        fixed_side
+            .add(
+                backend,
+                normalised[c],
+                fixed_value,
+                fixed_derivative,
+                norms.map(|n| n[0]),
+            )
+            .await?;
+        moving_side
+            .add(
+                backend,
+                normalised[c],
+                moving_value,
+                moving_derivative,
+                norms.map(|n| n[1]),
+            )
+            .await?;
     }
-    let fixed_side = fixed_side.smoothed(backend, recipe, &normalised)?;
-    let moving_side = moving_side.smoothed(backend, recipe, &normalised)?;
-    let (fixed_max, moving_max) =
-        backend.max_scaled_norm_pair(&fixed_side.gradient, &moving_side.gradient)?;
+    let fixed_side = fixed_side.smoothed(backend, recipe, &normalised).await?;
+    let moving_side = moving_side.smoothed(backend, recipe, &normalised).await?;
+    let (fixed_max, moving_max) = backend
+        .max_scaled_norm_pair(&fixed_side.gradient, &moving_side.gradient)
+        .await?;
     if !(fixed_max.is_finite() && moving_max.is_finite()) {
         return Err(invalid("syn", "the metric gradient is not finite"));
     }
-    let fixed_update = fixed_side.finish(backend, recipe, fixed_max)?;
-    let moving_update = moving_side.finish(backend, recipe, moving_max)?;
+    let fixed_update = fixed_side.finish(backend, recipe, fixed_max).await?;
+    let moving_update = moving_side.finish(backend, recipe, moving_max).await?;
     Ok((fixed_update, moving_update))
 }
 
-fn update_total_field<B: Backend>(
+async fn update_total_field<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
     update: B::Field,
     field: B::Field,
     inverse: B::Field,
 ) -> Result<(B::Field, B::Field, InvertStats, InvertStats)> {
-    let composed = backend.compose(&update, &field)?;
+    let composed = backend.compose(&update, &field).await?;
     drop(update);
     drop(field);
-    let tmp = backend.smooth_field(composed, recipe.total_field_variance)?;
-    let ((new_inverse, stats_inverse), (new_field, stats_field)) =
-        backend.invert_pair(tmp, inverse, &InvertParams::SYN)?;
+    let tmp = backend
+        .smooth_field(composed, recipe.total_field_variance)
+        .await?;
+    let ((new_inverse, stats_inverse), (new_field, stats_field)) = backend
+        .invert_pair(tmp, inverse, &InvertParams::SYN)
+        .await?;
     if [stats_inverse, stats_field]
         .iter()
         .any(|s| !(s.mean_error_norm.is_finite() && s.max_error_norm.is_finite()))
@@ -381,54 +400,62 @@ struct StageMasks<B: Backend> {
 }
 
 impl<B: Backend> StageMasks<B> {
-    fn upload(backend: &B, recipe: &SynRecipe) -> Result<Self> {
-        let up = |m: &Option<crate::mask::MaskVolume>| {
-            m.as_ref()
-                .map(|m| backend.upload_image_owned(m.to_binary_volume()?))
-                .transpose()
-        };
+    async fn upload(backend: &B, recipe: &SynRecipe) -> Result<Self> {
         Ok(Self {
-            fixed: up(&recipe.fixed_mask)?,
-            moving: up(&recipe.moving_mask)?,
+            fixed: Self::upload_one(backend, &recipe.fixed_mask).await?,
+            moving: Self::upload_one(backend, &recipe.moving_mask).await?,
         })
+    }
+
+    async fn upload_one(
+        backend: &B,
+        mask: &Option<crate::mask::MaskVolume>,
+    ) -> Result<Option<B::Image>> {
+        match mask {
+            Some(m) => Ok(Some(
+                backend.upload_image_owned(m.to_binary_volume()?).await?,
+            )),
+            None => Ok(None),
+        }
     }
 
     /// The voxels of the level grid inside both masks, as ITK resamples the masks onto the
     /// virtual domain in `ComputeMetricGradientField`; `None` without masks.
-    fn validity(
+    async fn validity(
         &self,
         backend: &B,
         state: &State<B>,
         initial: &AffineTransform,
         prior: Option<&B::Field>,
     ) -> Result<Option<B::Image>> {
-        let fixed = self
-            .fixed
-            .as_ref()
-            .map(|m| backend.warp_mask_through_field(m, &state.f2m_inv, None, None, None))
-            .transpose()?;
+        let fixed = match &self.fixed {
+            Some(m) => Some(
+                backend
+                    .warp_mask_through_field(m, &state.f2m_inv, None, None, None)
+                    .await?,
+            ),
+            None => None,
+        };
         match &self.moving {
-            Some(m) => Ok(Some(backend.warp_mask_through_field(
-                m,
-                &state.m2m_inv,
-                prior,
-                Some(initial),
-                fixed,
-            )?)),
+            Some(m) => Ok(Some(
+                backend
+                    .warp_mask_through_field(m, &state.m2m_inv, prior, Some(initial), fixed)
+                    .await?,
+            )),
             None => Ok(fixed),
         }
     }
 }
 
-fn upload_smoothed<B: Backend>(
+async fn upload_smoothed<B: Backend>(
     backend: &B,
     vol: &Volume<f64>,
     sigma: f64,
     units: SigmaUnits,
 ) -> Result<B::Image> {
     match smooth_for_level_cow(vol, sigma, units)? {
-        Cow::Borrowed(v) => backend.upload_image(v),
-        Cow::Owned(v) => backend.upload_image_owned(v),
+        Cow::Borrowed(v) => backend.upload_image(v).await,
+        Cow::Owned(v) => backend.upload_image_owned(v).await,
     }
 }
 
@@ -445,7 +472,18 @@ pub fn run_syn<B: Backend>(
     initial: &AffineTransform,
     options: &SynOptions<'_>,
 ) -> Result<SynResult> {
-    run_syn_cached(backend, recipe, channels, initial, options, None)
+    block_ready(run_syn_async(backend, recipe, channels, initial, options))
+}
+
+/// [`run_syn`] as a future, for a backend whose operations wait for their device.
+pub async fn run_syn_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    initial: &AffineTransform,
+    options: &SynOptions<'_>,
+) -> Result<SynResult> {
+    run_syn_cached_async(backend, recipe, channels, initial, options, None).await
 }
 
 /// [`run_syn`] from `start`: after earlier SyN stages, their collapsed field enters the moving
@@ -458,7 +496,28 @@ pub fn run_syn_from<B: Backend>(
     start: SynStart<'_>,
     options: &SynOptions<'_>,
 ) -> Result<SynResult> {
-    let out = syn_fields(backend, recipe, channels, start, None, options.cancel)?;
+    block_ready(run_syn_from_async(
+        backend, recipe, channels, start, options,
+    ))
+}
+
+/// [`run_syn_from`] as a future, for a backend whose operations wait for their device.
+pub async fn run_syn_from_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    start: SynStart<'_>,
+    options: &SynOptions<'_>,
+) -> Result<SynResult> {
+    let out = Box::pin(syn_fields(
+        backend,
+        recipe,
+        channels,
+        start,
+        None,
+        options.cancel,
+    ))
+    .await?;
     let warp = out.warp.to_displacement_field()?;
     let inverse_warp = out.inverse_warp.to_displacement_field()?;
     let pair = CompositePair::new(start.affine, warp.clone(), inverse_warp.clone())?;
@@ -481,14 +540,29 @@ pub fn run_syn_cached<B: Backend>(
     options: &SynOptions<'_>,
     cache: Option<&mut SmoothCache>,
 ) -> Result<SynResult> {
-    let out = syn_fields(
+    block_ready(run_syn_cached_async(
+        backend, recipe, channels, initial, options, cache,
+    ))
+}
+
+/// [`run_syn_cached`] as a future, for a backend whose operations wait for their device.
+pub async fn run_syn_cached_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    initial: &AffineTransform,
+    options: &SynOptions<'_>,
+    cache: Option<&mut SmoothCache>,
+) -> Result<SynResult> {
+    let out = Box::pin(syn_fields(
         backend,
         recipe,
         channels,
         SynStart::affine(initial),
         cache,
         options.cancel,
-    )?;
+    ))
+    .await?;
     let warp = out.warp.to_displacement_field()?;
     let inverse_warp = out.inverse_warp.to_displacement_field()?;
     let pair = CompositePair::new(initial, warp.clone(), inverse_warp.clone())?;
@@ -508,14 +582,28 @@ pub(crate) fn run_syn_pair_cached<B: Backend>(
     options: &SynOptions<'_>,
     cache: Option<&mut SmoothCache>,
 ) -> Result<(CompositePair, Vec<SynLevelTrace>)> {
-    let out = syn_fields(
+    block_ready(run_syn_pair_cached_async(
+        backend, recipe, channels, initial, options, cache,
+    ))
+}
+
+pub(crate) async fn run_syn_pair_cached_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    initial: &AffineTransform,
+    options: &SynOptions<'_>,
+    cache: Option<&mut SmoothCache>,
+) -> Result<(CompositePair, Vec<SynLevelTrace>)> {
+    let out = Box::pin(syn_fields(
         backend,
         recipe,
         channels,
         SynStart::affine(initial),
         cache,
         options.cancel,
-    )?;
+    ))
+    .await?;
     let pair = CompositePair::new(
         initial,
         out.warp.to_displacement_field()?,
@@ -534,7 +622,28 @@ pub(crate) fn run_syn_stage_cached<B: Backend>(
     options: &SynOptions<'_>,
     cache: Option<&mut SmoothCache>,
 ) -> Result<SynFields> {
-    syn_fields(backend, recipe, channels, start, cache, options.cancel)
+    block_ready(run_syn_stage_cached_async(
+        backend, recipe, channels, start, options, cache,
+    ))
+}
+
+pub(crate) async fn run_syn_stage_cached_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    start: SynStart<'_>,
+    options: &SynOptions<'_>,
+    cache: Option<&mut SmoothCache>,
+) -> Result<SynFields> {
+    Box::pin(syn_fields(
+        backend,
+        recipe,
+        channels,
+        start,
+        cache,
+        options.cancel,
+    ))
+    .await
 }
 
 /// The fields of a SyN stage (`later`, `later_inverse`) collapsed with those of the SyN stages
@@ -543,22 +652,22 @@ pub(crate) fn run_syn_stage_cached<B: Backend>(
 /// `compose(displacement = earlier, warping = later)`, `later(x) + earlier(x + later(x))`;
 /// inverse `compose(displacement = later_inverse, warping = earlier_inverse)`. The earlier
 /// inverse is uploaded only once the forward field is done, so one field less is resident.
-fn collapse<B: Backend>(
+async fn collapse<B: Backend>(
     backend: &B,
     earlier: B::Field,
     earlier_inverse: &VectorField,
     later: B::Field,
     later_inverse: B::Field,
 ) -> Result<(B::Field, B::Field)> {
-    let total = backend.compose(&earlier, &later)?;
+    let total = backend.compose(&earlier, &later).await?;
     drop(later);
     drop(earlier);
-    let earlier_inverse = backend.upload_field(earlier_inverse)?;
-    let total_inverse = backend.compose(&later_inverse, &earlier_inverse)?;
+    let earlier_inverse = backend.upload_field(earlier_inverse).await?;
+    let total_inverse = backend.compose(&later_inverse, &earlier_inverse).await?;
     Ok((total, total_inverse))
 }
 
-fn syn_fields<B: Backend>(
+async fn syn_fields<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
     channels: &[SynChannel],
@@ -600,11 +709,11 @@ fn syn_fields<B: Backend>(
             ));
         }
     }
-    let prior = start
-        .prior
-        .map(|p| backend.upload_field(&p.warp))
-        .transpose()?;
-    let masks = StageMasks::<B>::upload(backend, recipe)?;
+    let prior = match start.prior {
+        Some(p) => Some(backend.upload_field(&p.warp).await?),
+        None => None,
+    };
+    let masks = StageMasks::<B>::upload(backend, recipe).await?;
     let mut state: Option<State<B>> = None;
     let mut levels = Vec::with_capacity(recipe.levels());
     for level in 0..recipe.levels() {
@@ -624,31 +733,24 @@ fn syn_fields<B: Backend>(
             };
             match cached {
                 Some((f, m)) => {
-                    fixed_smooth.push(backend.upload_image_owned(f)?);
-                    moving_smooth.push(backend.upload_image_owned(m)?);
+                    fixed_smooth.push(backend.upload_image_owned(f).await?);
+                    moving_smooth.push(backend.upload_image_owned(m).await?);
                 }
                 None => {
-                    fixed_smooth.push(upload_smoothed(
-                        backend,
-                        &c.fixed,
-                        sigma,
-                        recipe.sigma_units,
-                    )?);
-                    moving_smooth.push(upload_smoothed(
-                        backend,
-                        &c.moving,
-                        sigma,
-                        recipe.sigma_units,
-                    )?);
+                    fixed_smooth
+                        .push(upload_smoothed(backend, &c.fixed, sigma, recipe.sigma_units).await?);
+                    moving_smooth.push(
+                        upload_smoothed(backend, &c.moving, sigma, recipe.sigma_units).await?,
+                    );
                 }
             }
         }
         let mut st = match state.take() {
             None => State::<B> {
-                f2m: backend.zero_field(&grid)?,
-                f2m_inv: backend.zero_field(&grid)?,
-                m2m: backend.zero_field(&grid)?,
-                m2m_inv: backend.zero_field(&grid)?,
+                f2m: backend.zero_field(&grid).await?,
+                f2m_inv: backend.zero_field(&grid).await?,
+                m2m: backend.zero_field(&grid).await?,
+                m2m_inv: backend.zero_field(&grid).await?,
             },
             Some(prev) => {
                 let State {
@@ -657,13 +759,13 @@ fn syn_fields<B: Backend>(
                     m2m,
                     m2m_inv,
                 } = prev;
-                let next_f2m = backend.resample_field(&f2m, &grid)?;
+                let next_f2m = backend.resample_field(&f2m, &grid).await?;
                 drop(f2m);
-                let next_f2m_inv = backend.resample_field(&f2m_inv, &grid)?;
+                let next_f2m_inv = backend.resample_field(&f2m_inv, &grid).await?;
                 drop(f2m_inv);
-                let next_m2m = backend.resample_field(&m2m, &grid)?;
+                let next_m2m = backend.resample_field(&m2m, &grid).await?;
                 drop(m2m);
-                let next_m2m_inv = backend.resample_field(&m2m_inv, &grid)?;
+                let next_m2m_inv = backend.resample_field(&m2m_inv, &grid).await?;
                 drop(m2m_inv);
                 State::<B> {
                     f2m: next_f2m,
@@ -684,22 +786,27 @@ fn syn_fields<B: Backend>(
             let mut fixed_mid = Vec::with_capacity(channels.len());
             let mut moving_mid = Vec::with_capacity(channels.len());
             for c in 0..channels.len() {
-                fixed_mid.push(backend.warp_through_field(
-                    &fixed_smooth[c],
-                    &st.f2m_inv,
-                    None,
-                    None,
-                )?);
-                moving_mid.push(backend.warp_through_field(
-                    &moving_smooth[c],
-                    &st.m2m_inv,
-                    prior.as_ref(),
-                    Some(initial),
-                )?);
+                fixed_mid.push(
+                    backend
+                        .warp_through_field(&fixed_smooth[c], &st.f2m_inv, None, None)
+                        .await?,
+                );
+                moving_mid.push(
+                    backend
+                        .warp_through_field(
+                            &moving_smooth[c],
+                            &st.m2m_inv,
+                            prior.as_ref(),
+                            Some(initial),
+                        )
+                        .await?,
+                );
             }
-            let valid = masks.validity(backend, &st, initial, prior.as_ref())?;
+            let valid = masks
+                .validity(backend, &st, initial, prior.as_ref())
+                .await?;
             let (fixed_side, moving_side) =
-                side_updates(backend, recipe, &fixed_mid, &moving_mid, valid.as_ref())?;
+                side_updates(backend, recipe, &fixed_mid, &moving_mid, valid.as_ref()).await?;
             drop(valid);
             let State {
                 f2m,
@@ -708,9 +815,9 @@ fn syn_fields<B: Backend>(
                 m2m_inv,
             } = st;
             let (f2m, f2m_inv, inv_f_inv, inv_f) =
-                update_total_field(backend, recipe, fixed_side.update, f2m, f2m_inv)?;
+                update_total_field(backend, recipe, fixed_side.update, f2m, f2m_inv).await?;
             let (m2m, m2m_inv, inv_m_inv, inv_m) =
-                update_total_field(backend, recipe, moving_side.update, m2m, m2m_inv)?;
+                update_total_field(backend, recipe, moving_side.update, m2m, m2m_inv).await?;
             st = State {
                 f2m,
                 f2m_inv,
@@ -745,18 +852,18 @@ fn syn_fields<B: Backend>(
         state = Some(st);
     }
     let st = state.ok_or_else(|| invalid("syn", "no levels were run"))?;
-    let forward = backend.compose(&st.m2m_inv, &st.f2m)?;
-    let inverse = backend.compose(&st.f2m_inv, &st.m2m)?;
+    let forward = backend.compose(&st.m2m_inv, &st.f2m).await?;
+    let inverse = backend.compose(&st.f2m_inv, &st.m2m).await?;
     let (forward, inverse) = match (prior, start.prior) {
         (Some(w), Some(p)) => {
             drop(st);
             drop(masks);
-            collapse(backend, w, &p.inverse_warp, forward, inverse)?
+            collapse(backend, w, &p.inverse_warp, forward, inverse).await?
         }
         _ => (forward, inverse),
     };
-    let warp = backend.download_field(&forward)?;
-    let inverse_warp = backend.download_field(&inverse)?;
+    let warp = backend.download_field(&forward).await?;
+    let inverse_warp = backend.download_field(&inverse).await?;
     Ok(SynFields {
         warp,
         inverse_warp,
@@ -769,6 +876,8 @@ fn syn_fields<B: Backend>(
 mod tests {
     use super::*;
     use crate::cpu::CpuBackend;
+    use crate::error::RegError;
+    use crate::exec::testing::{drive, YieldingCpu};
     use crate::linalg::IDENTITY3;
     use crate::transform::{TransformChain, TransformElem};
 
@@ -794,8 +903,14 @@ mod tests {
         let (w1, w1_inv) = (smooth(grid, 2.5, 0.3), smooth(grid, -2.0, 1.1));
         let (w2, w2_inv) = (smooth(grid, 1.5, 2.0), smooth(grid, -1.2, -0.4));
         let b = CpuBackend;
-        let (total, total_inv) =
-            collapse(&b, w1.clone(), &w1_inv, w2.clone(), w2_inv.clone()).unwrap();
+        let (total, total_inv) = block_ready(collapse(
+            &b,
+            w1.clone(),
+            &w1_inv,
+            w2.clone(),
+            w2_inv.clone(),
+        ))
+        .unwrap();
         let field =
             |f: &VectorField| TransformElem::DisplacementField(f.to_displacement_field().unwrap());
         let forward = TransformChain::from_queue(vec![field(&w1), field(&w2)]);
@@ -826,7 +941,14 @@ mod tests {
         let grid = Grid::new([24, 22, 20], [2.0; 3], [-23.0, -21.0, -19.0], IDENTITY3).unwrap();
         let (w1, w1_inv) = (smooth(grid, 2.0, 0.3), smooth(grid, -2.0, 1.1));
         let (w2, w2_inv) = (smooth(grid, 1.0, 2.0), smooth(grid, -1.0, -0.4));
-        let (total, _) = collapse(&CpuBackend, w1.clone(), &w1_inv, w2.clone(), w2_inv).unwrap();
+        let (total, _) = block_ready(collapse(
+            &CpuBackend,
+            w1.clone(),
+            &w1_inv,
+            w2.clone(),
+            w2_inv,
+        ))
+        .unwrap();
         let mut worst = 0.0f64;
         let [nx, ny, nz] = grid.size();
         for idx in 0..grid.num_voxels() {
@@ -847,5 +969,108 @@ mod tests {
             "largest difference between the collapsed and the chained fields: {worst:.3e} mm"
         );
         assert!(worst < 0.1, "{worst}");
+    }
+
+    fn blob(grid: Grid, shift: f64) -> Volume<f64> {
+        let data = (0..grid.num_voxels())
+            .map(|idx| {
+                let [i, j, k] = grid.ijk(idx);
+                let r2 = (i as f64 - 5.5 - shift).powi(2)
+                    + (j as f64 - 5.5).powi(2)
+                    + (k as f64 - 5.0).powi(2);
+                (-r2 / 12.0).exp() + 0.01 * ((idx * 7919) % 13) as f64
+            })
+            .collect();
+        Volume::from_vec(grid, data).unwrap()
+    }
+
+    fn same_bits<T: std::fmt::Debug>(a: &T, b: &T) {
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    }
+
+    fn not_ready(e: &RegError) -> bool {
+        matches!(
+            e,
+            RegError::Invalid {
+                what: "backend",
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn the_async_entry_points_on_a_backend_that_waits_equal_the_synchronous_ones() {
+        let grid = Grid::new([12, 12, 11], [2.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let channels = [SynChannel {
+            fixed: blob(grid, 0.0),
+            moving: blob(grid, 1.5),
+        }];
+        let recipe = SynRecipe {
+            iterations: vec![3, 2],
+            shrink_factors: vec![2, 1],
+            smoothing_sigmas: vec![1.0, 0.0],
+            ..SynRecipe::cohort()
+        };
+        let initial = AffineTransform::identity();
+        let options = SynOptions::default();
+        let b = CpuBackend;
+        let sizes = [
+            std::mem::size_of_val(&run_syn_async(&b, &recipe, &channels, &initial, &options)),
+            std::mem::size_of_val(&run_syn_from_async(
+                &b,
+                &recipe,
+                &channels,
+                SynStart::affine(&initial),
+                &options,
+            )),
+            std::mem::size_of_val(&run_syn_cached_async(
+                &b, &recipe, &channels, &initial, &options, None,
+            )),
+        ];
+        assert!(sizes.iter().all(|&s| s < 1024), "{sizes:?}");
+
+        let plain = run_syn(&b, &recipe, &channels, &initial, &options).unwrap();
+        assert!(plain.levels.iter().all(|l| !l.iterations.is_empty()));
+        let (waited, pending) = drive(run_syn_async(
+            &YieldingCpu,
+            &recipe,
+            &channels,
+            &initial,
+            &options,
+        ));
+        assert!(pending > 0);
+        same_bits(&plain, &waited.unwrap());
+        let e = run_syn(&YieldingCpu, &recipe, &channels, &initial, &options).unwrap_err();
+        assert!(not_ready(&e), "{e}");
+
+        let stage = run_syn_stage_cached(
+            &b,
+            &recipe,
+            &channels,
+            SynStart::affine(&initial),
+            &options,
+            None,
+        )
+        .unwrap();
+        let prior = PriorWarp {
+            warp: stage.warp,
+            inverse_warp: stage.inverse_warp,
+        };
+        let start = SynStart {
+            affine: &initial,
+            prior: Some(&prior),
+        };
+        let from = run_syn_from(&b, &recipe, &channels, start, &options).unwrap();
+        let (waited, pending) = drive(run_syn_from_async(
+            &YieldingCpu,
+            &recipe,
+            &channels,
+            start,
+            &options,
+        ));
+        assert!(pending > 0);
+        same_bits(&from, &waited.unwrap());
+        let e = run_syn_from(&YieldingCpu, &recipe, &channels, start, &options).unwrap_err();
+        assert!(not_ready(&e), "{e}");
     }
 }

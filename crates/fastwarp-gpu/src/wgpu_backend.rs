@@ -1460,22 +1460,9 @@ impl WgpuBackend {
     }
 }
 
-impl Backend for WgpuBackend {
-    type Image = GpuImage;
-    type Field = GpuField;
-
-    fn name(&self) -> String {
-        format!(
-            "wgpu-f32 ({}, {})",
-            self.ctx.info.backend, self.ctx.info.name
-        )
-    }
-
-    fn release_idle_buffers(&self) {
-        self.release_idle();
-    }
-
-    fn upload_image(&self, volume: &Volume<f64>) -> RegResult<GpuImage> {
+impl WgpuBackend {
+    #[doc(hidden)]
+    pub fn upload_image(&self, volume: &Volume<f64>) -> RegResult<GpuImage> {
         let grid = *volume.grid();
         let buf = self.image_buffer(&grid)?;
         let data: Vec<f32> = volume.data().iter().map(|v| *v as f32).collect();
@@ -1487,7 +1474,8 @@ impl Backend for WgpuBackend {
         Ok(GpuImage { buf, grid })
     }
 
-    fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
+    #[doc(hidden)]
+    pub fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
         let buf = self.field_buffer(grid)?;
         self.run_encoder("zero_field", |enc| {
             enc.clear_buffer(buf.buffer(), 0, None);
@@ -1497,7 +1485,8 @@ impl Backend for WgpuBackend {
         Ok(GpuField { buf, grid: *grid })
     }
 
-    fn upload_field(&self, field: &VectorField) -> RegResult<GpuField> {
+    #[doc(hidden)]
+    pub fn upload_field(&self, field: &VectorField) -> RegResult<GpuField> {
         let grid = *field.grid();
         let n = grid.num_voxels();
         let buf = self.field_buffer(&grid)?;
@@ -1515,7 +1504,8 @@ impl Backend for WgpuBackend {
         Ok(GpuField { buf, grid })
     }
 
-    fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
+    #[doc(hidden)]
+    pub fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
         let n = field.grid.num_voxels();
         self.field_downloads.fetch_add(1, Ordering::Relaxed);
         let data = self.ctx.read_f32(field.buf.buffer(), 3 * n).map_err(gerr)?;
@@ -1531,11 +1521,8 @@ impl Backend for WgpuBackend {
         VectorField::from_vec(field.grid, vectors)
     }
 
-    fn field_grid(&self, field: &GpuField) -> Grid {
-        field.grid
-    }
-
-    fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {
+    #[doc(hidden)]
+    pub fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {
         let buf = self.field_buffer(&field.grid)?;
         let bytes = field.grid.num_voxels() as u64 * 12;
         self.run_encoder("copy_field", |enc| {
@@ -1548,7 +1535,8 @@ impl Backend for WgpuBackend {
         })
     }
 
-    fn warp_through_field(
+    #[doc(hidden)]
+    pub fn warp_through_field(
         &self,
         source: &GpuImage,
         field: &GpuField,
@@ -1588,7 +1576,8 @@ impl Backend for WgpuBackend {
         Ok(GpuImage { buf: out, grid })
     }
 
-    fn warp_mask_through_field(
+    #[doc(hidden)]
+    pub fn warp_mask_through_field(
         &self,
         mask: &GpuImage,
         field: &GpuField,
@@ -1637,7 +1626,8 @@ impl Backend for WgpuBackend {
         Ok(GpuImage { buf: out, grid })
     }
 
-    fn cc_value_derivative_pair_masked(
+    #[doc(hidden)]
+    pub fn cc_value_derivative_pair_masked(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -1648,7 +1638,8 @@ impl Backend for WgpuBackend {
         cc_pair(out)
     }
 
-    fn cc_value_derivative_pair_masked_with_norms(
+    #[doc(hidden)]
+    pub fn cc_value_derivative_pair_masked_with_norms(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -1662,7 +1653,8 @@ impl Backend for WgpuBackend {
         Ok((cc_pair(out)?, norms))
     }
 
-    fn cc_value_derivative(
+    #[doc(hidden)]
+    pub fn cc_value_derivative(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -1672,7 +1664,8 @@ impl Backend for WgpuBackend {
         out.pop().ok_or_else(|| bad("cc produced no result"))
     }
 
-    fn cc_value_derivative_pair(
+    #[doc(hidden)]
+    pub fn cc_value_derivative_pair(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -1682,7 +1675,8 @@ impl Backend for WgpuBackend {
         cc_pair(out)
     }
 
-    fn cc_value_derivative_pair_with_norms(
+    #[doc(hidden)]
+    pub fn cc_value_derivative_pair_with_norms(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -1695,18 +1689,21 @@ impl Backend for WgpuBackend {
         Ok((cc_pair(out)?, norms))
     }
 
-    fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
+    #[doc(hidden)]
+    pub fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
         if variance <= 0.0 {
             return Ok(field);
         }
         self.smooth_with(&field, variance, true)
     }
 
-    fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
+    #[doc(hidden)]
+    pub fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
         Ok(f64::from(self.reduce_field(field, 0, "max_scaled_norm")?))
     }
 
-    fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
+    #[doc(hidden)]
+    pub fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
         if a.grid != b.grid {
             return Ok((self.max_scaled_norm(a)?, self.max_scaled_norm(b)?));
         }
@@ -1733,11 +1730,12 @@ impl Backend for WgpuBackend {
         Ok((f64::from(v[0]), f64::from(v[1])))
     }
 
-    fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
+    #[doc(hidden)]
+    pub fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
         Ok(f64::from(self.reduce_field(field, 1, "l2_norm")?).sqrt())
     }
 
-    fn scale(&self, field: &mut GpuField, s: f64) -> RegResult<()> {
+    pub(crate) fn scale(&self, field: &mut GpuField, s: f64) -> RegResult<()> {
         let total = field.grid.num_voxels() as u64 * 3;
         let groups = self.groups_1d(total)?;
         self.run_pass("scale", |pass| {
@@ -1755,7 +1753,7 @@ impl Backend for WgpuBackend {
         })
     }
 
-    fn axpy(&self, acc: &mut GpuField, a: f64, x: &GpuField) -> RegResult<()> {
+    pub(crate) fn axpy(&self, acc: &mut GpuField, a: f64, x: &GpuField) -> RegResult<()> {
         self.require_same_grid("axpy", &acc.grid, &x.grid)?;
         let total = acc.grid.num_voxels() as u64 * 3;
         let groups = self.groups_1d(total)?;
@@ -1774,7 +1772,8 @@ impl Backend for WgpuBackend {
         })
     }
 
-    fn compose(&self, displacement: &GpuField, warping: &GpuField) -> RegResult<GpuField> {
+    #[doc(hidden)]
+    pub fn compose(&self, displacement: &GpuField, warping: &GpuField) -> RegResult<GpuField> {
         self.require_same_grid("compose", &displacement.grid, &warping.grid)?;
         let grid = warping.grid;
         let out = self.field_buffer(&grid)?;
@@ -1799,7 +1798,8 @@ impl Backend for WgpuBackend {
         Ok(GpuField { buf: out, grid })
     }
 
-    fn invert(
+    #[doc(hidden)]
+    pub fn invert(
         &self,
         field: &GpuField,
         initial: GpuField,
@@ -1815,7 +1815,8 @@ impl Backend for WgpuBackend {
         Ok((psi, invert_stats(&words)))
     }
 
-    fn invert_pair(
+    #[doc(hidden)]
+    pub fn invert_pair(
         &self,
         field: GpuField,
         inverse: GpuField,
@@ -1835,7 +1836,8 @@ impl Backend for WgpuBackend {
         ))
     }
 
-    fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
+    #[doc(hidden)]
+    pub fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
         if field.grid == *grid {
             return self.copy_field(field);
         }
@@ -1856,6 +1858,164 @@ impl Backend for WgpuBackend {
             buf: out,
             grid: *grid,
         })
+    }
+}
+
+impl Backend for WgpuBackend {
+    type Image = GpuImage;
+    type Field = GpuField;
+
+    fn name(&self) -> String {
+        format!(
+            "wgpu-f32 ({}, {})",
+            self.ctx.info.backend, self.ctx.info.name
+        )
+    }
+
+    fn release_idle_buffers(&self) {
+        self.release_idle();
+    }
+
+    async fn upload_image(&self, volume: &Volume<f64>) -> RegResult<GpuImage> {
+        WgpuBackend::upload_image(self, volume)
+    }
+
+    async fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
+        WgpuBackend::zero_field(self, grid)
+    }
+
+    async fn upload_field(&self, field: &VectorField) -> RegResult<GpuField> {
+        WgpuBackend::upload_field(self, field)
+    }
+
+    async fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
+        WgpuBackend::download_field(self, field)
+    }
+
+    fn field_grid(&self, field: &GpuField) -> Grid {
+        field.grid
+    }
+
+    async fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {
+        WgpuBackend::copy_field(self, field)
+    }
+
+    async fn warp_through_field(
+        &self,
+        source: &GpuImage,
+        field: &GpuField,
+        pre: Option<&GpuField>,
+        affine: Option<&AffineTransform>,
+    ) -> RegResult<GpuImage> {
+        WgpuBackend::warp_through_field(self, source, field, pre, affine)
+    }
+
+    async fn warp_mask_through_field(
+        &self,
+        mask: &GpuImage,
+        field: &GpuField,
+        pre: Option<&GpuField>,
+        affine: Option<&AffineTransform>,
+        product: Option<GpuImage>,
+    ) -> RegResult<GpuImage> {
+        WgpuBackend::warp_mask_through_field(self, mask, field, pre, affine, product)
+    }
+
+    async fn cc_value_derivative_pair_masked(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        valid: &GpuImage,
+        radius: usize,
+    ) -> RegResult<MetricPair<GpuField>> {
+        WgpuBackend::cc_value_derivative_pair_masked(self, fixed, moving, valid, radius)
+    }
+
+    async fn cc_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        valid: &GpuImage,
+        radius: usize,
+    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
+        WgpuBackend::cc_value_derivative_pair_masked_with_norms(self, fixed, moving, valid, radius)
+    }
+
+    async fn cc_value_derivative(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        radius: usize,
+    ) -> RegResult<(f64, GpuField)> {
+        WgpuBackend::cc_value_derivative(self, fixed, moving, radius)
+    }
+
+    async fn cc_value_derivative_pair(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        radius: usize,
+    ) -> RegResult<MetricPair<GpuField>> {
+        WgpuBackend::cc_value_derivative_pair(self, fixed, moving, radius)
+    }
+
+    async fn cc_value_derivative_pair_with_norms(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        radius: usize,
+    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
+        WgpuBackend::cc_value_derivative_pair_with_norms(self, fixed, moving, radius)
+    }
+
+    async fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
+        WgpuBackend::smooth_field(self, field, variance)
+    }
+
+    async fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
+        WgpuBackend::max_scaled_norm(self, field)
+    }
+
+    async fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
+        WgpuBackend::max_scaled_norm_pair(self, a, b)
+    }
+
+    async fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
+        WgpuBackend::l2_norm(self, field)
+    }
+
+    async fn scale(&self, field: &mut GpuField, s: f64) -> RegResult<()> {
+        WgpuBackend::scale(self, field, s)
+    }
+
+    async fn axpy(&self, acc: &mut GpuField, a: f64, x: &GpuField) -> RegResult<()> {
+        WgpuBackend::axpy(self, acc, a, x)
+    }
+
+    async fn compose(&self, displacement: &GpuField, warping: &GpuField) -> RegResult<GpuField> {
+        WgpuBackend::compose(self, displacement, warping)
+    }
+
+    async fn invert(
+        &self,
+        field: &GpuField,
+        initial: GpuField,
+        params: &InvertParams,
+    ) -> RegResult<(GpuField, InvertStats)> {
+        WgpuBackend::invert(self, field, initial, params)
+    }
+
+    async fn invert_pair(
+        &self,
+        field: GpuField,
+        inverse: GpuField,
+        params: &InvertParams,
+    ) -> RegResult<InversionPair<GpuField>> {
+        WgpuBackend::invert_pair(self, field, inverse, params)
+    }
+
+    async fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
+        WgpuBackend::resample_field(self, field, grid)
     }
 }
 

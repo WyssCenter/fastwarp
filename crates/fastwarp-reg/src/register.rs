@@ -16,13 +16,16 @@ use rayon::prelude::*;
 use crate::apply::{apply_chain, Interpolation};
 use crate::backend::Backend;
 use crate::error::{invalid, Result};
+use crate::exec::block_ready;
 use crate::grid::Grid;
 use crate::linear::{
     run_linear_chain_cached, LinearChainResult, LinearEngine, LinearRecipe, SmoothCache,
 };
 use crate::preprocess::preprocess_volume;
 use crate::recipe::SynRecipe;
-use crate::syn::{run_syn_pair_cached, SynChannel, SynLevelTrace, SynOptions};
+use crate::syn::{
+    run_syn_pair_cached, run_syn_pair_cached_async, SynChannel, SynLevelTrace, SynOptions,
+};
 use crate::transform::ants_io::{with_suffix, AFFINE_SUFFIX};
 use crate::transform::itk_mat::write_mat_file;
 use crate::transform::{write_composite_pair, AffineTransform, CompositePair, TransformElem};
@@ -253,13 +256,24 @@ pub fn register<B: Backend>(
     input: &RegisterInput<'_>,
     options: &SynOptions<'_>,
 ) -> Result<RegisterOutput> {
+    block_ready(register_async(backend, recipe, input, options))
+}
+
+/// [`register`] as a future, for a backend whose operations wait for their device.
+pub async fn register_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    input: &RegisterInput<'_>,
+    options: &SynOptions<'_>,
+) -> Result<RegisterOutput> {
     let mut timings = RegisterTimings::default();
     let (channels, mut moving_r) =
         prepare_channels(input.fixed, input.moving, input.iso_mm, &mut timings)?;
     moving_r.truncate(1);
     let t = Stopwatch::start();
     let (pair, levels) =
-        run_syn_pair_cached(backend, recipe, &channels, &input.initial, options, None)?;
+        run_syn_pair_cached_async(backend, recipe, &channels, &input.initial, options, None)
+            .await?;
     timings.syn_s = t.elapsed().as_secs_f64();
     let grid = *channels[0].fixed.grid();
     drop(channels);
@@ -393,6 +407,8 @@ pub fn write_outputs(prefix: &Path, out: &RegisterOutput) -> Result<()> {
 mod tests {
     use super::*;
     use crate::cpu::CpuBackend;
+    use crate::error::RegError;
+    use crate::exec::testing::{drive, YieldingCpu};
     use crate::linalg::IDENTITY3;
     use crate::syn::{run_syn, run_syn_cached};
 
@@ -724,5 +740,46 @@ mod tests {
         .unwrap();
         assert_eq!(plain.warp, polled.warp);
         assert_eq!(plain.inverse_warp, polled.inverse_warp);
+    }
+
+    #[test]
+    fn register_async_on_a_backend_that_waits_equals_register() {
+        let fixed = blob_volume(16, 2.0, 0.0);
+        let moving = blob_volume(16, 2.0, 3.0);
+        let recipe = SynRecipe {
+            iterations: vec![4, 3],
+            shrink_factors: vec![2, 1],
+            smoothing_sigmas: vec![1.0, 0.0],
+            ..SynRecipe::cohort()
+        };
+        let fx = [fixed];
+        let mv = [moving];
+        let input = RegisterInput {
+            fixed: &fx,
+            moving: &mv,
+            initial: AffineTransform::identity(),
+            iso_mm: Some(2.0),
+        };
+        let options = SynOptions::default();
+        let plain = register(&CpuBackend, &recipe, &input, &options).unwrap();
+        let (waited, pending) = drive(register_async(&YieldingCpu, &recipe, &input, &options));
+        assert!(pending > 0);
+        let waited = waited.unwrap();
+        let bits = |v: &dyn std::fmt::Debug| format!("{v:?}");
+        assert_eq!(bits(&plain.pair), bits(&waited.pair));
+        assert_eq!(bits(&plain.warped), bits(&waited.warped));
+        assert_eq!(bits(&plain.grid), bits(&waited.grid));
+        assert_eq!(bits(&plain.levels), bits(&waited.levels));
+        let e = register(&YieldingCpu, &recipe, &input, &options).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RegError::Invalid {
+                    what: "backend",
+                    ..
+                }
+            ),
+            "{e}"
+        );
     }
 }
