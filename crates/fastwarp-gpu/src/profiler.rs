@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Instant;
+use fastwarp_core::Stopwatch;
 
 use serde::Serialize;
 
@@ -118,7 +118,7 @@ impl GpuContext {
         }
         let cb = enc.finish();
         self.sync()?;
-        let t0 = Instant::now();
+        let t0 = Stopwatch::start();
         self.queue.submit(Some(cb));
         self.sync()?;
         let wall = t0.elapsed().as_secs_f64();

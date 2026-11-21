@@ -6,9 +6,11 @@
 pub mod env;
 pub mod nifti_affine;
 pub mod sha256;
+pub mod time;
 
 pub use env::env_var_os;
 pub use nifti_affine::{voxel_to_world, NiftiXformFields, XformSource};
+pub use time::Stopwatch;
 
 /// Homogeneous 4×4 row-major (NIfTI-style): world = A @ vox_h.
 pub type Mat4 = [[f64; 4]; 4];

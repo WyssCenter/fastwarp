@@ -38,6 +38,20 @@ jobs:
       - run: uv sync --locked --no-install-project
       - run: uv run --no-sync ruff check python tests benchmarks scripts && uv run --no-sync ruff format --check python tests benchmarks scripts
 
+  wasm:
+    name: Build for wasm32
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: wasm32
+      - name: Clippy engine crates for wasm32
+        run: cargo clippy --locked --target wasm32-unknown-unknown -p fastwarp-core -p fastwarp-matfile -p fastwarp-niftiio -p fastwarp-reg -p fastwarp-gpu --all-targets -- -D warnings
+
   rust:
     name: Rust tests
     runs-on: ubuntu-latest
@@ -108,16 +122,17 @@ jobs:
 
   test:
     if: always()
-    needs: [rust, python]
+    needs: [rust, python, wasm]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - env:
           RUST: ${{ needs.rust.result }}
           PYTHON: ${{ needs.python.result }}
+          WASM: ${{ needs.wasm.result }}
         run: |
-          echo "rust: $RUST, python: $PYTHON"
-          [ "$RUST" = success ] && [ "$PYTHON" = success ]
+          echo "rust: $RUST, python: $PYTHON, wasm: $WASM"
+          [ "$RUST" = success ] && [ "$PYTHON" = success ] && [ "$WASM" = success ]
 
   installers:
     name: Installer scripts

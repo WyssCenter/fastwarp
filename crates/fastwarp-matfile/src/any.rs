@@ -59,15 +59,16 @@ pub fn read_any_with(path: &Path, options: ReadOptions<'_>) -> Result<Vec<(Strin
     };
     let mut head = [0u8; 128];
     let mut got = 0;
-    let mut file = std::fs::File::open(path).map_err(io)?;
-    while got < head.len() {
-        let n = file.read(&mut head[got..]).map_err(io)?;
-        if n == 0 {
-            break;
+    {
+        let mut file = std::fs::File::open(path).map_err(io)?;
+        while got < head.len() {
+            let n = file.read(&mut head[got..]).map_err(io)?;
+            if n == 0 {
+                break;
+            }
+            got += n;
         }
-        got += n;
     }
-    drop(file);
     if is_v73(&head[..got]) {
         let f = MatFile::open(path)?;
         return read_v73(&f, options);

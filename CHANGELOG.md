@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Internal: the engine crates `fastwarp-reg` and `fastwarp-gpu` build for `wasm32-unknown-unknown` (timing without `std::time::Instant`, the WebGPU backend on wasm32, a 32-bit safe size limit in the HDF5 reader), and the GPU kernels compile and pass their self-tests under the WebGPU default limits; native behaviour is unchanged.
 - The SyN stage registers any number of channels (for example T1w + T2w + FGATIR), not 1 or 2.
   `register_syn`, `fits_gpu` and `cohort_recipe` take one or more images or channels; each channel
   weighs `1 / channels` by default (unchanged for one and two). `fastwarp register` takes

@@ -11,3 +11,7 @@ filter = """
   | (binary_id(fastwarp-gpu::n4_parity) & test(=gpu_n4_matches_the_cpu_reference_at_the_production_schedule))
 """
 priority = 100
+
+[[profile.ci.overrides]]
+filter = "binary_id(fastwarp-reg::golden_cpu) | binary_id(fastwarp-gpu::golden_gpu)"
+success-output = "immediate"

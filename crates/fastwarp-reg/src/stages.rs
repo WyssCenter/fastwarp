@@ -34,9 +34,9 @@
 //! [`register_stages`] with [`StagePlan::cohort`] runs exactly what
 //! [`crate::register::register_full`] runs (bit for bit; a test proves it).
 
+use fastwarp_core::Stopwatch;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::time::Instant;
 
 use crate::apply::{apply_chain, Interpolation};
 use crate::backend::Backend;
@@ -266,7 +266,7 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
         fixed_raw,
         moving_raw,
     } = prepare_channels_with(fixed, moving, iso_mm, plan.winsorize, &mut timings)?;
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let initial = match plan.initial {
         InitialTransform::CentreOfMass => {
             initial_transform(&fixed_raw[0], &moving_raw[0], InitFeature::CentreOfMass)?
@@ -290,7 +290,7 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
         .into_iter()
         .next()
         .ok_or_else(|| invalid("register", "no moving channel"))?;
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let mut prior: Option<PriorWarp> = None;
     let mut syn_levels = Vec::with_capacity(plan.syn.len());
     for (i, recipe) in plan.syn.iter().enumerate() {
@@ -323,7 +323,7 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
     };
     let grid = *channels[0].fixed.grid();
     drop(channels);
-    let t = Instant::now();
+    let t = Stopwatch::start();
     let warped = apply_chain(
         &moving_first,
         &grid,
