@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +20,21 @@ use crate::capacity::{vulkan_figure, HeapBudget, MemoryFigure};
 use crate::caps::GpuCaps;
 use crate::error::{GpuError, GpuResult};
 use crate::profiler::Profiler;
+
+pub(crate) const WEB: bool = cfg!(all(target_arch = "wasm32", target_os = "unknown"));
+
+pub(crate) fn blocking_unavailable(what: &str) -> GpuError {
+    GpuError::Internal(format!(
+        "{what} blocks the thread and is unavailable on wasm32; use its async version"
+    ))
+}
+
+pub(crate) fn block_gpu<T>(what: &str, future: impl Future<Output = GpuResult<T>>) -> GpuResult<T> {
+    if WEB {
+        return Err(blocking_unavailable(what));
+    }
+    pollster::block_on(future)
+}
 
 /// Backend requested for device selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -215,9 +231,36 @@ fn keep_vulkan_loaded() {
 #[cfg(target_os = "macos")]
 fn keep_vulkan_loaded() {}
 
-/// Lists the adapters of `instance` for `backends`.
+/// Lists the adapters of `instance` for `backends`; empty on wasm32, where blocking is not
+/// possible (use [`enumerate_async`]).
 pub fn enumerate(instance: &wgpu::Instance, backends: wgpu::Backends) -> Vec<wgpu::Adapter> {
+    if WEB {
+        return Vec::new();
+    }
     pollster::block_on(instance.enumerate_adapters(backends))
+}
+
+/// Lists the adapters of `instance` for `backends`. On wasm32 the browser cannot list adapters,
+/// so the one adapter it grants is requested instead (the software one when `force_software` is
+/// set).
+pub async fn enumerate_async(
+    instance: &wgpu::Instance,
+    backends: wgpu::Backends,
+    force_software: bool,
+) -> Vec<wgpu::Adapter> {
+    if WEB {
+        let options = wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: force_software,
+            compatible_surface: None,
+            ..Default::default()
+        };
+        return match instance.request_adapter(&options).await {
+            Ok(adapter) => vec![adapter],
+            Err(_) => Vec::new(),
+        };
+    }
+    instance.enumerate_adapters(backends).await
 }
 
 fn type_rank(t: wgpu::DeviceType) -> u32 {
@@ -285,26 +328,36 @@ pub fn optional_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 pub fn request_device(
     adapter: &wgpu::Adapter,
 ) -> GpuResult<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
-    request_device_with(
+    block_gpu("request_device", request_device_async(adapter))
+}
+
+/// Async [`request_device`].
+pub async fn request_device_async(
+    adapter: &wgpu::Adapter,
+) -> GpuResult<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
+    request_device_with_async(
         adapter,
         required_limits(adapter),
         optional_features(adapter),
     )
+    .await
 }
 
-fn request_device_with(
+async fn request_device_with_async(
     adapter: &wgpu::Adapter,
     required_limits: wgpu::Limits,
     features: wgpu::Features,
 ) -> GpuResult<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("fastwarp-gpu"),
-        required_features: features,
-        required_limits,
-        memory_hints: wgpu::MemoryHints::Performance,
-        ..Default::default()
-    }))
-    .map_err(|e| GpuError::RequestDevice(e.to_string()))?;
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("fastwarp-gpu"),
+            required_features: features,
+            required_limits,
+            memory_hints: wgpu::MemoryHints::Performance,
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| GpuError::RequestDevice(e.to_string()))?;
     Ok((device, queue, features))
 }
 
@@ -327,6 +380,34 @@ impl GpuContext {
     /// Selects an adapter according to `sel` and creates the device.
     pub fn new(sel: &BackendSelect) -> GpuResult<Self> {
         Self::new_with(sel, Ok)
+    }
+
+    /// Async [`Self::new`]: the adapter and device requests are awaited. On native targets it
+    /// blocks inside the first poll exactly as `new` does.
+    pub async fn new_async(sel: &BackendSelect) -> GpuResult<Self> {
+        Self::new_with_async(sel, |ctx| async move { Ok(ctx) }).await
+    }
+
+    /// Async [`Self::new_with`]: `accept` returns a future (for example an asynchronous self-test).
+    pub async fn new_with_async<T, Fut>(
+        sel: &BackendSelect,
+        accept: impl FnMut(GpuContext) -> Fut,
+    ) -> GpuResult<T>
+    where
+        Fut: Future<Output = GpuResult<T>>,
+    {
+        Self::new_with_limits_async(sel, false, accept).await
+    }
+
+    #[doc(hidden)]
+    pub async fn new_with_webgpu_default_limits_async<T, Fut>(
+        sel: &BackendSelect,
+        accept: impl FnMut(GpuContext) -> Fut,
+    ) -> GpuResult<T>
+    where
+        Fut: Future<Output = GpuResult<T>>,
+    {
+        Self::new_with_limits_async(sel, true, accept).await
     }
 
     /// Like [`Self::new`], then hands the context to `accept` (e.g. a known-answer self-test).
@@ -352,18 +433,38 @@ impl GpuContext {
         webgpu_defaults: bool,
         mut accept: impl FnMut(GpuContext) -> GpuResult<T>,
     ) -> GpuResult<T> {
+        block_gpu(
+            "GpuContext::new",
+            Self::new_with_limits_async(sel, webgpu_defaults, |ctx| {
+                let accepted = accept(ctx);
+                async move { accepted }
+            }),
+        )
+    }
+
+    async fn new_with_limits_async<T, Fut>(
+        sel: &BackendSelect,
+        webgpu_defaults: bool,
+        mut accept: impl FnMut(GpuContext) -> Fut,
+    ) -> GpuResult<T>
+    where
+        Fut: Future<Output = GpuResult<T>>,
+    {
         let mut tried = Vec::new();
         let mut failures = Vec::new();
         for backends in sel.backend.candidates() {
             let instance = new_instance(backends);
-            let adapters = enumerate(&instance, backends);
+            let adapters = enumerate_async(&instance, backends, sel.force_software).await;
             let count = adapters.len();
             match pick(adapters, sel) {
                 Some(adapter) => {
                     let name = adapter.get_info().name;
-                    match Self::from_adapter(instance, adapter, webgpu_defaults)
-                        .and_then(&mut accept)
-                    {
+                    let accepted =
+                        match Self::from_adapter_async(instance, adapter, webgpu_defaults).await {
+                            Ok(ctx) => accept(ctx).await,
+                            Err(e) => Err(e),
+                        };
+                    match accepted {
                         Ok(v) => return Ok(v),
                         Err(e) => {
                             tried.push(format!("{backends:?}: {name}: {e}"));
@@ -394,7 +495,7 @@ impl GpuContext {
         Err(GpuError::NoAdapter(why))
     }
 
-    fn from_adapter(
+    async fn from_adapter_async(
         instance: wgpu::Instance,
         adapter: wgpu::Adapter,
         webgpu_defaults: bool,
@@ -405,7 +506,7 @@ impl GpuContext {
         } else {
             (required_limits(&adapter), optional_features(&adapter))
         };
-        let (device, queue, features) = request_device_with(&adapter, limits, wanted)?;
+        let (device, queue, features) = request_device_with_async(&adapter, limits, wanted).await?;
         let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = errors.clone();
         device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
@@ -473,8 +574,12 @@ impl GpuContext {
         }
     }
 
-    /// Blocks until all submitted work has finished.
+    /// Blocks until all submitted work has finished; an error on wasm32 (use
+    /// [`Self::sync_async`]).
     pub fn sync(&self) -> GpuResult<()> {
+        if WEB {
+            return Err(blocking_unavailable("GpuContext::sync"));
+        }
         let timeout = wait_timeout();
         self.device
             .poll(wgpu::PollType::Wait {
@@ -492,16 +597,43 @@ impl GpuContext {
         self.check_errors()
     }
 
+    /// Waits until all submitted work has finished. On native targets this is [`Self::sync`]
+    /// (the future is ready on its first poll); on wasm32 it awaits the queue's work-done callback.
+    pub async fn sync_async(&self) -> GpuResult<()> {
+        if !WEB {
+            return self.sync();
+        }
+        let (tx, rx) = crate::oneshot::channel();
+        self.queue.on_submitted_work_done(move || tx.send(()));
+        rx.await
+            .map_err(|_| GpuError::Internal("the GPU work-done callback was dropped".into()))?;
+        self.check_errors()
+    }
+
     /// Runs `f` inside out-of-memory, validation and internal error scopes and converts a
-    /// captured error into a [`GpuError`].
+    /// captured error into a [`GpuError`]; an error on wasm32 (use [`Self::scoped_async`]), where
+    /// `f` is not run.
     pub fn scoped<T>(&self, label: &str, requested: u64, f: impl FnOnce() -> T) -> GpuResult<T> {
+        block_gpu("GpuContext::scoped", self.scoped_async(label, requested, f))
+    }
+
+    /// Async [`Self::scoped`]: the three error scopes are popped at once and their results awaited.
+    pub async fn scoped_async<T>(
+        &self,
+        label: &str,
+        requested: u64,
+        f: impl FnOnce() -> T,
+    ) -> GpuResult<T> {
         let oom = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let val = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let int = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
         let out = f();
-        let ie = pollster::block_on(int.pop());
-        let ve = pollster::block_on(val.pop());
-        let oe = pollster::block_on(oom.pop());
+        let ie = int.pop();
+        let ve = val.pop();
+        let oe = oom.pop();
+        let ie = ie.await;
+        let ve = ve.await;
+        let oe = oe.await;
         if oe.is_some() {
             return Err(GpuError::OutOfMemory {
                 requested,

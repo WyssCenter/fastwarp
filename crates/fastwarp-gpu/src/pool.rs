@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::device::GpuContext;
+use crate::device::{block_gpu, GpuContext};
 use crate::error::{GpuError, GpuResult};
 
 /// Usage of every pooled buffer: storage binding plus host transfers.
@@ -52,25 +52,34 @@ impl BufferPool {
     /// Returns a storage buffer of exactly `size` bytes (rounded up to a multiple of 4), reusing a
     /// released buffer when one fits.
     pub fn acquire(&mut self, ctx: &GpuContext, label: &str, size: u64) -> GpuResult<wgpu::Buffer> {
+        block_gpu("BufferPool::acquire", self.acquire_async(ctx, label, size))
+    }
+
+    /// Async [`Self::acquire`]: the allocation's error scopes and the out-of-memory retry are
+    /// awaited.
+    pub async fn acquire_async(
+        &mut self,
+        ctx: &GpuContext,
+        label: &str,
+        size: u64,
+    ) -> GpuResult<wgpu::Buffer> {
         let size = size.max(4).next_multiple_of(4);
         if let Some(pos) = self.free.iter().position(|b| b.size() == size) {
             return Ok(self.free.swap_remove(pos));
         }
         let create = || {
-            ctx.scoped(label, size, || {
-                ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size,
-                    usage: STORAGE_USAGE,
-                    mapped_at_creation: false,
-                })
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: STORAGE_USAGE,
+                mapped_at_creation: false,
             })
         };
-        let buffer = match create() {
+        let buffer = match ctx.scoped_async(label, size, create).await {
             Err(GpuError::OutOfMemory { .. }) if !self.free.is_empty() => {
                 self.release_idle();
-                ctx.sync()?;
-                create()?
+                ctx.sync_async().await?;
+                ctx.scoped_async(label, size, create).await?
             }
             other => other?,
         };

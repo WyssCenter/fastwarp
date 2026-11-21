@@ -5,7 +5,7 @@ use fastwarp_core::Stopwatch;
 
 use serde::Serialize;
 
-use crate::device::GpuContext;
+use crate::device::{block_gpu, GpuContext};
 use crate::error::{GpuError, GpuResult};
 
 /// How a duration was obtained.
@@ -83,6 +83,15 @@ impl GpuContext {
         force_wall: bool,
         f: impl FnOnce(&mut wgpu::CommandEncoder),
     ) -> GpuResult<Timing> {
+        block_gpu("GpuContext::timed", self.timed_async(force_wall, f))
+    }
+
+    /// Async [`Self::timed`].
+    pub async fn timed_async(
+        &self,
+        force_wall: bool,
+        f: impl FnOnce(&mut wgpu::CommandEncoder),
+    ) -> GpuResult<Timing> {
         let use_ts = !force_wall && self.profiler.query_set.is_some();
         let mut enc = self
             .device
@@ -117,10 +126,10 @@ impl GpuContext {
             }
         }
         let cb = enc.finish();
-        self.sync()?;
+        self.sync_async().await?;
         let t0 = Stopwatch::start();
         self.queue.submit(Some(cb));
-        self.sync()?;
+        self.sync_async().await?;
         let wall = t0.elapsed().as_secs_f64();
         if !use_ts {
             return Ok(Timing {
@@ -129,7 +138,7 @@ impl GpuContext {
                 method: TimingMethod::WallClock,
             });
         }
-        let bytes = self.map_read_all(&self.profiler.read, 16)?;
+        let bytes = self.map_read_all_async(&self.profiler.read, 16).await?;
         let mut t = [0u64; 2];
         for (i, v) in t.iter_mut().enumerate() {
             let mut w = [0u8; 8];
@@ -152,37 +161,51 @@ impl GpuContext {
     }
 
     /// Maps the first `len` bytes of a staging buffer (from [`Self::staging_buffer`]) that an
-    /// already submitted copy filled, and returns them.
+    /// already submitted copy filled, and returns them; an error on wasm32 (use
+    /// [`Self::read_staging_async`]).
     pub fn read_staging(&self, staging: &wgpu::Buffer, len: u64) -> GpuResult<Vec<u8>> {
-        self.map_read_all(staging, len)
+        block_gpu("read_staging", self.read_staging_async(staging, len))
     }
 
-    fn map_read_all(&self, buffer: &wgpu::Buffer, len: u64) -> GpuResult<Vec<u8>> {
+    /// Async [`Self::read_staging`].
+    pub async fn read_staging_async(&self, staging: &wgpu::Buffer, len: u64) -> GpuResult<Vec<u8>> {
+        self.map_read_all_async(staging, len).await
+    }
+
+    async fn map_read_all_async(&self, buffer: &wgpu::Buffer, len: u64) -> GpuResult<Vec<u8>> {
         let slice = buffer.slice(..len);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        if let Err(e) = self.sync() {
+        let (tx, rx) = crate::oneshot::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r));
+        if let Err(e) = self.sync_async().await {
             match rx.try_recv() {
-                Ok(Err(_)) => {}
-                Ok(Ok(())) | Err(_) => buffer.unmap(),
+                Some(Err(_)) => {}
+                Some(Ok(())) | None => buffer.unmap(),
             }
             return Err(e);
         }
-        match rx.recv() {
+        match rx.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(GpuError::Readback(e.to_string())),
-            Err(e) => return Err(GpuError::Readback(e.to_string())),
+            Err(_) => {
+                return Err(GpuError::Readback(
+                    "the buffer map callback was dropped".into(),
+                ))
+            }
         }
         let data = slice.get_mapped_range().map(|view| view.to_vec());
         buffer.unmap();
         data.map_err(|e| GpuError::Readback(e.to_string()))
     }
 
-    /// Creates a host-readable staging buffer of `len` bytes for [`Self::read_bytes_staged`].
+    /// Creates a host-readable staging buffer of `len` bytes for [`Self::read_bytes_staged`]; an
+    /// error on wasm32 (use [`Self::staging_buffer_async`]).
     pub fn staging_buffer(&self, len: u64) -> GpuResult<wgpu::Buffer> {
-        self.scoped("readback staging", len, || {
+        block_gpu("staging_buffer", self.staging_buffer_async(len))
+    }
+
+    /// Async [`Self::staging_buffer`].
+    pub async fn staging_buffer_async(&self, len: u64) -> GpuResult<wgpu::Buffer> {
+        self.scoped_async("readback staging", len, || {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("fastwarp-gpu readback"),
                 size: len,
@@ -190,16 +213,43 @@ impl GpuContext {
                 mapped_at_creation: false,
             })
         })
+        .await
     }
 
-    /// Copies `len` bytes of `buffer` starting at `offset` to the host.
+    /// Copies `len` bytes of `buffer` starting at `offset` to the host; an error on wasm32 (use
+    /// [`Self::read_bytes_async`]).
     pub fn read_bytes(&self, buffer: &wgpu::Buffer, offset: u64, len: u64) -> GpuResult<Vec<u8>> {
-        let staging = self.staging_buffer(len)?;
-        self.read_bytes_staged(buffer, offset, len, &staging)
+        block_gpu("read_bytes", self.read_bytes_async(buffer, offset, len))
+    }
+
+    /// Async [`Self::read_bytes`].
+    pub async fn read_bytes_async(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        len: u64,
+    ) -> GpuResult<Vec<u8>> {
+        let staging = self.staging_buffer_async(len).await?;
+        self.read_bytes_staged_async(buffer, offset, len, &staging)
+            .await
     }
 
     /// Like [`Self::read_bytes`] through a caller-owned `staging` buffer of at least `len` bytes.
     pub fn read_bytes_staged(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        len: u64,
+        staging: &wgpu::Buffer,
+    ) -> GpuResult<Vec<u8>> {
+        block_gpu(
+            "read_bytes_staged",
+            self.read_bytes_staged_async(buffer, offset, len, staging),
+        )
+    }
+
+    /// Async [`Self::read_bytes_staged`].
+    pub async fn read_bytes_staged_async(
         &self,
         buffer: &wgpu::Buffer,
         offset: u64,
@@ -213,7 +263,7 @@ impl GpuContext {
             });
         enc.copy_buffer_to_buffer(buffer, offset, staging, 0, len);
         self.queue.submit(Some(enc.finish()));
-        self.map_read_all(staging, len)
+        self.map_read_all_async(staging, len).await
     }
 
     /// Reads `count` f32 values from the start of `buffer` through a caller-owned staging buffer.
@@ -227,15 +277,40 @@ impl GpuContext {
         Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 
+    /// Async [`Self::read_f32_staged`].
+    pub async fn read_f32_staged_async(
+        &self,
+        buffer: &wgpu::Buffer,
+        count: usize,
+        staging: &wgpu::Buffer,
+    ) -> GpuResult<Vec<f32>> {
+        let bytes = self
+            .read_bytes_staged_async(buffer, 0, (count * 4) as u64, staging)
+            .await?;
+        Ok(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
     /// Reads `count` f32 values from the start of `buffer`.
     pub fn read_f32(&self, buffer: &wgpu::Buffer, count: usize) -> GpuResult<Vec<f32>> {
         let bytes = self.read_bytes(buffer, 0, (count * 4) as u64)?;
         Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 
+    /// Async [`Self::read_f32`].
+    pub async fn read_f32_async(&self, buffer: &wgpu::Buffer, count: usize) -> GpuResult<Vec<f32>> {
+        let bytes = self.read_bytes_async(buffer, 0, (count * 4) as u64).await?;
+        Ok(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
     /// Reads `count` u32 values from the start of `buffer`.
     pub fn read_u32(&self, buffer: &wgpu::Buffer, count: usize) -> GpuResult<Vec<u32>> {
         let bytes = self.read_bytes(buffer, 0, (count * 4) as u64)?;
+        Ok(bytemuck::pod_collect_to_vec(&bytes))
+    }
+
+    /// Async [`Self::read_u32`].
+    pub async fn read_u32_async(&self, buffer: &wgpu::Buffer, count: usize) -> GpuResult<Vec<u32>> {
+        let bytes = self.read_bytes_async(buffer, 0, (count * 4) as u64).await?;
         Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 }

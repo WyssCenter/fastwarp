@@ -14,6 +14,7 @@ pub mod gates;
 pub mod gpu_n4;
 pub mod kernels;
 pub mod n4_kernels;
+mod oneshot;
 pub mod parity;
 pub mod pool;
 #[cfg(feature = "dev-tools")]
