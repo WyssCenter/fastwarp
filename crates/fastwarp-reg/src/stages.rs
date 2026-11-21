@@ -35,12 +35,13 @@
 //! [`crate::register::register_full`] runs (bit for bit; a test proves it).
 
 use fastwarp_core::Stopwatch;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use crate::apply::{apply_chain, Interpolation};
 use crate::backend::Backend;
-use crate::error::{invalid, Result};
+use crate::error::{invalid, RegError, Result};
 use crate::grid::Grid;
 use crate::init::{initial_transform, InitFeature};
 use crate::linalg::IDENTITY3;
@@ -50,18 +51,20 @@ use crate::linear::{
 };
 use crate::recipe::SynRecipe;
 use crate::register::{
-    check_winsorize, prepare_channels_with, write_linear_output, LinearPlan, PreparedChannels,
-    RegisterTimings, WINSORIZE_LOWER, WINSORIZE_UPPER,
+    check_winsorize, prepare_channels_with, LinearPlan, PreparedChannels, RegisterTimings,
+    WINSORIZE_LOWER, WINSORIZE_UPPER,
 };
 use crate::syn::{run_syn_stage_cached, PriorWarp, SynLevelTrace, SynOptions, SynStart};
 use crate::transform::ants_io::{
     with_suffix, AFFINE_SUFFIX, COMPOSITE_SUFFIX, INVERSE_COMPOSITE_SUFFIX, INVERSE_WARP_SUFFIX,
     WARP_SUFFIX,
 };
-use crate::transform::field_nifti::write_field_nifti;
+use crate::transform::field_nifti::write_field_nifti_to;
+use crate::transform::itk_h5::format_h5;
+use crate::transform::itk_mat::format_mat;
 use crate::transform::{
-    write_composite_pair, AffineTransform, CompositePair, DisplacementField, ParametricTransform,
-    TransformChain, TransformElem,
+    AffineTransform, CompositePair, DisplacementField, ParametricTransform, TransformChain,
+    TransformElem,
 };
 use crate::volume::Volume;
 
@@ -378,28 +381,121 @@ pub fn write_stage_outputs(
     write_warped: bool,
 ) -> Result<Vec<PathBuf>> {
     let mut written = Vec::new();
-    if matches!(layout, OutputLayout::Composite | OutputLayout::Both) {
-        write_composite_pair(prefix, &out.pair)?;
-        written.push(with_suffix(prefix, COMPOSITE_SUFFIX));
-        written.push(with_suffix(prefix, INVERSE_COMPOSITE_SUFFIX));
+    visit_stage_outputs(prefix, out, layout, write_warped, |path, content| {
+        let io = |source| RegError::Io {
+            path: path.clone(),
+            source,
+        };
+        let file = std::fs::File::create(&path).map_err(io)?;
+        content.write_to(&path, std::io::BufWriter::with_capacity(1 << 20, file))?;
+        written.push(path);
+        Ok(())
+    })?;
+    Ok(written)
+}
+
+/// One file of [`write_stage_outputs`], to be serialised into a writer.
+#[derive(Clone, Copy)]
+pub enum StageContent<'a> {
+    /// An ITK HDF5 composite transform.
+    Composite(&'a TransformChain),
+    /// The collapsed affine as an ITK `.mat` file.
+    Affine(&'a AffineTransform),
+    /// A displacement field as a gzip-compressed NIfTI file.
+    Field(&'a DisplacementField),
+    /// The warped image as a gzip-compressed `f32` NIfTI file.
+    Warped(&'a Volume<f64>),
+}
+
+impl StageContent<'_> {
+    /// Serialises the file into `out` and flushes it; `label` is what errors report. Compressed
+    /// NIfTI content streams into `out` without a whole-file copy.
+    pub fn write_to<W: Write>(&self, label: &Path, mut out: W) -> Result<W> {
+        let io = |source| RegError::Io {
+            path: label.to_path_buf(),
+            source,
+        };
+        match *self {
+            StageContent::Composite(chain) => {
+                out.write_all(&format_h5(chain)?).map_err(io)?;
+            }
+            StageContent::Affine(total) => {
+                out.write_all(&format_mat(&[TransformElem::Affine(*total)])?)
+                    .map_err(io)?;
+            }
+            StageContent::Field(field) => {
+                out = write_field_nifti_to(label, field, true, out)?;
+            }
+            StageContent::Warped(warped) => {
+                let f32_data: Vec<f32> = warped.data().iter().map(|v| *v as f32).collect();
+                out =
+                    Volume::from_vec(*warped.grid(), f32_data)?.write_nifti_to(label, out, true)?;
+            }
+        }
+        out.flush().map_err(io)?;
+        Ok(out)
     }
-    write_linear_output(prefix, &out.total)?;
-    written.push(with_suffix(prefix, AFFINE_SUFFIX));
+}
+
+/// Calls `visit` for each file [`write_stage_outputs`] writes, in the same order, with its path
+/// (`prefix` with the ANTs suffix appended) and its content. Nothing is serialised until the
+/// visitor asks, so a visitor that writes and drops each file holds one file at a time.
+pub fn visit_stage_outputs<'a>(
+    prefix: &Path,
+    out: &'a StagesOutput,
+    layout: OutputLayout,
+    write_warped: bool,
+    mut visit: impl FnMut(PathBuf, StageContent<'a>) -> Result<()>,
+) -> Result<()> {
+    if matches!(layout, OutputLayout::Composite | OutputLayout::Both) {
+        visit(
+            with_suffix(prefix, COMPOSITE_SUFFIX),
+            StageContent::Composite(&out.pair.forward),
+        )?;
+        visit(
+            with_suffix(prefix, INVERSE_COMPOSITE_SUFFIX),
+            StageContent::Composite(&out.pair.inverse),
+        )?;
+    }
+    visit(
+        with_suffix(prefix, AFFINE_SUFFIX),
+        StageContent::Affine(&out.total),
+    )?;
     if out.deformable && matches!(layout, OutputLayout::Split | OutputLayout::Both) {
-        let warp = with_suffix(prefix, WARP_SUFFIX);
-        write_field_nifti(&warp, field_at(&out.pair.forward, 1)?)?;
-        written.push(warp);
-        let inverse = with_suffix(prefix, INVERSE_WARP_SUFFIX);
-        write_field_nifti(&inverse, field_at(&out.pair.inverse, 0)?)?;
-        written.push(inverse);
+        visit(
+            with_suffix(prefix, WARP_SUFFIX),
+            StageContent::Field(field_at(&out.pair.forward, 1)?),
+        )?;
+        visit(
+            with_suffix(prefix, INVERSE_WARP_SUFFIX),
+            StageContent::Field(field_at(&out.pair.inverse, 0)?),
+        )?;
     }
     if write_warped {
-        let path = with_suffix(prefix, "_Warped.nii.gz");
-        let f32_data: Vec<f32> = out.warped.data().iter().map(|v| *v as f32).collect();
-        Volume::from_vec(*out.warped.grid(), f32_data)?.save_nifti(&path)?;
-        written.push(path);
+        visit(
+            with_suffix(prefix, "_Warped.nii.gz"),
+            StageContent::Warped(&out.warped),
+        )?;
     }
-    Ok(written)
+    Ok(())
+}
+
+/// The files [`write_stage_outputs`] writes as `(name, content)` pairs in the same order, the
+/// name being the path as text. Nothing touches the file system.
+pub fn stage_output_files(
+    prefix: &Path,
+    out: &StagesOutput,
+    layout: OutputLayout,
+    write_warped: bool,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut files = Vec::new();
+    visit_stage_outputs(prefix, out, layout, write_warped, |path, content| {
+        let name = path.to_string_lossy().into_owned();
+        let bytes = content.write_to(Path::new(&name), Vec::new())?;
+        files.push((name, bytes));
+        Ok(())
+    })?;
+    Ok(files)
 }
 
 #[cfg(test)]
@@ -506,6 +602,71 @@ mod tests {
         assert_eq!(staged.warped, full.warped);
         assert_eq!(staged.syn_levels, vec![full.levels.clone()]);
         assert!(staged.deformable);
+    }
+
+    #[test]
+    fn stage_output_files_and_written_files_equal_the_legacy_writers() {
+        use crate::register::write_linear_output;
+        use crate::transform::field_nifti::write_field_nifti;
+        use crate::transform::write_composite_pair;
+        let out = run_plan(vec![small_syn()]);
+        for (layout, warped) in [
+            (OutputLayout::Composite, false),
+            (OutputLayout::Split, true),
+            (OutputLayout::Both, true),
+        ] {
+            let reference = tmp("reference");
+            let rp = reference.join("sub_");
+            if matches!(layout, OutputLayout::Composite | OutputLayout::Both) {
+                write_composite_pair(&rp, &out.pair).unwrap();
+            }
+            write_linear_output(&rp, &out.total).unwrap();
+            if matches!(layout, OutputLayout::Split | OutputLayout::Both) {
+                write_field_nifti(
+                    &with_suffix(&rp, WARP_SUFFIX),
+                    field_at(&out.pair.forward, 1).unwrap(),
+                )
+                .unwrap();
+                write_field_nifti(
+                    &with_suffix(&rp, INVERSE_WARP_SUFFIX),
+                    field_at(&out.pair.inverse, 0).unwrap(),
+                )
+                .unwrap();
+            }
+            if warped {
+                let data: Vec<f32> = out.warped.data().iter().map(|v| *v as f32).collect();
+                Volume::from_vec(*out.warped.grid(), data)
+                    .unwrap()
+                    .save_nifti(&with_suffix(&rp, "_Warped.nii.gz"))
+                    .unwrap();
+            }
+
+            let dir = tmp("files");
+            let prefix = dir.join("sub_");
+            let files = stage_output_files(&prefix, &out, layout, warped).unwrap();
+            let written = write_stage_outputs(&prefix, &out, layout, warped).unwrap();
+            assert_eq!(files.len(), written.len());
+            let mut count = 0;
+            for entry in std::fs::read_dir(&reference).unwrap() {
+                let entry = entry.unwrap();
+                let expected = std::fs::read(entry.path()).unwrap();
+                let file_name = entry.file_name();
+                let in_files = files
+                    .iter()
+                    .find(|(n, _)| Path::new(n).file_name() == Some(file_name.as_os_str()))
+                    .unwrap();
+                assert_eq!(in_files.1, expected, "{file_name:?}");
+                let on_disk = std::fs::read(dir.join(&file_name)).unwrap();
+                assert_eq!(on_disk, expected, "{file_name:?}");
+                count += 1;
+            }
+            assert_eq!(count, files.len());
+            for ((name, _), path) in files.iter().zip(&written) {
+                assert_eq!(Path::new(name), path.as_path());
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::remove_dir_all(&reference);
+        }
     }
 
     fn run_plan(syn: Vec<SynRecipe>) -> StagesOutput {

@@ -25,6 +25,14 @@ pub struct WriterOptions<'a> {
 }
 
 impl<'a> WriterOptions<'a> {
+    pub fn in_memory(gzip: bool) -> Self {
+        Self {
+            path: PathBuf::new(),
+            header: None,
+            level: gzip.then_some(DEFAULT_LEVEL),
+        }
+    }
+
     pub fn new(path: impl AsRef<Path>) -> Self {
         let mut path = path.as_ref().to_owned();
         if path.extension().is_none() {
@@ -76,9 +84,7 @@ impl<'a> WriterOptions<'a> {
         let file = File::create(&self.path)?;
         match self.level {
             Some(level) => {
-                let mut w = ParGzWriter::new(BufWriter::new(file), level);
-                write_all(&mut w, &header, data)?;
-                w.finish()?.flush()?;
+                self.encode(BufWriter::new(file), level, &header, data)?;
             }
             None => {
                 let mut w = BufWriter::with_capacity(1 << 20, file);
@@ -87,6 +93,65 @@ impl<'a> WriterOptions<'a> {
             }
         }
         Ok(())
+    }
+
+    pub fn write_nifti_to<W, A, S, D>(
+        &self,
+        out: W,
+        data: &ArrayBase<S, D>,
+    ) -> Result<W, NiftiFileError>
+    where
+        W: Write,
+        S: Data<Elem = A> + Sync,
+        A: DataElement + Pod + Default + Send + Sync,
+        D: Dimension + RemoveAxis,
+    {
+        let header = self.prepare_header(data.shape(), A::DATA_TYPE)?;
+        match self.level {
+            Some(level) => self.encode(out, level, &header, data),
+            None => {
+                let mut out = out;
+                write_all(&mut out, &header, data)?;
+                out.flush()?;
+                Ok(out)
+            }
+        }
+    }
+
+    pub fn to_bytes<A, S, D>(&self, data: &ArrayBase<S, D>) -> Result<Vec<u8>, NiftiFileError>
+    where
+        S: Data<Elem = A> + Sync,
+        A: DataElement + Pod + Default + Send + Sync,
+        D: Dimension + RemoveAxis,
+    {
+        self.write_nifti_to(
+            Vec::with_capacity(self.byte_estimate(data.len() * std::mem::size_of::<A>())),
+            data,
+        )
+    }
+
+    fn byte_estimate(&self, raw: usize) -> usize {
+        352 + if self.level.is_some() { raw / 2 } else { raw }
+    }
+
+    fn encode<W, A, S, D>(
+        &self,
+        out: W,
+        level: u32,
+        header: &NiftiHeader,
+        data: &ArrayBase<S, D>,
+    ) -> Result<W, NiftiFileError>
+    where
+        W: Write,
+        S: Data<Elem = A> + Sync,
+        A: Pod + Default + Send + Sync,
+        D: Dimension + RemoveAxis,
+    {
+        let mut w = ParGzWriter::new(out, level);
+        write_all(&mut w, header, data)?;
+        let mut out = w.finish()?;
+        out.flush()?;
+        Ok(out)
     }
 
     fn prepare_header(

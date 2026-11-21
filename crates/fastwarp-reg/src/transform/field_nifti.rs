@@ -36,7 +36,10 @@ use fastwarp_niftiio::WriterOptions;
 use ndarray::Array5;
 
 use crate::error::{RegError, Result};
-use crate::nifti_io::{grid_from_header, header_from_grid, read_array_f64};
+use crate::nifti_io::{
+    grid_from_header, header_from_grid, open_bytes, read_array_f64, read_array_f64_from,
+    MEMORY_LABEL,
+};
 use crate::transform::field::DisplacementField;
 
 /// `NIFTI_INTENT_VECTOR`.
@@ -48,7 +51,23 @@ pub const INTENT_DISPVECT: i16 = 1006;
 /// `[nx, ny, nz, 1, 3]`) into an `f32` field.
 pub fn read_field_nifti(path: &Path) -> Result<DisplacementField> {
     let (h, data) = read_array_f64(path)?;
-    let grid = grid_from_header(path, &h)?;
+    field_from_array(path, &h, &data)
+}
+
+/// In-memory counterpart of [`read_field_nifti`]; the bytes are gzip-compressed when they start
+/// with the gzip magic bytes, and `name` is what errors report.
+pub fn parse_field_nifti(name: &str, bytes: Vec<u8>) -> Result<DisplacementField> {
+    let path = Path::new(name);
+    let (h, data) = read_array_f64_from(path, open_bytes(path, bytes)?)?;
+    field_from_array(path, &h, &data)
+}
+
+fn field_from_array(
+    path: &Path,
+    h: &nifti::NiftiHeader,
+    data: &ndarray::ArrayD<f64>,
+) -> Result<DisplacementField> {
+    let grid = grid_from_header(path, h)?;
     let shape = data.shape().to_vec();
     let ok = match shape.len() {
         4 => shape[3] == 3,
@@ -89,13 +108,7 @@ pub fn read_field_nifti(path: &Path) -> Result<DisplacementField> {
 
 /// Writes a displacement field as `f32`, `dim = [5, nx, ny, nz, 1, 3]`, intent `1007`.
 pub fn write_field_nifti(path: &Path, field: &DisplacementField) -> Result<()> {
-    let g = field.grid();
-    let [nx, ny, nz] = g.size();
-    let arr = Array5::from_shape_fn((nx, ny, nz, 1, 3), |(i, j, k, _, c)| {
-        field.data()[g.linear_index(i, j, k) * 3 + c]
-    });
-    let mut hdr = header_from_grid(g);
-    hdr.intent_code = INTENT_VECTOR;
+    let (arr, hdr) = field_array(field);
     WriterOptions::new(path)
         .reference_header(&hdr)
         .write_nifti(&arr)
@@ -103,6 +116,38 @@ pub fn write_field_nifti(path: &Path, field: &DisplacementField) -> Result<()> {
             path: path.to_path_buf(),
             message: e.to_string(),
         })
+}
+
+/// The bytes [`write_field_nifti`] writes, gzip-compressed when `gzip` is set.
+pub fn format_field_nifti(field: &DisplacementField, gzip: bool) -> Result<Vec<u8>> {
+    write_field_nifti_to(Path::new(MEMORY_LABEL), field, gzip, Vec::new())
+}
+
+pub(crate) fn write_field_nifti_to<W: std::io::Write>(
+    label: &Path,
+    field: &DisplacementField,
+    gzip: bool,
+    out: W,
+) -> Result<W> {
+    let (arr, hdr) = field_array(field);
+    WriterOptions::in_memory(gzip)
+        .reference_header(&hdr)
+        .write_nifti_to(out, &arr)
+        .map_err(|e| RegError::Nifti {
+            path: label.to_path_buf(),
+            message: e.to_string(),
+        })
+}
+
+fn field_array(field: &DisplacementField) -> (Array5<f32>, nifti::NiftiHeader) {
+    let g = field.grid();
+    let [nx, ny, nz] = g.size();
+    let arr = Array5::from_shape_fn((nx, ny, nz, 1, 3), |(i, j, k, _, c)| {
+        field.data()[g.linear_index(i, j, k) * 3 + c]
+    });
+    let mut hdr = header_from_grid(g);
+    hdr.intent_code = INTENT_VECTOR;
+    (arr, hdr)
 }
 
 #[cfg(test)]

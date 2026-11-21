@@ -305,6 +305,21 @@ pub fn read_grid(path: &Path) -> Result<Grid> {
     grid_from_header(path, &h)
 }
 
+/// The name that errors report for NIfTI data read from or written to memory.
+pub const MEMORY_LABEL: &str = "<memory>";
+
+/// Reads only the header of in-memory NIfTI data (gzip detected by its magic bytes) and returns
+/// its ITK grid.
+pub fn parse_nifti_grid(bytes: &[u8]) -> Result<Grid> {
+    let label = Path::new(MEMORY_LABEL);
+    let header = NiftiFile::header_from_bytes(bytes).map_err(|e| nifti_err(label, e))?;
+    grid_from_header(label, &header)
+}
+
+pub(crate) fn open_bytes(label: &Path, bytes: Vec<u8>) -> Result<NiftiFile> {
+    NiftiFile::from_bytes(bytes).map_err(|e| nifti_err(label, e))
+}
+
 fn scaling(path: &Path, h: &NiftiHeader) -> Result<Option<(f64, f64)>> {
     let slope = h.scl_slope;
     if slope == 0.0 || !slope.is_finite() {
@@ -321,6 +336,13 @@ fn scaling(path: &Path, h: &NiftiHeader) -> Result<Option<(f64, f64)>> {
 
 pub(crate) fn read_array_f64(path: &Path) -> Result<(NiftiHeader, ArrayD<f64>)> {
     let file = NiftiFile::open(path).map_err(|e| nifti_err(path, e))?;
+    read_array_f64_from(path, file)
+}
+
+pub(crate) fn read_array_f64_from(
+    path: &Path,
+    file: NiftiFile,
+) -> Result<(NiftiHeader, ArrayD<f64>)> {
     let h = file.header().clone();
     let dims = check_dims(path, &h)?;
     let datatype = file.datatype().map_err(|e| nifti_err(path, e))?;
@@ -360,6 +382,14 @@ fn read_first_volume<T: Send>(
     conv: impl Fn(f64) -> T + Sync,
 ) -> Result<(Grid, Vec<T>)> {
     let file = NiftiFile::open(path).map_err(|e| nifti_err(path, e))?;
+    read_first_volume_from(path, file, conv)
+}
+
+fn read_first_volume_from<T: Send>(
+    path: &Path,
+    file: NiftiFile,
+    conv: impl Fn(f64) -> T + Sync,
+) -> Result<(Grid, Vec<T>)> {
     let h = file.header().clone();
     let dims = check_dims(path, &h)?;
     if dims.len() < 3 {
@@ -389,24 +419,69 @@ impl Volume<f32> {
         Volume::from_vec(grid, data)
     }
 
+    /// Loads a 3-D (or 4-D, first volume) NIfTI volume from memory as `f32`; the bytes are
+    /// gzip-compressed when they start with the gzip magic bytes. Same result as
+    /// [`Volume::load_nifti`] on the same bytes in a file.
+    pub fn from_nifti_bytes(bytes: Vec<u8>) -> Result<Self> {
+        let label = Path::new(MEMORY_LABEL);
+        let (grid, data) = read_first_volume_from(label, open_bytes(label, bytes)?, |v| v as f32)?;
+        Volume::from_vec(grid, data)
+    }
+
+    fn array3(&self) -> Array3<f32> {
+        let [nx, ny, nz] = self.grid().size();
+        Array3::from_shape_fn((nx, ny, nz), |(i, j, k)| {
+            self.data()[self.grid().linear_index(i, j, k)]
+        })
+    }
+
     /// Writes the volume as an `f32` NIfTI file (gzip when the name ends in `.gz`) with both
     /// sform and qform set from the grid.
     pub fn save_nifti(&self, path: &Path) -> Result<()> {
-        let [nx, ny, nz] = self.grid().size();
-        let arr = Array3::from_shape_fn((nx, ny, nz), |(i, j, k)| {
-            self.data()[self.grid().linear_index(i, j, k)]
-        });
+        let arr = self.array3();
         let hdr = header_from_grid(self.grid());
         WriterOptions::new(path)
             .reference_header(&hdr)
             .write_nifti(&arr)
             .map_err(|e| nifti_err(path, e))
     }
+
+    /// The bytes [`Volume::save_nifti`] writes, gzip-compressed when `gzip` is set.
+    pub fn to_nifti_bytes(&self, gzip: bool) -> Result<Vec<u8>> {
+        let arr = self.array3();
+        let hdr = header_from_grid(self.grid());
+        WriterOptions::in_memory(gzip)
+            .reference_header(&hdr)
+            .to_bytes(&arr)
+            .map_err(|e| nifti_err(Path::new(MEMORY_LABEL), e))
+    }
+
+    pub(crate) fn write_nifti_to<W: std::io::Write>(
+        &self,
+        label: &Path,
+        out: W,
+        gzip: bool,
+    ) -> Result<W> {
+        let arr = self.array3();
+        let hdr = header_from_grid(self.grid());
+        WriterOptions::in_memory(gzip)
+            .reference_header(&hdr)
+            .write_nifti_to(out, &arr)
+            .map_err(|e| nifti_err(label, e))
+    }
 }
 
 impl Volume<f64> {
     pub fn load_nifti_f64(path: &Path) -> Result<Self> {
         let (grid, data) = read_first_volume(path, |v| f64::from(v as f32))?;
+        Volume::from_vec(grid, data)
+    }
+
+    /// In-memory counterpart of [`Volume::load_nifti_f64`].
+    pub fn from_nifti_bytes_f64(bytes: Vec<u8>) -> Result<Self> {
+        let label = Path::new(MEMORY_LABEL);
+        let (grid, data) =
+            read_first_volume_from(label, open_bytes(label, bytes)?, |v| f64::from(v as f32))?;
         Volume::from_vec(grid, data)
     }
 }
