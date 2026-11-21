@@ -222,7 +222,7 @@ pub struct WgpuBackend {
     uploads: AtomicU64,
     submits: AtomicU64,
     selftest: Mutex<SelfTestRecord>,
-    scalar_staging: Mutex<wgpu::Buffer>,
+    scalar_staging: Mutex<Option<wgpu::Buffer>>,
     partial_staging: Mutex<Option<wgpu::Buffer>>,
     trimmed_for: Mutex<Option<Grid>>,
 }
@@ -376,7 +376,7 @@ impl WgpuBackend {
             uploads: AtomicU64::new(0),
             submits: AtomicU64::new(0),
             selftest: Mutex::new(SelfTestRecord::default()),
-            scalar_staging: Mutex::new(scalar_staging),
+            scalar_staging: Mutex::new(Some(scalar_staging)),
             partial_staging: Mutex::new(None),
             trimmed_for: Mutex::new(None),
         };
@@ -761,13 +761,29 @@ impl WgpuBackend {
         if len > SCALAR_STAGING_BYTES {
             return self.ctx.read_bytes(buffer, 0, len).map_err(gerr);
         }
-        let staging = self
+        let staging = self.take_scalar_staging()?;
+        let values = self.ctx.read_bytes_staged(buffer, 0, len, &staging);
+        self.put_scalar_staging(staging);
+        values.map_err(gerr)
+    }
+
+    fn take_scalar_staging(&self) -> RegResult<wgpu::Buffer> {
+        let taken = self
             .scalar_staging
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        self.ctx
-            .read_bytes_staged(buffer, 0, len, &staging)
-            .map_err(gerr)
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        match taken {
+            Some(buffer) => Ok(buffer),
+            None => self.ctx.staging_buffer(SCALAR_STAGING_BYTES).map_err(gerr),
+        }
+    }
+
+    fn put_scalar_staging(&self, buffer: wgpu::Buffer) {
+        *self
+            .scalar_staging
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(buffer);
     }
 
     fn read_scalars(&self, buffer: &wgpu::Buffer, count: usize) -> RegResult<Vec<f32>> {
@@ -779,22 +795,25 @@ impl WgpuBackend {
         let len: u64 = sources.iter().map(|(_, bytes)| bytes).sum();
         self.scalar_readbacks.fetch_add(1, Ordering::Relaxed);
         if len <= SCALAR_STAGING_BYTES {
-            let staging = self
-                .scalar_staging
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            return self.read_sources_staged(sources, len, &staging);
+            let staging = self.take_scalar_staging()?;
+            let values = self.read_sources_staged(sources, len, &staging);
+            self.put_scalar_staging(staging);
+            return values;
         }
-        let mut staging = self
+        let taken = self
             .partial_staging
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let buf = match staging.take() {
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        let buf = match taken {
             Some(b) if b.size() >= len => b,
             _ => self.ctx.staging_buffer(len).map_err(gerr)?,
         };
         let values = self.read_sources_staged(sources, len, &buf);
-        *staging = Some(buf);
+        *self
+            .partial_staging
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(buf);
         values
     }
 
