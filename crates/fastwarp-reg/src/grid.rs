@@ -28,7 +28,7 @@ pub fn lps_to_ras(p: Vec3) -> Vec3 {
 /// (3), spacing (3), direction (9, row-major).
 pub const GRID_FIXED_PARAMETERS: usize = 18;
 
-/// A regular 3-D grid in ITK LPS physical space.
+/// A regular 3D grid in ITK LPS physical space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Grid {
     size: [usize; 3],

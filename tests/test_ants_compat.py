@@ -445,7 +445,7 @@ def test_two_dimensional_images_are_refused(ants, monkeypatch):
     with pytest.raises(fa.UnsupportedArgument) as e:
         fa.registration(f, f, "Rigid")
     assert str(e.value) == (
-        PREFIX + "fixed.dimension=2 is not supported: FastWarp handles 3-D images only."
+        PREFIX + "fixed.dimension=2 is not supported: FastWarp handles 3D images only."
     )
 
 
@@ -773,7 +773,7 @@ def test_t5_refusals_and_antspy_checks(ants, scene, monkeypatch):
     with pytest.raises(fa.UnsupportedArgument) as e:
         fa.apply_transforms(reference, moving, a, imagetype=3)
     assert str(e.value) == (
-        pre + "imagetype=3 is not supported: FastWarp resamples scalar 3-D images only."
+        pre + "imagetype=3 is not supported: FastWarp resamples scalar 3D images only."
     )
     with pytest.raises(fa.UnsupportedArgument, match="fixed='ref.nii.gz' is not supported"):
         fa.apply_transforms("ref.nii.gz", "mov.nii.gz", a)

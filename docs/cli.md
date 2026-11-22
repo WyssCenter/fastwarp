@@ -278,7 +278,7 @@ case) only. A file with another extension (`.mha`, `.nrrd`, Analyze `.img`/`.hdr
 with exit status 2; convert it first. A `.nii` file that is not single-file NIfTI-1 (for example
 NIfTI-2) cannot be read and gives exit status 3.
 
-Images must be 3-D. A 4-D file with more than one volume is refused.
+Images must be 3D. A 4D file with more than one volume is refused.
 
 An image is read as ITK reads it, and so as ANTsPy's `ants.image_read` reads it:
 
@@ -705,7 +705,7 @@ output (ANTs ignores it there too; the type follows `--float`).
 | Option | Supported values |
 | --- | --- |
 | `-d`, `-e` | `3`, `0` or `scalar` (may be left out) |
-| `-i`, `-r` | 3-D NIfTI images |
+| `-i`, `-r` | 3D NIfTI images |
 | `-o` | `warped.nii.gz`; `DisplacementField[field.nii.gz]` or `[field.nii.gz,1]` (the transforms as one field on the reference grid); `[field.h5,1]` (that field as an HDF5 transform); `CompositeTransform[composite.h5]` (the transforms, not collapsed); `Linear[affine.mat,<invert>]` (linear transforms collapsed into one affine, inverted with 1) |
 | `-t` | `file` or `[file,1]`, repeated; the order is that of ANTs (see [apply](#apply)); no `-t` is the identity |
 | `-n` | `Linear`, `NearestNeighbor`, `LanczosWindowedSinc` |

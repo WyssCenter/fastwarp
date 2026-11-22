@@ -94,7 +94,7 @@ pub fn apply_chain(
 }
 
 /// `antsApplyTransforms -i input -r reference -o output -t chain` on NIfTI files: `input` is
-/// loaded as the first 3-D volume, resampled onto the grid of `reference`, and written as `f32`.
+/// loaded as the first 3D volume, resampled onto the grid of `reference`, and written as `f32`.
 pub fn apply_nifti(
     input: &Path,
     reference: &Path,

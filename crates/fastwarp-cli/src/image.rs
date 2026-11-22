@@ -75,7 +75,7 @@ fn check_input(path: &Path, role: &str) -> Result<(), CliError> {
     let volumes: u64 = (4..=rank).map(|a| u64::from(dim[a].max(1))).product();
     if rank < 3 || volumes > 1 {
         return Err(CliError::usage(format!(
-            "{role} {}: expected a 3-D image, the header has dim {:?}",
+            "{role} {}: expected a 3D image, the header has dim {:?}",
             path.display(),
             &dim[..=rank.max(1)]
         )));
@@ -83,13 +83,13 @@ fn check_input(path: &Path, role: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Reads a 3-D NIfTI image; `role` names the argument in messages.
+/// Reads a 3D NIfTI image; `role` names the argument in messages.
 pub fn load(path: &Path, role: &str) -> Result<Volume<f64>, CliError> {
     check_input(path, role)?;
     Volume::<f64>::load_nifti_f64(path).map_err(|e| read_err(path, e))
 }
 
-/// Reads only the grid of a 3-D NIfTI image.
+/// Reads only the grid of a 3D NIfTI image.
 pub fn grid(path: &Path, role: &str) -> Result<Grid, CliError> {
     check_input(path, role)?;
     nifti_grid(path).map_err(|e| read_err(path, e))

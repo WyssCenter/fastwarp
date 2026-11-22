@@ -76,7 +76,7 @@ These come from the arguments and are raised before any registration work starts
 
 | Function | Raised when |
 | --- | --- |
-| all | An image is not 3-D; a geometry is invalid. |
+| all | An image is not 3D; a geometry is invalid. |
 | {func}`~fastwarp.register_syn` | No fixed images, or not as many moving as fixed images; `iso_mm` is not a positive number; `outputs` is not one of {data}`~fastwarp.OUTPUT_LAYOUTS`; the recipe has an unknown key, a value of the wrong type, lists of different lengths, a value outside its [limits](guide/recipes.md), an empty or misordered stage list, keys of both recipe forms, a start file that does not exist or a start affine that cannot be inverted; several channels without a SyN stage. |
 | {func}`~fastwarp.fits_gpu` | The same image counts, `iso_mm` and recipe checks as `register_syn`; `channels` is below 1, or differs from the number of fixed images in a list. |
 | {func}`~fastwarp.cohort_recipe` | `channels` is below 1. |

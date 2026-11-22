@@ -949,7 +949,7 @@ fn check_flag_value(o: Option<&Opt>, ok: u32, why: &str) -> Result<(), Refusal> 
 ///
 /// Checked later, when the files are read (`fastwarp ants-registration` exits 3 for a file that
 /// cannot be read, 2 for the rest, all before the GPU is opened): that the images and masks exist
-/// and are 3-D NIfTI, that the fixed images of two SyN channels share one grid, that a `-r` file
+/// and are 3D NIfTI, that the fixed images of two SyN channels share one grid, that a `-r` file
 /// holds one invertible affine (not a displacement field or a composite of several transforms),
 /// that the output folders exist. The GPU capacity check follows (exit 5).
 pub fn parse_registration<S: AsRef<str>>(args: &[S]) -> Result<RegistrationCall, Refusal> {
@@ -1702,8 +1702,8 @@ mod tests {
     #[test]
     fn every_refusal_has_its_message() {
         let cases: Vec<(String, &str)> = vec![
-            (full("").replace("-d 3", "-d 2"), "-d 2 is not supported: FastWarp registers and resamples 3-D images."),
-            (full("").replace("-d 3", "-d 4"), "-d 4 is not supported: FastWarp registers and resamples 3-D images."),
+            (full("").replace("-d 3", "-d 2"), "-d 2 is not supported: FastWarp registers and resamples 3D images."),
+            (full("").replace("-d 3", "-d 4"), "-d 4 is not supported: FastWarp registers and resamples 3D images."),
             (LIN.to_string(), "--output is required"),
             (full("-j state.h5"), "-j is not supported: FastWarp cannot save or restore the state of a registration."),
             (full("--restore-state s.h5"), "--restore-state is not supported: FastWarp cannot save or restore the state of a registration."),

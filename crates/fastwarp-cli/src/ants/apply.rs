@@ -241,7 +241,7 @@ fn pixel_type(value: &str, spelled: &str) -> Result<Option<PixelType>, Refusal> 
 /// `.nii.gz` file (a displacement field) is refused here.
 ///
 /// Checked later, when the files are read (`fastwarp ants-apply-transforms` exits 3 for a file
-/// that cannot be read, 2 for the rest): that the images exist and are 3-D NIfTI, that each
+/// that cannot be read, 2 for the rest): that the images exist and are 3D NIfTI, that each
 /// transform file can be read, that an inverted `.h5` / `.mat` holds no displacement field and is
 /// invertible, that a `Linear[...]` output gets linear transforms only, that a
 /// `CompositeTransform[...]` output gets at least one transform, and that the output folder
@@ -524,7 +524,7 @@ mod tests {
     fn every_refusal_has_its_message() {
         let base = "-i m.nii -r f.nii -o w.nii -t a.mat";
         let cases: Vec<(String, &str)> = vec![
-            (format!("{base} -d 2"), "-d 2 is not supported: FastWarp registers and resamples 3-D images."),
+            (format!("{base} -d 2"), "-d 2 is not supported: FastWarp registers and resamples 3D images."),
             (format!("{base} -e 3"), "-e 3 is not supported: FastWarp resamples scalar images only."),
             (format!("{base} -e 9"), "-e: expected 0 to 6 or scalar, vector, tensor, time-series, multichannel, five-dimensional, physical-vector, got \"9\""),
             (format!("{base} -e time-series"), "-e time-series is not supported: FastWarp resamples scalar images only."),

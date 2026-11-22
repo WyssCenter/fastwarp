@@ -70,7 +70,7 @@ SyN followed by one restricted to a region of the template, use a stage-list rec
 
 | Argument | In FastWarp |
 | --- | --- |
-| `fixed`, `moving` | `ANTsImage`, 3-D and scalar; other dimensions or vector images are refused. ANTsPy's own checks (NaN voxels, different dimensions) raise ANTsPy's messages. |
+| `fixed`, `moving` | `ANTsImage`, 3D and scalar; other dimensions or vector images are refused. ANTsPy's own checks (NaN voxels, different dimensions) raise ANTsPy's messages. |
 | `initial_transform` | `None` (centres of intensity mass, or the identity for `SyNOnly` and `antsRegistrationSyN[so]`), `"Identity"`, or one file holding one affine transform (`.mat`, `.txt`, or an `.h5` such as the `Composite.h5` of a linear run; also as `"[file,1]"` for its inverse). A displacement field, more than one file, or ANTs' `"[fixed,moving,feature]"` form with file names is refused. |
 | `outprefix` | Text joined to the file names, as in ANTsPy; the folder is created when missing. `""` makes a private temporary folder (`tempfile.mkdtemp`) and the prefix `fw_` in it, where ANTsPy uses the race-prone `tempfile.mktemp`. |
 | `mask` | A fixed-image mask (non-zero voxels inside), on any grid. As in ANTsPy it applies to the last stage, and with `mask_all_stages` to every stage; the one mask option of an `antsRegistrationSyN[...]` type reaches every stage. See [Masks](normalization.md#masks). |
@@ -118,7 +118,7 @@ the default `whichtoinvert` of `invtransforms` inverts it; for a linear type pas
 | Argument | In FastWarp |
 | --- | --- |
 | `fixed` | The output grid and pixel type, an `ANTsImage`. ANTsPy's form with file names (`fixed` as a string) is refused. |
-| `moving` | A 3-D scalar `ANTsImage`. |
+| `moving` | A 3D scalar `ANTsImage`. |
 | `transformlist` | As in ANTsPy; a missing file raises `FileNotFoundError` with ANTsPy's message. |
 | `interpolator` | `"linear"`, `"nearestNeighbor"`, `"lanczosWindowedSinc"`. `"genericLabel"`, `"multiLabel"`, `"gaussian"`, `"bSpline"` and the other windowed sincs are refused. |
 | `imagetype` | `0` only. |

@@ -538,7 +538,7 @@ fn a_4d_image_is_refused() {
         .unwrap();
     let o = run(&["fits", s(&path)]);
     assert_eq!(code(&o), 2, "{}", text(&o.stderr));
-    assert!(text(&o.stderr).contains("expected a 3-D image"));
+    assert!(text(&o.stderr).contains("expected a 3D image"));
 }
 
 #[test]
