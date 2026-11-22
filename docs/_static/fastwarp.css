@@ -216,3 +216,7 @@ svg.fw-diagram .fw-head-images {
 .fw-file-cards .sd-card-title code {
   font-size: 0.95em;
 }
+
+.sd-btn {
+  border-radius: 6px;
+}

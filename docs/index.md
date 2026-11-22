@@ -14,6 +14,13 @@ that today. It is the registration engine of
 [Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), a tool for localizing deep brain
 stimulation electrodes, and works on its own as well.
 
+```{button-ref} browser
+:color: primary
+:class: sd-px-4
+
+Try it in your browser now
+```
+
 ```{raw} html
 <figure class="fw-hero">
   <img src="_static/figures/registration-checkerboard.png" width="990" height="396"

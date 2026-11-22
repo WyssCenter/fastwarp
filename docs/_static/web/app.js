@@ -43,6 +43,9 @@ const state = {
   runId: 0,
   posted: false,
   restarts: 0,
+  gpu: "starting",
+  sample: false,
+  done: false,
 };
 
 function log(line) {
@@ -101,14 +104,32 @@ function result(status, extra = {}) {
 
 function updateButtons() {
   const ok = state.ready && state.inputs.fixed && state.inputs.moving;
-  el("fw-run").disabled = !ok || state.running;
+  const run = el("fw-run");
+  run.disabled = !ok || state.running;
+  run.hidden = state.running;
+  run.textContent = state.done ? "Run again" : "Run";
+  run.classList.toggle("fw-secondary", state.done && !run.disabled);
+  el("fw-cancel").hidden = !state.running;
   el("fw-cancel").disabled = !state.running;
+  let hint = "";
+  if (!state.running) {
+    if (state.gpu === "starting") hint = "Starting GPU...";
+    else if (state.gpu === "failed") hint = "WebGPU unavailable";
+    else if (!state.inputs.fixed || !state.inputs.moving) hint = "Choose two images";
+  }
+  el("fw-hint").textContent = hint;
   el("fw-sample").disabled = state.running;
+  el("fw-sample").hidden = state.sample;
+  el("fw-sample-state").hidden = !state.sample;
   el("fw-fixed").disabled = state.running;
   el("fw-moving").disabled = state.running;
   el("fw-grid").disabled = state.running;
-  const names = ["fixed", "moving"].map((k) => state.inputs[k]?.label ?? "none");
-  el("fw-selected").textContent = `Fixed: ${names[0]}. Moving: ${names[1]}.`;
+  for (const key of ["fixed", "moving"]) {
+    const name = el(`fw-${key}-name`);
+    const full = state.inputs[key]?.label ?? "";
+    name.textContent = full || "No file chosen";
+    name.title = full;
+  }
 }
 
 function adapterLabel(info) {
@@ -135,7 +156,11 @@ function showAdapter(info) {
     dd.textContent = v;
     dl.append(dt, dd);
   }
-  dl.hidden = false;
+  const gpuName = document.createElement("code");
+  gpuName.textContent = adapterLabel(info);
+  el("fw-adapter-summary").replaceChildren("WebGPU · ", gpuName, ` · FastWarp ${info.fastwarp_version}`);
+  el("fw-support").textContent = "";
+  el("fw-adapter-box").hidden = false;
   if (software) {
     message(
       "The browser gave FastWarp a software (CPU) adapter instead of a GPU. A registration will be very slow; use the 2 mm grid, or a browser and computer with WebGPU on the GPU.",
@@ -208,16 +233,13 @@ function onDone(zip, memory) {
   finish();
   state.restarts = 0;
   el("fw-progress").value = 1;
-  el("fw-stage").textContent = `Done in ${clock(elapsed * 1000)}`;
-  el("fw-elapsed").textContent = "";
   const entries = zipEntries(zip);
-  const list = el("fw-files");
-  list.replaceChildren();
-  for (const e of entries) {
-    const li = document.createElement("li");
-    li.textContent = `${e.name} (${bytes(e.size)})`;
-    list.append(li);
-  }
+  el("fw-stage").textContent = `Done in ${clock(elapsed * 1000)} · ${entries.length} files, ${bytes(zip.byteLength)}`;
+  el("fw-elapsed").textContent = "";
+  log(`Files: ${entries.map((e) => `${e.name} (${bytes(e.size)})`).join(", ")}`);
+  state.done = true;
+  el("fw-progress").hidden = true;
+  updateButtons();
   let run = null;
   const runEntry = entries.find((e) => e.name === "run.json");
   if (runEntry) {
@@ -292,9 +314,8 @@ function startWorker(requestInfo = true) {
     if (data.type === "info") {
       state.ready = true;
       showAdapter(data.info);
-      el("fw-support").textContent = "WebGPU is available. Choose two images, or load the sample data.";
+      state.gpu = "ready";
       state.adapterLabel = adapterLabel(data.info);
-      log(`GPU: ${state.adapterLabel}`);
       updateButtons();
       if (autorun === "sample") runSample();
     } else if (data.type === "progress") {
@@ -303,6 +324,7 @@ function startWorker(requestInfo = true) {
       onDone(data.zip, data.memory);
     } else if (data.type === "error") {
       if (!state.ready && !state.running) {
+        state.gpu = "failed";
         el("fw-support").textContent = "WebGPU could not be started.";
         message(`${data.message} ${BROWSERS}`, "error");
         result("error", { name: data.name, message: data.message, phase: "gpu_info" });
@@ -315,6 +337,7 @@ function startWorker(requestInfo = true) {
     e.preventDefault?.();
     const text = e.message || "the worker could not be started";
     if (!state.ready && !state.running) {
+      state.gpu = "failed";
       el("fw-support").textContent = "FastWarp's worker could not be started.";
       message(text, "error");
       result("error", { name: "WorkerError", message: text, phase: "start" });
@@ -336,7 +359,8 @@ async function run() {
   const { fixed, moving } = state.inputs;
   if (!fixed || !moving) return;
   el("fw-download").hidden = true;
-  el("fw-files").replaceChildren();
+  el("fw-progress").hidden = false;
+  state.done = false;
   el("fw-log").textContent = "";
   message("");
   const grid = el("fw-grid").value;
@@ -400,8 +424,9 @@ function fromFile(file) {
 }
 
 function runSample() {
-  state.inputs.fixed = fromUrl(SAMPLES.fixed, "MNI ICBM 2009b template (sample)");
-  state.inputs.moving = fromUrl(SAMPLES.moving, "defaced T1w (sample)");
+  state.sample = true;
+  state.inputs.fixed = fromUrl(SAMPLES.fixed, "MNI 2009b template");
+  state.inputs.moving = fromUrl(SAMPLES.moving, "Defaced T1w");
   updateButtons();
   if (autorun === "sample") {
     const grid = params.get("grid");
@@ -412,14 +437,27 @@ function runSample() {
 
 async function main() {
   el("fw-grid").value = isMobile() ? "2mm" : "1mm";
-  el("fw-fixed").addEventListener("change", (e) => {
-    if (e.target.files[0]) state.inputs.fixed = fromFile(e.target.files[0]);
-    updateButtons();
-  });
-  el("fw-moving").addEventListener("change", (e) => {
-    if (e.target.files[0]) state.inputs.moving = fromFile(e.target.files[0]);
-    updateButtons();
-  });
+  for (const key of ["fixed", "moving"]) {
+    const input = el(`fw-${key}`);
+    const zone = el(`fw-pick-${key}`);
+    const choose = (file) => {
+      if (!file || state.running) return;
+      state.inputs[key] = fromFile(file);
+      state.sample = false;
+      updateButtons();
+    };
+    input.addEventListener("change", (e) => choose(e.target.files[0]));
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      zone.classList.add("fw-drag");
+    });
+    zone.addEventListener("dragleave", () => zone.classList.remove("fw-drag"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("fw-drag");
+      choose(e.dataTransfer.files[0]);
+    });
+  }
   el("fw-sample").addEventListener("click", runSample);
   el("fw-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -429,6 +467,7 @@ async function main() {
   updateButtons();
 
   if (!("gpu" in navigator)) {
+    state.gpu = "failed";
     el("fw-support").textContent = "This browser does not offer WebGPU.";
     message(window.isSecureContext ? BROWSERS : `WebGPU needs a secure page (https or localhost). ${BROWSERS}`, "error");
     result("error", { name: "NoWebGPU", message: "navigator.gpu is missing" });
@@ -441,6 +480,7 @@ async function main() {
     adapter = null;
   }
   if (!adapter) {
+    state.gpu = "failed";
     el("fw-support").textContent = "WebGPU is present, but the browser gave no GPU adapter.";
     message(
       `The GPU may be on the browser's block list, or WebGPU may be switched off (see chrome://gpu or about:support). ${BROWSERS}`,
@@ -457,6 +497,8 @@ async function main() {
   ]);
   el("fw-sample-row").hidden = !(haveFixed && haveMoving);
   if (!haveWasm) {
+    state.gpu = "failed";
+    updateButtons();
     el("fw-support").textContent = "The FastWarp WebAssembly module is not part of this build of the documentation.";
     message(
       "It is built on Read the Docs, or locally with docs/_scripts/build_web_demo.sh before sphinx-build.",
