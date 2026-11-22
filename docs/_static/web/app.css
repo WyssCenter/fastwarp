@@ -59,33 +59,58 @@
 
 .fw-demo .fw-pick-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   margin-top: 0.25rem;
 }
 
-.fw-demo input[type="file"] {
-  flex: none;
-  width: 7.5rem;
-  overflow: hidden;
-  color: transparent;
-  font: inherit;
+.fw-demo .fw-pick {
+  position: relative;
 }
 
-.fw-demo input[type="file"]::file-selector-button {
+.fw-demo .fw-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.fw-demo .fw-choose {
+  flex: none;
   border: 1px solid var(--pst-color-primary);
   border-radius: 6px;
-  background: transparent;
   color: var(--pst-color-primary);
   padding: 0.35rem 1rem;
-  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background-color 0.15s ease;
 }
 
-.fw-demo input[type="file"]:disabled::file-selector-button {
+.fw-demo .fw-pick:hover .fw-choose {
+  background: color-mix(in srgb, var(--pst-color-primary) 8%, transparent);
+}
+
+.fw-demo .fw-file-input:focus-visible + .fw-choose {
+  outline: 2px solid var(--pst-color-primary);
+  outline-offset: 2px;
+}
+
+.fw-demo .fw-file-input:disabled + .fw-choose {
   border-color: var(--pst-color-border);
   color: var(--pst-color-text-muted);
+  background: transparent;
   cursor: not-allowed;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .fw-demo .fw-drop {
+    display: none;
+  }
 }
 
 .fw-demo .fw-name {
@@ -328,23 +353,6 @@
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 600px) {
-  .fw-demo {
-    padding: 1rem;
-  }
-  .fw-demo .fw-run-row,
-  .fw-demo .fw-grid-label {
-    display: grid;
-  }
-  .fw-demo .fw-actions {
-    flex-wrap: wrap;
-  }
-  .fw-demo #fw-run,
-  .fw-demo #fw-cancel {
-    flex: 1;
-  }
-}
-
 .fw-demo button,
 .fw-demo .fw-button {
   font-weight: 600;
@@ -409,5 +417,35 @@
 @media (prefers-reduced-motion: reduce) {
   .fw-demo select {
     transition: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .fw-demo {
+    padding: 1.25rem 1rem 0.75rem;
+  }
+
+  .fw-demo .fw-run-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fw-demo select {
+    width: 100%;
+  }
+
+  .fw-demo .fw-actions {
+    flex-wrap: wrap;
+  }
+
+  .fw-demo .fw-actions > button,
+  .fw-demo .fw-actions > .fw-button {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+
+  .fw-demo .fw-run-hint {
+    flex: 1 1 100%;
+    order: -2;
   }
 }
