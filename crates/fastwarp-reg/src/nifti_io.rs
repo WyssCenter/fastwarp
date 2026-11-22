@@ -395,7 +395,7 @@ fn read_first_volume_from<T: Send>(
     if dims.len() < 3 {
         return Err(geom_err(
             path,
-            format!("expected a 3-D volume, shape {dims:?}"),
+            format!("expected a 3D volume, shape {dims:?}"),
         ));
     }
     let grid = grid_from_header(path, &h)?;
@@ -412,14 +412,14 @@ fn read_first_volume_from<T: Send>(
 }
 
 impl Volume<f32> {
-    /// Loads a 3-D (or 4-D, first volume) NIfTI file as `f32`, applying `scl_slope` and
+    /// Loads a 3D (or 4D, first volume) NIfTI file as `f32`, applying `scl_slope` and
     /// `scl_inter`, with the geometry ITK derives from the header.
     pub fn load_nifti(path: &Path) -> Result<Self> {
         let (grid, data) = read_first_volume(path, |v| v as f32)?;
         Volume::from_vec(grid, data)
     }
 
-    /// Loads a 3-D (or 4-D, first volume) NIfTI volume from memory as `f32`; the bytes are
+    /// Loads a 3D (or 4D, first volume) NIfTI volume from memory as `f32`; the bytes are
     /// gzip-compressed when they start with the gzip magic bytes. Same result as
     /// [`Volume::load_nifti`] on the same bytes in a file.
     pub fn from_nifti_bytes(bytes: Vec<u8>) -> Result<Self> {

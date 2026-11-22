@@ -377,7 +377,7 @@ pub(crate) fn dimensionality(opt: &Opt) -> Result<(), Refusal> {
         "3" => Ok(()),
         v @ ("2" | "4") => unsupported(
             format!("{} {v}", opt.spelled),
-            "FastWarp registers and resamples 3-D images.",
+            "FastWarp registers and resamples 3D images.",
         ),
         v => refuse(format!("{}: expected 2, 3 or 4, got {v:?}", opt.spelled)),
     }

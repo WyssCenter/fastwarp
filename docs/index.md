@@ -4,21 +4,21 @@ html_theme.sidebar_secondary.remove: true
 
 # FastWarp
 
-**FastWarp registers 3-D images on the GPU.** It runs the rigid, affine and {term}`SyN`
+**FastWarp registers 3D images on the GPU.** It runs the rigid, affine and {term}`SyN`
 registration of [ANTs](https://github.com/ANTsX/ANTs) on a graphics card and writes the same
-transform files as ANTs, so the rest of an ANTs-based pipeline can stay as it is.
+transform files, so the rest of an ANTs-based pipeline can stay as it is.
 
-FastWarp is a Python package with a compiled Rust engine. It is meant for people who build or run
-neuroimaging pipelines, for example to normalize brain MRI onto a template, and who use ANTs for
-that today. It is the registration engine of
-[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), a tool for localizing deep brain
-stimulation electrodes, and works on its own as well.
+It ships as both a [Python package](installation.md#from-pypi) and a [command-line interface](installation.md#command-line) and is meant for people who build or run neuroimaging pipelines, for example to normalize brain MRI onto a template.
+
+**FastWarp** is shipped with [Lead-DBS v4.0](https://www.lead-dbs.org), the de-facto standard for localizing deep brain stimulation electrodes, and is also the registration engine of
+[Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer).
 
 ```{button-ref} browser
 :color: primary
-:class: sd-px-4
+:align: center
+:class: fw-cta
 
-Try it in your browser now
+Try FastWarp in your browser now
 ```
 
 ```{raw} html
@@ -29,9 +29,11 @@ Try it in your browser now
 </figure>
 ```
 
+:::{div} fw-caption
 A 7 T scan of one subject of the public [SNSX dataset](https://openneuro.org/datasets/ds004470)
 registered onto the MNI 2009c template with the default settings
 ([how the figure is made](guide/normalization.md#the-figure-on-the-home-page)).
+:::
 
 ::::{grid} 1 1 2 2
 :gutter: 3
@@ -42,7 +44,6 @@ registered onto the MNI 2009c template with the default settings
 - A full normalization in one call: {term}`centre of mass`, Rigid, Affine, then SyN.
 - Rigid or affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like ANTs' `antsApplyTransforms`, on the CPU.
-- A [command line](cli.md), `fastwarp`, for the same steps on NIfTI files.
 :::
 
 :::{grid-item-card} What it works with
@@ -50,11 +51,12 @@ registered onto the MNI 2009c template with the default settings
 
 - GPUs through [wgpu](https://wgpu.rs): Vulkan (Linux, Windows), Metal (macOS) and DirectX 12
   (Windows).
-- Python 3.11 or later and NumPy 2.0 or later. [ANTsPy](https://github.com/ANTsX/ANTsPy) is
-  optional.
-- Transform files that ANTs and ANTsPy read, such as `Composite.h5`.
+- Python 3.11 or later.
+- Transform files that ANTs and [ANTsPy](https://github.com/ANTsX/ANTsPy) read, such as `Composite.h5`.
 :::
-::::
+
+:::{grid-item-card} How to use it
+:class-card: sd-shadow-none
 
 ```python
 import ants
@@ -66,6 +68,9 @@ moving = ants.image_read(ants.get_ants_data("ch2"))
 info = fastwarp.register_syn(fixed, moving, "out/ch2_to_mni_")
 warped = ants.apply_transforms(fixed, moving, ["out/ch2_to_mni_Composite.h5"])
 ```
+
+:::
+::::
 
 ## Where to go next
 
@@ -111,7 +116,7 @@ Every public function, class, constant and exception, with its parameters.
 :link: validation
 :link-type: doc
 
-How speed and accuracy are measured against ANTs, and what the tests check today.
+How speed and accuracy are measured, and what the tests check today.
 :::
 
 :::{grid-item-card} {fas}`life-ring` Troubleshooting
@@ -122,8 +127,7 @@ No GPU found, too little GPU memory, and why results differ slightly from ANTs.
 :::
 ::::
 
-FastWarp is research software, licensed under the [Apache License 2.0](licence.md) and
-maintained by Richard Köhler and Jan Philipp Payonk. If you use it in your work, please
+FastWarp is research software, licensed under the [Apache License 2.0](licence.md). If you use it in your work, please
 [cite it](citing.md).
 
 ```{toctree}

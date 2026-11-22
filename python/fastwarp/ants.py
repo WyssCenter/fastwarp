@@ -260,7 +260,7 @@ def _ignored(function: str, argument: str, value: Any, why: str, stacklevel: int
 def _check_image(img: Any, what: str, function: str = _REG) -> None:
     if img.dimension != 3:
         raise _unsupported(
-            function, f"{what}.dimension", img.dimension, "FastWarp handles 3-D images only"
+            function, f"{what}.dimension", img.dimension, "FastWarp handles 3D images only"
         )
     if img.components != 1:
         raise _unsupported(
@@ -1044,7 +1044,7 @@ def registration(
     Parameters
     ----------
     fixed : ANTsImage or list of str
-        The image to register onto, 3-D and scalar. A list of ``antsRegistration`` arguments
+        The image to register onto, 3D and scalar. A list of ``antsRegistration`` arguments
         (with ``moving=None``) runs them as ``fastwarp ants-registration`` does and returns 0, as
         ANTsPy does; this form needs no ANTsPy.
     moving : ANTsImage or None
@@ -1370,9 +1370,9 @@ def apply_transforms(
     Parameters
     ----------
     fixed : ANTsImage
-        The output grid and pixel type, 3-D.
+        The output grid and pixel type, 3D.
     moving : ANTsImage
-        The image to resample, 3-D and scalar.
+        The image to resample, 3D and scalar.
     transformlist : str or list of str
         Transform files (``.mat``, ``.txt``, ``.h5``, ``.nii.gz``); a point of ``fixed`` goes
         through the first file first.
@@ -1451,12 +1451,12 @@ def apply_transforms(
                 raise FileNotFoundError(f"Transform {path} does not exist")
         if fixed.dimension != 3:
             raise _unsupported(
-                _APPLY, "fixed.dimension", fixed.dimension, "FastWarp handles 3-D images only"
+                _APPLY, "fixed.dimension", fixed.dimension, "FastWarp handles 3D images only"
             )
         _check_image(moving, "moving", _APPLY)
         if not _same(imagetype, 0):
             raise _unsupported(
-                _APPLY, "imagetype", imagetype, "FastWarp resamples scalar 3-D images only"
+                _APPLY, "imagetype", imagetype, "FastWarp resamples scalar 3D images only"
             )
         if interpolator not in _SUPPORTED_INTERPOLATORS:
             raise _unsupported(

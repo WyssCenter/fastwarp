@@ -12,7 +12,7 @@ of the two forms below. To work on NIfTI files without Python code, use the
   and `direction` attributes works the same way.
 
 Tuple
-: `(array, spacing, origin, direction)`, with a 3-D NumPy array, three spacings in millimetres,
+: `(array, spacing, origin, direction)`, with a 3D NumPy array, three spacings in millimetres,
   the physical position of voxel `(0, 0, 0)` in millimetres, and a 3 × 3 direction matrix.
 
 Both forms describe the image in the geometry of [ITK](https://itk.org), which ANTs uses:
@@ -25,7 +25,7 @@ Both forms describe the image in the geometry of [ITK](https://itk.org), which A
 
 ## Data types
 
-- The array must be 3-D.
+- The array must be 3D.
 - `float32` and `float64` arrays are passed to the engine as they are; arrays of any other type
   are converted to `float32` first.
 - A `float32` or `float64` array in Fortran order (the first index changing fastest), which is

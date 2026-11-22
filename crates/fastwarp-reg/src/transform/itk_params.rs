@@ -60,7 +60,7 @@ pub(crate) fn elem_from_record(r: &Record) -> Result<Option<TransformElem>> {
         unsupported(
             FORMAT,
             format!(
-                "transform type {} (only 3-D double or float types)",
+                "transform type {} (only 3D double or float types)",
                 r.type_name
             ),
         )

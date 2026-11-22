@@ -48,7 +48,7 @@ def _image_args(img: Any) -> tuple:
     if arr.dtype not in (np.float32, np.float64):
         arr = arr.astype(np.float32)
     if arr.ndim != 3:
-        raise ValueError(f"expected a 3-D image, got shape {arr.shape}")
+        raise ValueError(f"expected a 3D image, got shape {arr.shape}")
     # A view for the x-fastest (Fortran-ordered) arrays ANTs returns; copied only otherwise.
     flat = arr.ravel(order="F")
     d = np.asarray(direction, dtype=np.float64).reshape(3, 3)
@@ -185,7 +185,7 @@ def register_syn(
     Raises
     ------
     ValueError
-        An argument or the recipe is invalid, a mask is not a 3-D image or has no voxel inside,
+        An argument or the recipe is invalid, a mask is not a 3D image or has no voxel inside,
         or a mask is given that no stage would use (a moving mask for a recipe without a SyN
         stage, or a mask that every stage switches off). Checked before the GPU is opened.
     GpuUnavailableError
@@ -372,7 +372,7 @@ def fits_gpu(
     ValueError
         No fixed images, not as many moving images as fixed ones, ``channels`` below 1
         or not equal to the number of fixed images in a list, ``iso_mm`` not positive, an
-        invalid recipe, a mask that is not 3-D, or a mask that no stage would use (a moving mask
+        invalid recipe, a mask that is not 3D, or a mask that no stage would use (a moving mask
         for a recipe without a SyN stage, or a mask that every stage switches off).
 
     See Also
@@ -419,7 +419,7 @@ def _mask_dims(mask: Any) -> tuple[int, int, int]:
     ``(array, spacing, origin, direction)``."""
     shape = tuple(int(n) for n in (np.shape(mask[0]) if isinstance(mask, tuple) else mask.shape))
     if len(shape) != 3:
-        raise ValueError(f"expected a 3-D mask, got shape {shape}")
+        raise ValueError(f"expected a 3D mask, got shape {shape}")
     return (shape[0], shape[1], shape[2])
 
 
@@ -458,7 +458,7 @@ def _grid_args(ref: Any) -> tuple:
     else:
         shape, spacing, origin, direction = ref.shape, ref.spacing, ref.origin, ref.direction
     if len(shape) != 3:
-        raise ValueError(f"expected a 3-D reference, got shape {tuple(shape)}")
+        raise ValueError(f"expected a 3D reference, got shape {tuple(shape)}")
     d = np.asarray(direction, dtype=np.float64).reshape(3, 3)
     return (
         tuple(int(n) for n in shape),
@@ -795,7 +795,7 @@ def linear_session(
     ------
     ValueError
         ``winsorize`` is not ``(lower, upper)`` with ``0 <= lower < upper <= 1``, or an image is
-        not 3-D.
+        not 3D.
     GpuUnavailableError
         No usable GPU.
     RegistrationError

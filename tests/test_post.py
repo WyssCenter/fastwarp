@@ -202,7 +202,7 @@ def test_bad_arguments(scene, tmp_path):
         g.apply_transforms(moving, reference, mat, interpolation="bSpline")
     with pytest.raises(ValueError, match="compression_level"):
         g.compose_field(mat, reference, tmp_path / "x.nii.gz", compression_level=10)
-    with pytest.raises(ValueError, match="3-D"):
+    with pytest.raises(ValueError, match="3D"):
         g.compose_field(mat, ((4, 4), (1, 1), (0, 0), np.eye(2)), tmp_path / "x.nii.gz")
     with pytest.raises(ValueError, match="at least one"):
         g.apply_transforms(moving, reference, [])

@@ -6,7 +6,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/WyssCenter/fastwarp/blob/main/LICENSE)
 [![Documentation](https://readthedocs.org/projects/fastwarp/badge/?version=latest)](https://fastwarp.readthedocs.io)
 
-FastWarp registers 3-D images on the GPU. It runs the rigid, affine and SyN registration of
+FastWarp registers 3D images on the GPU. It runs the rigid, affine and SyN registration of
 [ANTs](https://github.com/ANTsX/ANTs) on a graphics card and writes the same transform files as
 ANTs, so the rest of an ANTs-based pipeline can stay as it is. It is meant for people who build
 or run neuroimaging pipelines, for example to normalize brain MRI onto a template.

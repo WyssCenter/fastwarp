@@ -275,8 +275,8 @@ def test_bad_masks_are_refused_before_any_work(tmp_path):
     empty = blank((8, 8, 8))
     linear = {"stages": [{"transform": "rigid"}]}
     for kwargs, match in (
-        ({"fixed_mask": flat}, "3-D"),
-        ({"moving_mask": flat}, "3-D"),
+        ({"fixed_mask": flat}, "3D"),
+        ({"moving_mask": flat}, "3D"),
         ({"fixed_mask": empty}, "fixed mask has no voxel inside"),
         ({"moving_mask": empty}, "moving mask has no voxel inside"),
         ({"moving_mask": p, "recipe": linear}, "needs a SyN stage"),
