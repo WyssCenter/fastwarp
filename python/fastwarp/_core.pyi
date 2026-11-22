@@ -211,4 +211,6 @@ def ants_joint_fusion(
     images: list[tuple[str, _Image]] = ...,
     keep: list[str] = ...,
     cancel: CancelToken | None = None,
+    mode: str = "cpu",
+    adapter: str | None = None,
 ) -> dict[str, Any]: ...

@@ -317,4 +317,10 @@ fn bad_inputs_are_refused() {
     };
     assert!(joint_fusion(&two, &opts, None).is_ok());
     assert_eq!(JlfOptions::default().alpha, f64::from(0.1f32));
+    let hybrid = JlfOptions {
+        device: JlfDevice::Hybrid,
+        ..small()
+    };
+    let e = joint_fusion(&two, &hybrid, None).unwrap_err().to_string();
+    assert!(e.contains("GPU"), "{e}");
 }

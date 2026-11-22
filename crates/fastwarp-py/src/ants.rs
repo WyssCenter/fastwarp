@@ -13,10 +13,11 @@ use std::sync::Arc;
 
 use fastwarp_cli::ants::{
     parse_apply, parse_joint_fusion, parse_registration, resolve_seed, run_apply_plan,
-    run_joint_fusion_plan, run_registration, ApplyCall, Images, JointFusionCall, KeptData,
-    KeptImage, MemoryImage, Refusal, RegistrationCall, RunOptions,
+    run_joint_fusion_plan, run_registration, ApplyCall, Images, JointFusionCall,
+    JointFusionOptions, KeptData, KeptImage, MemoryImage, Refusal, RegistrationCall, RunOptions,
 };
 use fastwarp_cli::{CliError, ExitStatus};
+use fastwarp_reg::jlf::JlfDevice;
 use numpy::PyArray1;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -239,20 +240,33 @@ pub fn ants_apply_transforms<'py>(
     Ok(d)
 }
 
-/// Runs an `antsJointFusion` argument list as `fastwarp ants-joint-fusion` does, on the CPU.
-/// `images` maps names in the argument list to images held in memory; an output whose file name
+/// Runs an `antsJointFusion` argument list as `fastwarp ants-joint-fusion` does, on the CPU, or
+/// with `mode="hybrid"` with the patch search on the GPU (`adapter` picks it by a substring of its
+/// name). `images` maps names in the argument list to images held in memory; an output whose file name
 /// or name format is in `keep` is returned instead of written, under the expanded names. Returns
 /// `{"kind": "run", "warnings", "files", "kept", "label_set"}`, or the help or version text. The
 /// GIL is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (argv, images=Vec::new(), keep=Vec::new(), cancel=None))]
+#[pyo3(signature = (argv, images=Vec::new(), keep=Vec::new(), cancel=None, mode="cpu", adapter=None))]
+#[allow(clippy::too_many_arguments)]
 pub fn ants_joint_fusion<'py>(
     py: Python<'py>,
     argv: Vec<String>,
     images: Vec<(PathBuf, ImageArgs<'py>)>,
     keep: Vec<PathBuf>,
     cancel: Option<PyRef<'py, CancelToken>>,
+    mode: &str,
+    adapter: Option<String>,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let device = match mode {
+        "cpu" => JlfDevice::Cpu,
+        "hybrid" => JlfDevice::Hybrid,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "{JOINT_FUSION}: mode must be 'cpu' or 'hybrid', not {other:?}"
+            )))
+        }
+    };
     let plan = match parse_joint_fusion(&argv).map_err(|r| refused(JOINT_FUSION, r))? {
         JointFusionCall::Help(t) => return text_result(py, "help", t),
         JointFusionCall::Version(t) => return text_result(py, "version", t),
@@ -261,9 +275,13 @@ pub fn ants_joint_fusion<'py>(
     let inputs = memory_images(&images, &[])?;
     drop(images);
     let warnings = plan.warnings.clone();
-    let cancel = cancel.map(|c| Arc::clone(&c.flag));
+    let options = JointFusionOptions {
+        cancel: cancel.map(|c| Arc::clone(&c.flag)),
+        device,
+        adapter,
+    };
     let done = py
-        .detach(move || run_joint_fusion_plan(&plan, Images::new(inputs, keep), cancel))
+        .detach(move || run_joint_fusion_plan(&plan, Images::new(inputs, keep), options))
         .map_err(|e| failed(JOINT_FUSION, e))?;
     let d = PyDict::new(py);
     d.set_item("kind", "run")?;

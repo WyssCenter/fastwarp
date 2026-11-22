@@ -25,8 +25,8 @@ pub(crate) mod run;
 
 pub use apply::{parse_apply, ApplyCall, ApplyOutput, ApplyPlan};
 pub use joint_fusion::{
-    parse_joint_fusion, run_joint_fusion_plan, series_name, JointFusionCall, JointFusionOutcome,
-    JointFusionOutputs, JointFusionPlan, SearchArg,
+    parse_joint_fusion, run_joint_fusion_plan, series_name, JointFusionCall, JointFusionOptions,
+    JointFusionOutcome, JointFusionOutputs, JointFusionPlan, SearchArg,
 };
 pub use registration::{
     parse_registration, InitialArg, LinearStageSpec, RegistrationCall, RegistrationPlan, StageSpec,

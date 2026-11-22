@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use fastwarp_reg::jlf::{joint_fusion, JlfInput, JlfOptions, PatchMetric, SearchRadius};
+use fastwarp_gpu::{BackendSelect, GpuContext};
+use fastwarp_reg::jlf::{joint_fusion, JlfDevice, JlfInput, JlfOptions, PatchMetric, SearchRadius};
 use fastwarp_reg::{Grid, RegError, Volume};
 
 use super::run::{failed, refused, warn};
@@ -539,6 +540,25 @@ pub struct JointFusionOutcome {
     pub label_set: Vec<u32>,
 }
 
+/// How [`run_joint_fusion_plan`] runs: where the patch search runs, which GPU (a substring of
+/// its name, overriding `FASTWARP_GPU_ADAPTER`), and a flag that cancels the run.
+#[derive(Clone, Debug, Default)]
+pub struct JointFusionOptions {
+    pub cancel: Option<Arc<AtomicBool>>,
+    pub device: JlfDevice,
+    pub adapter: Option<String>,
+}
+
+fn open_gpu(adapter: Option<String>) -> Result<GpuContext, CliError> {
+    let unavailable =
+        |e: fastwarp_gpu::GpuError| CliError::new(ExitStatus::GpuUnavailable, e.to_string());
+    let mut sel = BackendSelect::from_env().map_err(unavailable)?;
+    if adapter.is_some() {
+        sel.adapter_substring = adapter;
+    }
+    GpuContext::new(&sel).map_err(unavailable)
+}
+
 fn as_label(v: f64, whole: bool) -> Option<u32> {
     let in_range = v >= 0.0 && v <= f64::from(u32::MAX);
     (in_range && (!whole || v.fract() == 0.0)).then_some(v as u32)
@@ -613,8 +633,13 @@ impl Loader<'_> {
 pub fn run_joint_fusion_plan(
     plan: &JointFusionPlan,
     mut images: Images,
-    cancel: Option<Arc<AtomicBool>>,
+    options: JointFusionOptions,
 ) -> Result<JointFusionOutcome, CliError> {
+    let JointFusionOptions {
+        cancel,
+        device,
+        adapter,
+    } = options;
     for f in plan.output_names() {
         images.check_folder(&f)?;
     }
@@ -682,7 +707,15 @@ pub fn run_joint_fusion_plan(
     opts.nonnegative = plan.nonnegative;
     opts.posteriors = plan.retain_posteriors;
     opts.voting_weights = plan.retain_voting_weights;
-    let fused = joint_fusion(&input, &opts, cancel.as_deref()).map_err(reg_failure)?;
+    opts.device = device;
+    let fused = match device {
+        JlfDevice::Cpu => joint_fusion(&input, &opts, cancel.as_deref()),
+        _ => {
+            let ctx = open_gpu(adapter)?;
+            fastwarp_gpu::jlf::joint_fusion(Arc::new(ctx), &input, &opts, cancel.as_deref())
+        }
+    }
+    .map_err(reg_failure)?;
     drop(input);
     let mut files = Vec::new();
     let mut emit = |images: &mut Images,
@@ -747,8 +780,8 @@ pub(crate) fn command(
         JointFusionCall::Run(p) => *p,
     };
     warn(err, COMMAND, &plan.warnings);
-    let done =
-        run_joint_fusion_plan(&plan, Images::default(), None).map_err(|e| failed(COMMAND, e))?;
+    let done = run_joint_fusion_plan(&plan, Images::default(), JointFusionOptions::default())
+        .map_err(|e| failed(COMMAND, e))?;
     if plan.verbose {
         let mut text = format!(
             "fastwarp {} antsJointFusion compatibility mode\n{} atlases, label set {:?}\n",
