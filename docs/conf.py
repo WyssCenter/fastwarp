@@ -24,7 +24,7 @@ extensions = [
 
 exclude_patterns = ["_build", "requirements.txt"]
 myst_heading_anchors = 4
-myst_enable_extensions = ["colon_fence", "deflist"]
+myst_enable_extensions = ["attrs_block", "colon_fence", "deflist"]
 
 autoapi_dirs = ["../python/fastwarp"]
 autoapi_file_patterns = ["*.pyi", "*.py"]
