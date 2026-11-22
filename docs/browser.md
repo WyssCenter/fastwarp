@@ -12,7 +12,8 @@
         <span class="fw-pick-title">Fixed image</span>
         <span class="fw-hint">for example a template (.nii or .nii.gz)</span>
         <span class="fw-pick-row">
-          <input type="file" id="fw-fixed" accept=".nii,.gz,application/gzip">
+          <input type="file" id="fw-fixed" class="fw-file-input" accept=".nii,.gz,application/gzip">
+          <span class="fw-choose" aria-hidden="true">Choose file</span>
           <span class="fw-drop">or drop a file here</span>
         </span>
         <span id="fw-fixed-name" class="fw-name">No file chosen</span>
@@ -21,7 +22,8 @@
         <span class="fw-pick-title">Moving image</span>
         <span class="fw-hint">the scan to register onto it</span>
         <span class="fw-pick-row">
-          <input type="file" id="fw-moving" accept=".nii,.gz,application/gzip">
+          <input type="file" id="fw-moving" class="fw-file-input" accept=".nii,.gz,application/gzip">
+          <span class="fw-choose" aria-hidden="true">Choose file</span>
           <span class="fw-drop">or drop a file here</span>
         </span>
         <span id="fw-moving-name" class="fw-name">No file chosen</span>
