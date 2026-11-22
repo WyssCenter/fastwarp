@@ -127,6 +127,20 @@ the default `whichtoinvert` of `invtransforms` inverts it; for a linear type pas
 | `defaultvalue`, `verbose` | As in ANTsPy. |
 | `singleprecision` | Sets the type of a composed field (`float64` by default, `float32` with `True`). Resampled images are computed in `float32` either way, where ANTsPy computes in `float64` by default, and then cast to `fixed`'s pixel type. |
 
+## `joint_label_fusion`
+
+{func}`fastwarp.ants.joint_label_fusion` takes the arguments of ANTsPy's
+`ants.joint_label_fusion`, with its defaults (`beta=4`, `rho=0.01`, mean squares unless
+`usecor=True`), builds the `antsJointFusion` argument list ANTsPy builds and runs it on the CPU
+with the code of [`fastwarp ants-joint-fusion`](../cli.md#ants-joint-fusion) (see
+[Label fusion](label-fusion.md)). It returns what ANTsPy returns: the fused intensity image
+without labels, otherwise `segmentation` (the most probable label inside the mask, from the
+probability images, as ANTsPy computes it), `intensity`, `probabilityimages` and
+`segmentation_numbers`, in ANTsPy's order. Where ANTsPy is installed (as in CI), the test suite
+compares all of them with ANTsPy's, voxel for voxel, on textured test images.
+`max_lab_plus_one=True` is refused. Unlike ANTsPy, `no_zeroes=True` does not change the mask
+passed in (the result is the same), and the probability images are written to disk only with `output_prefix`.
+
 ## Argument lists
 
 `registration(["-d", "3", ...], None)`, ANTsPy's way to pass `antsRegistration` arguments

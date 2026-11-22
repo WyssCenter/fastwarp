@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: joint label fusion as ANTs' `antsJointFusion` (ANTs 2.6.5) computes it, on the CPU and in
+  parallel, with results equal to `antsJointFusion` on one thread except where search scores tie:
+  `fastwarp.joint_label_fusion`
+  (labels, intensities, label posteriors and atlas voting weights; masks, exclusions, a search
+  radius image, PC or MSQ search, non-negative weights), the command
+  `fastwarp ants-joint-fusion` with the `antsJointFusion` arguments, and
+  `fastwarp.ants.joint_label_fusion` with those of ANTsPy's `ants.joint_label_fusion`. The CPU
+  reference is the module `jlf` of `fastwarp-reg`. Guide: *Label fusion*.
 - New: *Try FastWarp in your browser*, a page of the documentation that runs the default
   registration of `fastwarp register` (centre of mass, Rigid, Affine, SyN) on the visitor's GPU
   through WebGPU, with nothing uploaded, on a 1 mm or 2 mm registration grid, and returns `0GenericAffine.mat`, `1Warp.nii.gz`,

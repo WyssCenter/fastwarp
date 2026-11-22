@@ -60,10 +60,19 @@ Applying ANTs transform files on the CPU. Guide: [Resampling](guide/resampling.m
 .. autoapidata:: fastwarp.INTERPOLATORS
 ```
 
+## Label fusion
+
+Joint label fusion on the CPU, as `antsJointFusion` runs it. Guide:
+[Label fusion](guide/label-fusion.md).
+
+```{eval-rst}
+.. autoapifunction:: fastwarp.joint_label_fusion
+```
+
 ## ANTsPy compatibility
 
-The module `fastwarp.ants`: ANTsPy's `ants.registration` and `ants.apply_transforms`. Guide:
-[ANTsPy compatibility](guide/ants.md).
+The module `fastwarp.ants`: ANTsPy's `ants.registration`, `ants.apply_transforms` and
+`ants.joint_label_fusion`. Guide: [ANTsPy compatibility](guide/ants.md).
 
 ```{eval-rst}
 .. autoapifunction:: fastwarp.ants.registration
@@ -71,6 +80,10 @@ The module `fastwarp.ants`: ANTsPy's `ants.registration` and `ants.apply_transfo
 
 ```{eval-rst}
 .. autoapifunction:: fastwarp.ants.apply_transforms
+```
+
+```{eval-rst}
+.. autoapifunction:: fastwarp.ants.joint_label_fusion
 ```
 
 ```{eval-rst}

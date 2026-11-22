@@ -20,6 +20,7 @@ from ._core import (
     gpu_info,
 )
 from ._core import LinearSession as _LinearSession
+from ._core import ants_joint_fusion as _ants_joint_fusion
 from ._core import apply_transforms as _apply_transforms
 from ._core import cohort_recipe as _cohort_recipe
 from ._core import compose_field as _compose_field
@@ -806,3 +807,193 @@ def linear_session(
     register_syn : Full normalization, including the rigid and affine stages.
     """
     return LinearSession(fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter)
+
+
+_JLF_LABELS = "<labels>.nii"
+_JLF_INTENSITY = "<intensity%d>.nii"
+_JLF_POSTERIOR = "<posterior%d>.nii"
+_JLF_WEIGHTS = "<weights%d>.nii"
+
+
+def _exact_args(img: Any) -> tuple:
+    """:func:`_image_args` with integer voxels as ``float64``, so labels stay exact."""
+    if isinstance(img, tuple):
+        arr, spacing, origin, direction = img
+    else:
+        arr, spacing, origin, direction = img.numpy(), img.spacing, img.origin, img.direction
+    arr = np.asarray(arr)
+    if not np.issubdtype(arr.dtype, np.floating):
+        arr = arr.astype(np.float64)
+    return _image_args((arr, spacing, origin, direction))
+
+
+def _radius(value: Any, what: str) -> str:
+    values = [value] if isinstance(value, (int, np.integer)) else list(value)
+    if len(values) not in (1, 3) or not all(
+        isinstance(v, (int, np.integer)) and not isinstance(v, bool) and v >= 0 for v in values
+    ):
+        raise ValueError(f"{what} must be a non-negative int or three of them")
+    return "x".join(str(int(v)) for v in values)
+
+
+def _modalities(img: Any) -> list[Any]:
+    return list(img) if isinstance(img, list) else [img]
+
+
+def joint_label_fusion(
+    target: Any,
+    atlases: Sequence[Any],
+    labels: Sequence[Any] | None = None,
+    *,
+    mask: Any = None,
+    alpha: float = 0.1,
+    beta: float = 2.0,
+    patch_radius: int | Sequence[int] = 2,
+    search_radius: Any = 3,
+    metric: str = "PC",
+    nonnegative: bool = False,
+    exclusions: Mapping[int, Any] | None = None,
+    return_posteriors: bool = False,
+    return_weights: bool = False,
+    cancel: CancelToken | None = None,
+) -> dict[str, Any]:
+    """Fuse atlas labels and intensities onto a target image, as ``antsJointFusion`` does.
+
+    Joint label fusion (Wang et al. 2013) weights the atlases at each voxel by how well their
+    patches match the target's, taking into account that atlases make correlated errors. It runs
+    the same code as ``fastwarp ants-joint-fusion`` on the CPU, in parallel, and needs no GPU.
+    The atlases must already be registered to the target and resampled onto its grid (labels
+    with ``"nearestNeighbor"``). Images are matched by voxel index, as in ANTs.
+
+    Parameters
+    ----------
+    target : ANTsImage or tuple, or a list of them
+        The target image, or one image per modality.
+    atlases : list
+        The atlas images (at least two), in atlas order. Each is an image, or a list with one
+        image per modality; every atlas has the same modalities, as many as the target or more
+        (with one target image, only each atlas's first modality guides the search and weights).
+    labels : list, optional
+        One label image per atlas for label fusion, with whole numbers from 0 to 4294967295 (other
+        values raise ``ValueError``); without it only intensities are fused.
+    mask : ANTsImage or tuple, optional
+        Fuse only where the mask, truncated to an integer, is not 0.
+    alpha : float, default 0.1
+        Added to the diagonal of the joint error matrix (``-a``).
+    beta : float, default 2.0
+        Exponent of the patch difference products (``-b``). ``alpha`` and ``beta`` are
+        rounded to ``float32``, as ``antsJointFusion`` reads them.
+    patch_radius : int or 3 ints, default 2
+        Patch radius in voxels (``-p``), at most 5.
+    search_radius : int, 3 ints or image, default 3
+        Search radius in voxels (``-s``), at most 10, or an image with an isotropic radius per
+        voxel (0 skips the voxel).
+    metric : {"PC", "MSQ"}, default "PC"
+        Patch similarity of the search: Pearson correlation or mean squares (``-m``).
+    nonnegative : bool, default False
+        Non-negative least squares for the weights (``-c 1``).
+    exclusions : dict, optional
+        ``{label: image}``: the label cannot win where the image is not 0 (``-e``).
+    return_posteriors : bool, default False
+        Also return the posterior of each label but 0.
+    return_weights : bool, default False
+        Also return each atlas's voting weight.
+    cancel : CancelToken, optional
+        Stops the fusion between blocks of voxels.
+
+    Returns
+    -------
+    dict
+        ``"labels"`` (the fused labels, ``uint32``, or ``None`` without ``labels``),
+        ``"intensity"`` (one fused image per atlas modality), ``"label_set"`` (the labels found
+        inside the mask), and with the flags ``"posteriors"`` (``{label: image}``) and
+        ``"weights"`` (one image per atlas). Images are ``ANTsImage`` objects like the
+        (first) target when it is one, otherwise arrays of its shape.
+
+    Raises
+    ------
+    ValueError
+        An invalid argument, or images of different sizes.
+    RegistrationError
+        The fusion failed.
+    RegistrationCancelled
+        ``cancel`` was set.
+    """
+    targets = _modalities(target)
+    atlas_sets = [_modalities(a) for a in atlases]
+    if len(atlas_sets) < 2:
+        raise ValueError("joint_label_fusion needs at least 2 atlases")
+    if labels is not None and len(labels) != len(atlas_sets):
+        raise ValueError(f"{len(labels)} label images for {len(atlas_sets)} atlases")
+    if str(metric).upper() not in ("PC", "MSQ"):
+        raise ValueError("metric must be 'PC' or 'MSQ'")
+    for name, value in (("alpha", alpha), ("beta", beta)):
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{name} must be a finite number")
+    images: list[tuple[str, tuple]] = []
+
+    def name(key: str, img: Any, exact: bool = False) -> str:
+        n = f"<{key}>.nii"
+        images.append((n, _exact_args(img) if exact else _image_args(img)))
+        return n
+
+    def bracket(names: list[str]) -> str:
+        return names[0] if len(names) == 1 else "[" + ",".join(names) + "]"
+
+    argv = ["-d", "3", "-t", bracket([name(f"target_{i}", t) for i, t in enumerate(targets)])]
+    for i in reversed(range(len(atlas_sets))):
+        modalities = [name(f"atlas_{i}_{j}", a) for j, a in enumerate(atlas_sets[i])]
+        argv += ["-g", f"[{','.join(modalities)}]"]
+        if labels is not None:
+            argv += ["-l", name(f"labels_{i}", labels[i], exact=True)]
+    radius_given = isinstance(search_radius, (int, np.integer)) or (
+        isinstance(search_radius, (list, tuple))
+        and all(isinstance(v, (int, np.integer)) for v in search_radius)
+    )
+    if radius_given:
+        search = _radius(search_radius, "search_radius")
+    else:
+        search = name("search_radius", search_radius, exact=True)
+    argv += ["-a", repr(float(alpha)), "-b", repr(float(beta))]
+    argv += ["-c", str(int(bool(nonnegative))), "-p", _radius(patch_radius, "patch_radius")]
+    argv += ["-m", str(metric).upper(), "-s", search]
+    if mask is not None:
+        argv += ["-x", name("mask", mask, exact=True)]
+    for label, excluded in (exclusions or {}).items():
+        argv += ["-e", f"{int(label)}[{name(f'exclusion_{int(label)}', excluded, exact=True)}]"]
+    outputs = [_JLF_LABELS, _JLF_INTENSITY]
+    if return_posteriors or return_weights:
+        outputs.append(_JLF_POSTERIOR if return_posteriors else "")
+    if return_weights:
+        outputs.append(_JLF_WEIGHTS)
+    argv += ["-o", "[" + ",".join(outputs) + "]"]
+    keep = [o for o in outputs if o]
+    out = _ants_joint_fusion(argv, images=images, keep=keep, cancel=cancel)
+    _warn_skipped(out)
+    kept = out["kept"]
+    reference = targets[0]
+
+    def image(key: str, dtype: Any = np.float32) -> Any:
+        data, size, *_ = kept[key]
+        arr = np.asarray(data).reshape(tuple(size), order="F").astype(dtype)
+        if hasattr(reference, "new_image_like"):
+            return reference.new_image_like(arr)
+        return arr
+
+    label_set = [int(v) for v in out["label_set"]]
+    result: dict[str, Any] = {
+        "labels": image(_JLF_LABELS, np.uint32) if _JLF_LABELS in kept else None,
+        "intensity": [
+            image(_JLF_INTENSITY.replace("%d", str(m + 1))) for m in range(len(atlas_sets[0]))
+        ],
+        "label_set": label_set,
+    }
+    if return_posteriors:
+        result["posteriors"] = {
+            v: image(_JLF_POSTERIOR.replace("%d", str(v))) for v in label_set if v != 0
+        }
+    if return_weights:
+        result["weights"] = [
+            image(_JLF_WEIGHTS.replace("%d", str(i + 1))) for i in range(len(atlas_sets))
+        ]
+    return result

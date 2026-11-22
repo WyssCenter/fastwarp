@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
-//! The ANTs compatibility mode: `fastwarp ants-registration ARGS...` and
-//! `fastwarp ants-apply-transforms ARGS...` take the arguments of `antsRegistration` and
-//! `antsApplyTransforms` (ANTs 2.6.5), run the subset FastWarp supports and write the files ANTs
-//! writes. Anything that would change the result and is not supported is refused before any file
+//! The ANTs compatibility mode: `fastwarp ants-registration ARGS...`,
+//! `fastwarp ants-apply-transforms ARGS...` and `fastwarp ants-joint-fusion ARGS...` take the
+//! arguments of `antsRegistration`, `antsApplyTransforms` and `antsJointFusion` (ANTs 2.6.5), run
+//! the subset FastWarp supports and write the files ANTs writes. Anything that would change the result and is not supported is refused before any file
 //! is read or the GPU is opened.
 //!
-//! [`parse_registration`] and [`parse_apply`] are pure functions of the argument list (no file
-//! access, no environment), so the same rules serve the command line and the Python layer
-//! `fastwarp.ants`, which runs the plans with [`run_registration`] and [`run_apply_plan`].
+//! [`parse_registration`], [`parse_apply`] and [`parse_joint_fusion`] are pure functions of the
+//! argument list (no file access, no environment), so the same rules serve the command line and
+//! the Python layer `fastwarp.ants`, which runs the plans with [`run_registration`],
+//! [`run_apply_plan`] and [`run_joint_fusion_plan`].
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -18,17 +19,22 @@ use crate::image::is_nifti_name;
 use crate::post::Interp;
 
 mod apply;
+pub(crate) mod joint_fusion;
 mod registration;
 pub(crate) mod run;
 
 pub use apply::{parse_apply, ApplyCall, ApplyOutput, ApplyPlan};
+pub use joint_fusion::{
+    parse_joint_fusion, run_joint_fusion_plan, series_name, JointFusionCall, JointFusionOutcome,
+    JointFusionOutputs, JointFusionPlan, SearchArg,
+};
 pub use registration::{
     parse_registration, InitialArg, LinearStageSpec, RegistrationCall, RegistrationPlan, StageSpec,
     SynStageSpec,
 };
 pub use run::{
-    run_apply_plan, run_registration, Images, KeptImage, MemoryImage, RegistrationOutcome,
-    RunOptions,
+    run_apply_plan, run_registration, Images, KeptData, KeptImage, MemoryImage,
+    RegistrationOutcome, RunOptions,
 };
 
 /// Why an ANTs argument list is refused: the message, and whether it names something FastWarp

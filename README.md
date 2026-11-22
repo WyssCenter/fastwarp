@@ -15,6 +15,7 @@ or run neuroimaging pipelines, for example to normalize brain MRI onto a templat
   channels such as T1w + T2w.
 - Rigid and affine fits of one image pair, several in a row on images prepared once.
 - Resampling and field composition like `antsApplyTransforms`, on the CPU.
+- Joint label fusion like `antsJointFusion`, on the CPU.
 - A command line, `fastwarp`, for the same steps on NIfTI files.
 - Runs on Vulkan (Linux, Windows), Metal (macOS) and DirectX 12 (Windows) through
   [wgpu](https://wgpu.rs). Before a normalization starts, it checks that a GPU is present and

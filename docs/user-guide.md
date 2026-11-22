@@ -1,12 +1,14 @@
 # User guide
 
-FastWarp has three groups of functions:
+FastWarp has four groups of functions:
 
 - **Registration on the GPU.** {func}`~fastwarp.register_syn` runs a full normalization (Rigid,
   Affine and {term}`SyN`) and writes ANTs transform files. {func}`~fastwarp.linear_session`
   runs rigid or affine fits of one image pair.
 - **Resampling on the CPU.** {func}`~fastwarp.apply_transforms` and
   {func}`~fastwarp.compose_field` apply ANTs transform files, like `antsApplyTransforms`.
+- **Label fusion on the CPU.** {func}`~fastwarp.joint_label_fusion` combines the labels of
+  registered atlases, like `antsJointFusion`.
 - **GPU checks.** {func}`~fastwarp.gpu_available`, {func}`~fastwarp.gpu_info` and
   {func}`~fastwarp.fits_gpu` tell, before any work, whether a registration can run on this
   machine.
@@ -62,6 +64,13 @@ The registration schedule: every field, its type, unit, default and limits.
 :link-type: doc
 
 `apply_transforms` and `compose_field` on the CPU.
+:::
+
+:::{grid-item-card} Label fusion
+:link: guide/label-fusion
+:link-type: doc
+
+`joint_label_fusion`: multi-atlas segmentation as `antsJointFusion` runs it.
 :::
 
 :::{grid-item-card} GPU and memory
@@ -133,6 +142,7 @@ guide/outputs
 guide/recipes
 guide/linear
 guide/resampling
+guide/label-fusion
 guide/gpu
 guide/ants
 cli

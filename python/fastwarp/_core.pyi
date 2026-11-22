@@ -206,3 +206,9 @@ def ants_apply_transforms(
     grids: list[tuple[str, _Grid]] = ...,
     keep: list[str] = ...,
 ) -> dict[str, Any]: ...
+def ants_joint_fusion(
+    argv: list[str],
+    images: list[tuple[str, _Image]] = ...,
+    keep: list[str] = ...,
+    cancel: CancelToken | None = None,
+) -> dict[str, Any]: ...

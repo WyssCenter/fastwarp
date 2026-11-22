@@ -24,6 +24,8 @@
 //! * `init`, `optimizer`, `linear`: centre-of-mass initialisation, parameter scales and ITK's
 //!   conjugate-gradient line-search optimiser, and the `Rigid` / `Affine` Mattes MI stages over a
 //!   metric engine (CPU reference here, GPU in `fastwarp-gpu`).
+//!
+//! * `jlf`: joint label fusion as `antsJointFusion` computes it, on the CPU.
 
 pub mod apply;
 pub mod backend;
@@ -35,6 +37,7 @@ pub mod field_ops;
 pub mod grid;
 pub mod init;
 pub mod interp;
+pub mod jlf;
 pub mod linalg;
 pub mod linear;
 pub mod mask;

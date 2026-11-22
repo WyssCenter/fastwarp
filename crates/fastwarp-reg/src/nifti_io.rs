@@ -472,6 +472,13 @@ impl Volume<f32> {
 }
 
 impl Volume<f64> {
+    /// Like [`Volume::load_nifti_f64`], with the stored values kept in `f64` instead of rounded
+    /// through `f32`, so integer labels above 2^24 stay exact.
+    pub fn load_nifti_exact(path: &Path) -> Result<Self> {
+        let (grid, data) = read_first_volume(path, |v| v)?;
+        Volume::from_vec(grid, data)
+    }
+
     pub fn load_nifti_f64(path: &Path) -> Result<Self> {
         let (grid, data) = read_first_volume(path, |v| f64::from(v as f32))?;
         Volume::from_vec(grid, data)
