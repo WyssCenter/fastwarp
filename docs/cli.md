@@ -723,6 +723,65 @@ inside a composite transform, where ANTs writes the field transform alone; both 
 The inversion of a `.nii` / `.nii.gz` transform is refused when the arguments are parsed; whether
 an `.h5` or `.mat` file holds a field shows only when it is read.
 
+### ants-joint-fusion
+
+```bash
+fastwarp ants-joint-fusion [antsJointFusion arguments]
+```
+
+Takes the arguments of `antsJointFusion` (ANTs 2.6.5) and writes what it writes: joint label
+and intensity fusion of registered atlases onto a target, on the CPU and in parallel, with the
+code of {func}`~fastwarp.joint_label_fusion` (see [Label fusion](guide/label-fusion.md)). The
+results are those of `antsJointFusion` on one thread, voxel for voxel, except where search
+scores tie (below). Refusals work as for `ants-registration`.
+
+```bash
+fastwarp ants-joint-fusion -d 3 -t sub.nii.gz \
+  -g atlas1.nii.gz -l atlas1_labels.nii.gz -g atlas2.nii.gz -l atlas2_labels.nii.gz \
+  -x mask.nii.gz -o [labels.nii.gz,intensity%d.nii.gz,posterior%04d.nii.gz]
+```
+
+| Option | Supported values |
+| --- | --- |
+| `-d` | `3` (may be left out) |
+| `-t` | the target, or `[modality1,modality2,...]` |
+| `-g` | an atlas, or `[modality1,...]` with as many modalities as the target (or more with one target image: then only the first guides the weights), repeated; at least two |
+| `-l` | one label image per `-g`, in the same order; none for intensity fusion only (a different count also means intensity fusion only, with a warning, as in ANTs) |
+| `-a`, `-b` | alpha (default 0.1) and beta (default 2.0), read as `float` |
+| `-c` | `0` or `1`: non-negative weights |
+| `-p`, `-s` | patch and search radius, `2` or `2x2x2` (defaults 2 and 3); `-s` also takes an image of radii per voxel (a value that is not a radius is read as that image) |
+| `-m` | `PC` (Pearson correlation, the default) or `MSQ` (mean squares) |
+| `-e` | `label[exclusion.nii.gz]`, repeated: the label cannot win where the image is not 0 |
+| `-x` | mask: fuse only where it is not 0 |
+| `-o` | `labels.nii.gz` (the intensity image when there are no `-l`), or `[labels,intensity,posterior,weights]` with the last ones optional |
+| `-v`, `--version`, `-h` | verbose, version, help |
+
+As in ANTs, the atlases are numbered from the **last** `-g` given (`antsJointFusion` stores
+repeated options in reverse order): the voting weight file `1` belongs to the last atlas on the
+line. The intensity, posterior and weight names are `printf` formats with one integer
+(`%d`, `%03d`, ...): the modality and the atlas number from 1, and the label for the
+posteriors. Label 0 has no posterior file. The label image is `unsigned int`, the others
+`float`. Atlas labels must be whole numbers from 0 to 4294967295 and stay exact; masks and
+exclusion images are read as `unsigned int` (values truncated, as in ANTs).
+
+Differences from `antsJointFusion`: voxels outside the mask are 0 in the label image (ANTs leaves
+them uninitialised); a missing `-o` is refused (ANTs runs and writes nothing); an option given
+twice is refused, except `-g`, `-l` and `-e`; a 4D target is refused like `-d 4`; label images
+and masks keep their integer values exactly; the Cholesky solve is taken when the exact
+reciprocal condition number exceeds `sqrt(eps)` (ANTs uses LINPACK's estimate), which matters
+only for nearly singular systems. Refused: `-d 2`, `-d 4`, a patch radius above 5 or a search radius above 10 voxels (larger
+windows would need gigabytes and hours; ANTs users take 1 to 4), atlas labels that are not whole
+numbers from 0 to 4294967295 (ANTs would wrap them into other labels), negative or larger mask
+and exclusion values, and a name format other than one integer conversion.
+
+Where the results can differ from ANTs: when two search positions at the same distance score
+exactly the same, FastWarp takes the one first in neighbourhood order. ANTs takes the first in the
+order its `std::sort` (not stable) leaves equal distances in, which depends on the C++ library,
+so `antsJointFusion` itself can differ between Linux, macOS and Windows builds. Exact ties are
+rare on textured images but common under `PC` where the atlas patches are flat (for example a
+zero background): every flat patch scores 0. Near such regions the chosen positions, and so the
+votes and labels, can differ from those of a particular ANTs build.
+
 ## Exit status
 
 | Status | Meaning |

@@ -3,12 +3,13 @@
 
 """ANTsPy-compatible registration and resampling: a drop-in subset of ``ants``.
 
-:func:`registration` and :func:`apply_transforms` take the arguments of ANTsPy's
-``ants.registration`` and ``ants.apply_transforms`` (ANTsPy 0.6.3) and return what they return.
-Each call builds the ``antsRegistration`` or ``antsApplyTransforms`` argument list ANTsPy would
-build and runs it with the ANTs compatibility mode of the ``fastwarp`` command line
-(``fastwarp ants-registration``, ``fastwarp ants-apply-transforms``), with the images held in
-memory. The registration runs on the GPU; resampling runs on the CPU.
+:func:`registration`, :func:`apply_transforms` and :func:`joint_label_fusion` take the arguments
+of ANTsPy's ``ants.registration``, ``ants.apply_transforms`` and ``ants.joint_label_fusion``
+(ANTsPy 0.6.3) and return what they return. Each call builds the ``antsRegistration``,
+``antsApplyTransforms`` or ``antsJointFusion`` argument list ANTsPy would build and runs it with
+the ANTs compatibility mode of the ``fastwarp`` command line (``fastwarp ants-registration``,
+``fastwarp ants-apply-transforms``, ``fastwarp ants-joint-fusion``), with the images held in
+memory. The registration runs on the GPU; resampling and label fusion run on the CPU.
 
 Anything that would change the result and that FastWarp does not support raises
 :class:`UnsupportedArgument` before any work. Arguments that ANTsPy itself ignores for the chosen
@@ -46,7 +47,7 @@ from ._core import (
 
 UnsupportedArgument.__module__ = "fastwarp.ants"
 
-__all__ = ["UnsupportedArgument", "apply_transforms", "registration"]
+__all__ = ["UnsupportedArgument", "apply_transforms", "joint_label_fusion", "registration"]
 
 _REG = "registration"
 _APPLY = "apply_transforms"
@@ -1504,3 +1505,207 @@ def apply_transforms(
     if compose is not None:
         return tfn if os.path.exists(tfn) else None
     return _to_image(ants, out["kept"][_WARPED_MOVING], fixed.pixeltype)
+
+
+_JLF = "joint_label_fusion"
+_JLF_TARGET = "<target>.nii"
+_JLF_MASK = "<mask>.nii"
+_JLF_SEGMENTATION = "<segmentation>.nii"
+_JLF_INTENSITY = "<intensity>.nii"
+_JLF_PROBABILITY = "<prob%02d>.nii"
+
+
+def _jlf_argv(
+    rho: Any,
+    beta: Any,
+    nonnegative: bool,
+    radius: str,
+    usecor: bool,
+    r_search: Any,
+    outs: str,
+    verbose: bool,
+    atlases: int,
+    labelled: bool,
+) -> list[str]:
+    """The ``antsJointFusion`` argument list ANTsPy 0.6.3 builds, with in-memory image names."""
+    argv = ["-d", "3", "-t", _JLF_TARGET, "-a", str(rho), "-b", str(beta)]
+    argv += ["-c", str(int(bool(nonnegative))), "-p", radius, "-m", "PC" if usecor else "MSQ"]
+    argv += ["-s", str(r_search), "-x", _JLF_MASK, "-o", outs, "-v", str(int(bool(verbose)))]
+    for k in range(atlases):
+        argv += ["-g", f"<atlas_{k}>.nii"]
+        if labelled:
+            argv += ["-l", f"<labels_{k}>.nii"]
+    return argv
+
+
+def joint_label_fusion(
+    target_image: Any,
+    target_image_mask: Any,
+    atlas_list: list[Any],
+    beta: float = 4,
+    rad: int | list[int] = 2,
+    label_list: list[Any] | None = None,
+    rho: float = 0.01,
+    usecor: bool = False,
+    r_search: int = 3,
+    nonnegative: bool = False,
+    no_zeroes: bool = False,
+    max_lab_plus_one: bool = False,
+    output_prefix: str | None = None,
+    verbose: bool = False,
+    *,
+    fallback: str | None = None,
+) -> Any:
+    """Joint label fusion as ``ants.joint_label_fusion`` runs it.
+
+    Takes the arguments of ANTsPy's ``ants.joint_label_fusion`` (ANTsPy 0.6.3), with its
+    defaults (``beta=4``, ``rho=0.01``, mean squares search unless ``usecor``), builds the
+    ``antsJointFusion`` argument list ANTsPy builds, and runs it on the CPU with
+    ``fastwarp ants-joint-fusion``'s code. The segmentation is the most probable label inside
+    the mask, from the label probability images, as ANTsPy computes it.
+
+    Parameters
+    ----------
+    target_image : ANTsImage
+        The image to segment, 3D.
+    target_image_mask : ANTsImage
+        Where to fuse. Not modified: with ``no_zeroes`` ANTsPy sets it to 0 in place where a label
+        is 0; here a copy is, with the same result.
+    atlas_list : list of ANTsImage
+        The atlas intensity images on the target's grid.
+    beta, rad, rho, usecor, r_search, nonnegative : optional
+        As in ANTsPy: ``-b``, ``-p``, ``-a``, ``-m PC`` (else ``MSQ``), ``-s``, ``-c``.
+    label_list : list of ANTsImage, optional
+        One label image per atlas; without it (or with a ``None`` in it) only intensities are
+        fused and the intensity image is returned.
+    no_zeroes : bool, default False
+        Fuse and segment only where every label image is not 0.
+    max_lab_plus_one : bool, default False
+        Not supported: raises :class:`UnsupportedArgument`.
+    output_prefix : str, optional
+        Also write the probability images to ``output_prefix + "prob%02d.nii.gz"``.
+    verbose : bool, default False
+        Passed as ``-v``.
+    fallback : {None, "ants"}, optional
+        Keyword only, FastWarp only. With ``"ants"``, an argument FastWarp refuses runs
+        ANTsPy's ``ants.joint_label_fusion`` instead, with a ``UserWarning``.
+
+    Returns
+    -------
+    ANTsImage or dict
+        Without labels the fused intensity image; otherwise ``{"segmentation", "intensity",
+        "probabilityimages", "segmentation_numbers"}`` as ANTsPy returns.
+
+    Raises
+    ------
+    UnsupportedArgument
+        An argument FastWarp does not support. Raised before any work.
+    ValueError
+        An invalid argument, with ANTsPy's message where ANTsPy checks it.
+    ImportError
+        ANTsPy is not installed.
+    RegistrationError
+        The fusion failed, or a file cannot be written.
+    """
+    _check_fallback(_JLF, fallback)
+    ants = _ants()
+    given = {
+        "beta": beta,
+        "rad": rad,
+        "label_list": label_list,
+        "rho": rho,
+        "usecor": usecor,
+        "r_search": r_search,
+        "nonnegative": nonnegative,
+        "no_zeroes": no_zeroes,
+        "max_lab_plus_one": max_lab_plus_one,
+        "output_prefix": output_prefix,
+        "verbose": verbose,
+    }
+    labelled = label_list is not None and not any(lab is None for lab in label_list)
+    try:
+        if labelled and len(label_list) != len(atlas_list):
+            raise ValueError("len(label_list) != len(atlas_list)")
+        _check_image(target_image, "target_image", _JLF)
+        if target_image_mask.dimension != 3:
+            raise _unsupported(
+                _JLF,
+                "target_image_mask.dimension",
+                target_image_mask.dimension,
+                "FastWarp handles 3D images only",
+            )
+        for i, img in enumerate(atlas_list):
+            _check_image(img, f"atlas_list[{i}]", _JLF)
+        if max_lab_plus_one:
+            raise _unsupported(
+                _JLF, "max_lab_plus_one", max_lab_plus_one, "FastWarp does not relabel the atlases"
+            )
+        radii = list(rad) if isinstance(rad, (tuple, list)) else [rad]
+        if len(radii) == 1:
+            radii = radii * 3
+        if len(radii) != 3:
+            raise ValueError("path radius dimensionality must equal image dimensionality")
+    except UnsupportedArgument as e:
+        if fallback != "ants":
+            raise
+        _fall_back(_JLF, e)
+        return ants.joint_label_fusion(target_image, target_image_mask, atlas_list, **given)
+    mask = target_image_mask.numpy()
+    region = target_image_mask
+    if labelled and no_zeroes:
+        mask = mask.copy()
+        for lab in label_list:
+            mask[lab.numpy() == 0] = 0
+        region = target_image_mask.new_image_like(mask)
+    geometry = (target_image_mask.spacing, target_image_mask.origin, target_image_mask.direction)
+    images = [
+        (_JLF_TARGET, _image_args(target_image)),
+        (_JLF_MASK, _image_args((mask.astype(np.float64), *geometry))),
+    ]
+    for k, img in enumerate(atlas_list):
+        images.append((f"<atlas_{k}>.nii", _image_args(img)))
+        if labelled:
+            lab = label_list[k]
+            arr = lab.numpy().astype(np.float64)
+            exact = (arr, lab.spacing, lab.origin, lab.direction)
+            images.append((f"<labels_{k}>.nii", _image_args(exact)))
+    probs = _JLF_PROBABILITY
+    keep = [_JLF_SEGMENTATION, _JLF_INTENSITY, _JLF_PROBABILITY]
+    if output_prefix is not None:
+        probs = fspath(output_prefix) + "prob%02d.nii.gz"
+        os.makedirs(os.path.dirname(probs) or ".", exist_ok=True)
+        keep = [_JLF_SEGMENTATION, _JLF_INTENSITY]
+    outs = f"[{_JLF_SEGMENTATION},{_JLF_INTENSITY},{probs}]" if labelled else _JLF_INTENSITY
+    radius = "x".join(str(r) for r in radii)
+    argv = _jlf_argv(
+        rho, beta, nonnegative, radius, usecor, r_search, outs, verbose, len(atlas_list), labelled
+    )
+    try:
+        out = _core.ants_joint_fusion(argv, images=images, keep=keep)
+    except UnsupportedArgument as e:
+        if fallback != "ants":
+            raise
+        _fall_back(_JLF, e)
+        return ants.joint_label_fusion(target_image, target_image_mask, atlas_list, **given)
+    kept = out["kept"]
+    intensity = _to_image(ants, kept[_JLF_INTENSITY], target_image.pixeltype)
+    if not labelled:
+        return intensity
+    names = [n for n in kept if n.startswith("<prob")] if output_prefix is None else out["files"]
+    numbered = {int(re.split("prob", n)[-1].split(".nii")[0].rstrip(">")): n for n in names}
+    numbers = sorted(numbered, key=lambda v: f"prob{v:02d}.nii.gz")
+    if output_prefix is None:
+        probimgs = [_to_image(ants, kept[numbered[v]], "float") for v in numbers]
+    else:
+        probimgs = [ants.image_read(numbered[v]) for v in numbers]
+    segmat = ants.images_to_matrix(probimgs, region)
+    winner = segmat.argmax(axis=0)
+    labels = winner.copy()
+    for i, number in enumerate(numbers):
+        labels[winner == i] = number
+    return {
+        "segmentation": ants.make_image(region, labels),
+        "intensity": intensity,
+        "probabilityimages": probimgs,
+        "segmentation_numbers": numbers,
+    }

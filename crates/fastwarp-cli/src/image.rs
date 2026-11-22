@@ -89,6 +89,12 @@ pub fn load(path: &Path, role: &str) -> Result<Volume<f64>, CliError> {
     Volume::<f64>::load_nifti_f64(path).map_err(|e| read_err(path, e))
 }
 
+/// Reads a 3D NIfTI label image with its values exact (not rounded through `float32`).
+pub fn load_labels(path: &Path, role: &str) -> Result<Volume<f64>, CliError> {
+    check_input(path, role)?;
+    Volume::<f64>::load_nifti_exact(path).map_err(|e| read_err(path, e))
+}
+
 /// Reads only the grid of a 3D NIfTI image.
 pub fn grid(path: &Path, role: &str) -> Result<Grid, CliError> {
     check_input(path, role)?;
@@ -163,6 +169,37 @@ pub fn save_as(path: &Path, grid: Grid, data: &[f32], pixel: PixelType) -> Resul
             format!("cannot write {}: {e}", path.display()),
         )
     })
+}
+
+/// Writes a label image (x fastest) on `grid` as an `unsigned int` NIfTI file, with the header of
+/// [`save_as`].
+pub fn save_labels(path: &Path, grid: Grid, data: &[u32]) -> Result<(), CliError> {
+    if data.len() != grid.num_voxels() {
+        return Err(CliError::new(
+            ExitStatus::Registration,
+            format!(
+                "cannot write {}: {} values for {} voxels",
+                path.display(),
+                data.len(),
+                grid.num_voxels()
+            ),
+        ));
+    }
+    let [nx, ny, nz] = grid.size();
+    let mut hdr = header_from_grid(&grid);
+    hdr.pixdim[4..].fill(0.0);
+    hdr.xyzt_units = 10;
+    WriterOptions::new(path)
+        .reference_header(&hdr)
+        .write_nifti(&Array3::<u32>::from_shape_fn((nx, ny, nz), |(i, j, k)| {
+            data[grid.linear_index(i, j, k)]
+        }))
+        .map_err(|e| {
+            CliError::new(
+                ExitStatus::Io,
+                format!("cannot write {}: {e}", path.display()),
+            )
+        })
 }
 
 #[cfg(test)]

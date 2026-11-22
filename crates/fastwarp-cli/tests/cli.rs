@@ -117,6 +117,7 @@ fn help_lists_every_subcommand() {
         "bench",
         "ants-registration",
         "ants-apply-transforms",
+        "ants-joint-fusion",
     ] {
         assert!(out.contains(sub), "{sub}");
     }
@@ -128,6 +129,7 @@ fn ants_modes_pass_help_and_version_through() {
     for (sub, program) in [
         ("ants-registration", "antsRegistration"),
         ("ants-apply-transforms", "antsApplyTransforms"),
+        ("ants-joint-fusion", "antsJointFusion"),
     ] {
         for flag in ["-h", "--help", "--version"] {
             let o = run(&[sub, flag]);

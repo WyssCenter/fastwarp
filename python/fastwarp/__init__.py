@@ -25,6 +25,7 @@ from ._api import (
     fits_gpu,
     gpu_available,
     iso_grid_dims,
+    joint_label_fusion,
     linear_session,
     register_syn,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "gpu_available",
     "gpu_info",
     "iso_grid_dims",
+    "joint_label_fusion",
     "linear_session",
     "register_syn",
     "fits_gpu",
@@ -74,6 +76,7 @@ for _obj in (
     gpu_available,
     gpu_info,
     iso_grid_dims,
+    joint_label_fusion,
     linear_session,
     register_syn,
 ):

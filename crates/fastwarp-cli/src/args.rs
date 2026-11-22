@@ -56,6 +56,12 @@ pub enum Command {
     /// refused with exit status 2. `fastwarp ants-apply-transforms --help` lists the subset.
     #[command(name = "ants-apply-transforms", disable_help_flag = true)]
     AntsApplyTransforms(AntsArgs),
+    /// Run antsJointFusion arguments (ANTs 2.6.5): joint label and intensity fusion on the CPU.
+    ///
+    /// Takes the arguments of antsJointFusion and writes what it writes; anything else is refused
+    /// with exit status 2. `fastwarp ants-joint-fusion --help` lists the options.
+    #[command(name = "ants-joint-fusion", disable_help_flag = true)]
+    AntsJointFusion(AntsArgs),
 }
 
 /// The arguments of a compatibility-mode command, passed through unparsed.

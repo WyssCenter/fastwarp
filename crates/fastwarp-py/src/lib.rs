@@ -554,6 +554,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ants::ants_resolve_seed, m)?)?;
     m.add_function(wrap_pyfunction!(ants::ants_registration, m)?)?;
     m.add_function(wrap_pyfunction!(ants::ants_apply_transforms, m)?)?;
+    m.add_function(wrap_pyfunction!(ants::ants_joint_fusion, m)?)?;
     m.add("UnsupportedArgument", py.get_type::<UnsupportedArgument>())?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;

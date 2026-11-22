@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The ANTs compatibility mode for `fastwarp.ants`: the parsers and runners of
-//! `fastwarp ants-registration` and `fastwarp ants-apply-transforms` (`fastwarp_cli::ants`), with
+//! `fastwarp ants-registration`, `fastwarp ants-apply-transforms` and `fastwarp ants-joint-fusion`
+//! (`fastwarp_cli::ants`), with
 //! the images of an ANTsPy call handed over in memory under the names the argument list gives
 //! them, and the warped images handed back the same way. A call therefore runs exactly what the
 //! subcommand runs on the same argument list.
@@ -11,8 +12,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fastwarp_cli::ants::{
-    parse_apply, parse_registration, resolve_seed, run_apply_plan, run_registration, ApplyCall,
-    Images, KeptImage, MemoryImage, Refusal, RegistrationCall, RunOptions,
+    parse_apply, parse_joint_fusion, parse_registration, resolve_seed, run_apply_plan,
+    run_joint_fusion_plan, run_registration, ApplyCall, Images, JointFusionCall, KeptData,
+    KeptImage, MemoryImage, Refusal, RegistrationCall, RunOptions,
 };
 use fastwarp_cli::{CliError, ExitStatus};
 use numpy::PyArray1;
@@ -27,6 +29,7 @@ use crate::{
 
 const REGISTRATION: &str = "fastwarp.ants.registration";
 const APPLY: &str = "fastwarp.ants.apply_transforms";
+const JOINT_FUSION: &str = "fastwarp.joint_label_fusion";
 
 /// A usage error: `UnsupportedArgument` for something FastWarp does not support, `ValueError`
 /// for an invalid argument.
@@ -62,20 +65,19 @@ fn texts(paths: &[PathBuf]) -> Vec<String> {
         .collect()
 }
 
-/// The kept images as `{name: (flat float32 voxels, size, spacing, origin, direction)}`.
+/// The kept images as `{name: (flat voxels, size, spacing, origin, direction)}`: `float32`
+/// voxels, or `uint32` for a label image.
 fn kept_dict(py: Python<'_>, kept: Vec<KeptImage>) -> PyResult<Bound<'_, PyDict>> {
     let d = PyDict::new(py);
     for k in kept {
         let g = k.grid;
+        let data = match k.data {
+            KeptData::Real(v) => PyArray1::from_vec(py, v).into_any(),
+            KeptData::Labels(v) => PyArray1::from_vec(py, v).into_any(),
+        };
         d.set_item(
             k.name.to_string_lossy().into_owned(),
-            (
-                PyArray1::from_vec(py, k.data),
-                g.size(),
-                g.spacing(),
-                g.origin(),
-                g.direction(),
-            ),
+            (data, g.size(), g.spacing(), g.origin(), g.direction()),
         )?;
     }
     Ok(d)
@@ -234,5 +236,40 @@ pub fn ants_apply_transforms<'py>(
     d.set_item("plan", recipe::from_json(py, &plan_json)?)?;
     d.set_item("warnings", warnings)?;
     d.set_item("kept", kept_dict(py, kept)?)?;
+    Ok(d)
+}
+
+/// Runs an `antsJointFusion` argument list as `fastwarp ants-joint-fusion` does, on the CPU.
+/// `images` maps names in the argument list to images held in memory; an output whose file name
+/// or name format is in `keep` is returned instead of written, under the expanded names. Returns
+/// `{"kind": "run", "warnings", "files", "kept", "label_set"}`, or the help or version text. The
+/// GIL is released while it runs.
+#[pyfunction]
+#[pyo3(signature = (argv, images=Vec::new(), keep=Vec::new(), cancel=None))]
+pub fn ants_joint_fusion<'py>(
+    py: Python<'py>,
+    argv: Vec<String>,
+    images: Vec<(PathBuf, ImageArgs<'py>)>,
+    keep: Vec<PathBuf>,
+    cancel: Option<PyRef<'py, CancelToken>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let plan = match parse_joint_fusion(&argv).map_err(|r| refused(JOINT_FUSION, r))? {
+        JointFusionCall::Help(t) => return text_result(py, "help", t),
+        JointFusionCall::Version(t) => return text_result(py, "version", t),
+        JointFusionCall::Run(p) => *p,
+    };
+    let inputs = memory_images(&images, &[])?;
+    drop(images);
+    let warnings = plan.warnings.clone();
+    let cancel = cancel.map(|c| Arc::clone(&c.flag));
+    let done = py
+        .detach(move || run_joint_fusion_plan(&plan, Images::new(inputs, keep), cancel))
+        .map_err(|e| failed(JOINT_FUSION, e))?;
+    let d = PyDict::new(py);
+    d.set_item("kind", "run")?;
+    d.set_item("warnings", warnings)?;
+    d.set_item("files", texts(&done.files))?;
+    d.set_item("kept", kept_dict(py, done.kept)?)?;
+    d.set_item("label_set", done.label_set)?;
     Ok(d)
 }

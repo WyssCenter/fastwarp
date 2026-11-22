@@ -36,7 +36,7 @@ use crate::{image, post, CliError, ExitStatus};
 const REGISTRATION: &str = "ants-registration";
 const APPLY: &str = "ants-apply-transforms";
 
-fn refused(program: &str, r: Refusal) -> CliError {
+pub(crate) fn refused(program: &str, r: Refusal) -> CliError {
     let message = format!("{program}: {}", r.0);
     if r.is_unsupported() {
         CliError::unsupported(message)
@@ -45,13 +45,13 @@ fn refused(program: &str, r: Refusal) -> CliError {
     }
 }
 
-fn failed(program: &str, e: impl Into<CliError>) -> CliError {
+pub(crate) fn failed(program: &str, e: impl Into<CliError>) -> CliError {
     let mut e = e.into();
     e.message = format!("{program}: {}", e.message);
     e
 }
 
-fn warn(err: &mut dyn Write, program: &str, warnings: &[String]) {
+pub(crate) fn warn(err: &mut dyn Write, program: &str, warnings: &[String]) {
     for w in warnings {
         let _ = writeln!(err, "fastwarp: warning: {program}: {w}");
     }
@@ -73,7 +73,14 @@ pub enum MemoryImage {
 pub struct KeptImage {
     pub name: PathBuf,
     pub grid: Grid,
-    pub data: Vec<f32>,
+    pub data: KeptData,
+}
+
+/// The voxels of a [`KeptImage`]: intensities, or exact labels.
+#[derive(Clone, Debug, PartialEq)]
+pub enum KeptData {
+    Real(Vec<f32>),
+    Labels(Vec<u32>),
 }
 
 /// Where the images of an ANTs call come from and go: files, except for the names given here.
@@ -96,13 +103,26 @@ impl Images {
         }
     }
 
-    fn keeps(&self, path: &Path) -> bool {
+    pub(crate) fn keeps(&self, path: &Path) -> bool {
         self.keep.iter().any(|p| p == path)
     }
 
-    fn load(&mut self, path: &Path, role: &str) -> Result<Volume<f64>, CliError> {
+    pub(crate) fn load(&mut self, path: &Path, role: &str) -> Result<Volume<f64>, CliError> {
+        self.load_as(path, role, false)
+    }
+
+    pub(crate) fn load_as(
+        &mut self,
+        path: &Path,
+        role: &str,
+        labels: bool,
+    ) -> Result<Volume<f64>, CliError> {
         let Some(i) = self.inputs.iter().position(|(p, _)| p == path) else {
-            return image::load(path, role);
+            return if labels {
+                image::load_labels(path, role)
+            } else {
+                image::load(path, role)
+            };
         };
         match self.inputs.remove(i).1 {
             MemoryImage::Volume(v) => Ok(v),
@@ -132,7 +152,7 @@ impl Images {
             self.kept.push(KeptImage {
                 name: path.to_path_buf(),
                 grid,
-                data,
+                data: KeptData::Real(data),
             });
             return Ok(false);
         }
@@ -140,7 +160,11 @@ impl Images {
         Ok(true)
     }
 
-    fn check_folder(&self, path: &Path) -> Result<(), CliError> {
+    pub(crate) fn keep(&mut self, image: KeptImage) {
+        self.kept.push(image);
+    }
+
+    pub(crate) fn check_folder(&self, path: &Path) -> Result<(), CliError> {
         if self.keeps(path) {
             return Ok(());
         }
@@ -691,7 +715,10 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].name, PathBuf::from("missing-folder/<warped>.nii"));
         assert!(kept[0].grid.approx_eq(&grid(), 0.0));
-        let back: Vec<f64> = kept[0].data.iter().map(|v| f64::from(*v)).collect();
+        let KeptData::Real(data) = &kept[0].data else {
+            panic!("labels kept for an image");
+        };
+        let back: Vec<f64> = data.iter().map(|v| f64::from(*v)).collect();
         assert_eq!(back, values);
         assert!(!Path::new("missing-folder").exists());
         std::fs::remove_dir_all(&dir).ok();

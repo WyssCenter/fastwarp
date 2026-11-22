@@ -38,6 +38,7 @@ pub(crate) fn dispatch(
         Command::Bench(a) => crate::bench::run(a, out, err),
         Command::AntsRegistration(a) => crate::ants::run::registration(&a.args, out, err),
         Command::AntsApplyTransforms(a) => crate::ants::run::apply(&a.args, out, err),
+        Command::AntsJointFusion(a) => crate::ants::joint_fusion::command(&a.args, out, err),
     }
 }
 
