@@ -69,6 +69,10 @@ Joint label fusion on the CPU, as `antsJointFusion` runs it. Guide:
 .. autoapifunction:: fastwarp.joint_label_fusion
 ```
 
+```{eval-rst}
+.. autoapifunction:: fastwarp.register_atlases
+```
+
 ## ANTsPy compatibility
 
 The module `fastwarp.ants`: ANTsPy's `ants.registration`, `ants.apply_transforms` and

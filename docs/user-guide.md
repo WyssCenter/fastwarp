@@ -7,8 +7,9 @@ FastWarp has four groups of functions:
   runs rigid or affine fits of one image pair.
 - **Resampling on the CPU.** {func}`~fastwarp.apply_transforms` and
   {func}`~fastwarp.compose_field` apply ANTs transform files, like `antsApplyTransforms`.
-- **Label fusion on the CPU.** {func}`~fastwarp.joint_label_fusion` combines the labels of
-  registered atlases, like `antsJointFusion`.
+- **Label fusion.** {func}`~fastwarp.register_atlases` registers atlases to a target and
+  {func}`~fastwarp.joint_label_fusion` combines their labels, like `antsJointFusion`, on the CPU
+  or the GPU.
 - **GPU checks.** {func}`~fastwarp.gpu_available`, {func}`~fastwarp.gpu_info` and
   {func}`~fastwarp.fits_gpu` tell, before any work, whether a registration can run on this
   machine.
@@ -70,7 +71,8 @@ The registration schedule: every field, its type, unit, default and limits.
 :link: guide/label-fusion
 :link-type: doc
 
-`joint_label_fusion`: multi-atlas segmentation as `antsJointFusion` runs it.
+`register_atlases` and `joint_label_fusion`: multi-atlas segmentation as `antsJointFusion` runs
+it, on the CPU or the GPU.
 :::
 
 :::{grid-item-card} GPU and memory

@@ -27,6 +27,7 @@ from ._api import (
     iso_grid_dims,
     joint_label_fusion,
     linear_session,
+    register_atlases,
     register_syn,
 )
 from ._core import (
@@ -64,6 +65,7 @@ __all__ = [
     "iso_grid_dims",
     "joint_label_fusion",
     "linear_session",
+    "register_atlases",
     "register_syn",
     "fits_gpu",
 ]
@@ -78,6 +80,7 @@ for _obj in (
     iso_grid_dims,
     joint_label_fusion,
     linear_session,
+    register_atlases,
     register_syn,
 ):
     _obj.__module__ = "fastwarp"

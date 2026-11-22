@@ -53,7 +53,7 @@ use crate::error::{check_cancel, invalid, Result};
 use crate::exec::block_ready;
 
 pub use search::{cpu_search, CpuSearch, PatchSearch, SearchBlock};
-pub use solve::{nonnegative_least_squares, solve_weights};
+pub use solve::{float_almost_equal, nonnegative_least_squares, solve_weights};
 
 use patch::{search_offsets, Dims, Patch};
 
@@ -86,6 +86,9 @@ pub enum JlfDevice {
     Cpu,
     /// The patch search on the GPU in `f32`, the rest on the CPU in `f64` (`fastwarp_gpu::jlf`).
     Hybrid,
+    /// The search, the weights (with a CPU `f64` solve where the GPU's `f32` one is not reliable)
+    /// and the votes and intensities on the GPU (`fastwarp_gpu::jlf`).
+    Gpu,
 }
 
 /// The parameters of a fusion: start from [`JlfOptions::default`] and set the fields.
@@ -334,17 +337,70 @@ fn joint_error(diffs: &[f64], atlases: usize, width: usize, patch: usize, beta: 
     mx
 }
 
-struct Fusion<'a> {
+/// The building blocks of a fusion, for a device implementation that runs more than the search
+/// (`fastwarp_gpu::jlf`): the checked inputs, the search lists, the target patches, the weights of
+/// one centre in `f64`, the accumulators and the last step. Not a stable API.
+#[doc(hidden)]
+pub struct FusionParts<'a> {
     input: &'a JlfInput,
     opts: &'a JlfOptions,
     dims: Dims,
     patch: Patch,
     lists: Vec<Vec<[isize; 3]>>,
     list_of_radius: BTreeMap<u32, u32>,
+    set: Vec<u32>,
+    voxels: usize,
 }
 
-impl Fusion<'_> {
-    fn list_at(&self, voxel: usize) -> Option<u32> {
+impl<'a> FusionParts<'a> {
+    /// Checks the inputs and prepares the search lists and the label set.
+    pub fn new(input: &'a JlfInput, opts: &'a JlfOptions) -> Result<Self> {
+        let voxels = check(input, opts)?;
+        let dims = Dims::new(input.size);
+        let patch = Patch::new(opts.patch_radius, &dims);
+        let mut list_of_radius = BTreeMap::new();
+        let lists = match &opts.search {
+            SearchRadius::Box(r) => vec![search_offsets(*r, input.spacing)],
+            SearchRadius::Image(radii) => {
+                let mut lists = Vec::new();
+                for &r in radii {
+                    if r > 0 && !list_of_radius.contains_key(&r) {
+                        list_of_radius.insert(r, lists.len() as u32);
+                        lists.push(search_offsets([r as usize; 3], input.spacing));
+                    }
+                }
+                lists
+            }
+        };
+        Ok(Self {
+            input,
+            opts,
+            dims,
+            patch,
+            lists,
+            list_of_radius,
+            set: label_set(input),
+            voxels,
+        })
+    }
+
+    /// Voxels of the images.
+    pub fn voxels(&self) -> usize {
+        self.voxels
+    }
+
+    /// The search offset lists.
+    pub fn lists(&self) -> &[Vec<[isize; 3]>] {
+        &self.lists
+    }
+
+    /// The labels found inside the mask, ascending.
+    pub fn label_set(&self) -> &[u32] {
+        &self.set
+    }
+
+    /// The offset list of a centre, or `None` for a voxel that is not fused (masked, radius 0).
+    pub fn list_at(&self, voxel: usize) -> Option<u32> {
         if self.input.mask.as_ref().is_some_and(|m| m[voxel] == 0) {
             return None;
         }
@@ -355,7 +411,8 @@ impl Fusion<'_> {
         (!self.lists[list as usize].is_empty()).then_some(list)
     }
 
-    fn used(&self) -> usize {
+    /// The atlas modalities the search and the weights compare.
+    pub fn used(&self) -> usize {
         let m = self.input.atlases[0].len();
         if self.input.target.len() == m {
             m
@@ -364,7 +421,13 @@ impl Fusion<'_> {
         }
     }
 
-    fn search_patch(&self, voxel: usize) -> Vec<f32> {
+    /// Voxels per patch.
+    pub fn patch_len(&self) -> usize {
+        self.patch.len()
+    }
+
+    /// The target patch the search compares (z-scored for PC, raw for MSQ).
+    pub fn search_patch(&self, voxel: usize) -> Vec<f32> {
         let normalize = self.opts.metric == PatchMetric::PearsonCorrelation;
         self.patch.vectorize_list(
             &self.input.target,
@@ -374,12 +437,42 @@ impl Fusion<'_> {
         )
     }
 
-    fn centre(&self, voxel: usize, list: &[[isize; 3]], best: &[u32]) -> Centre {
-        let at = self.dims.ijk(voxel);
+    /// The z-scored target patch of every target modality, as the weights use it.
+    pub fn target_patch(&self, voxel: usize) -> Vec<f32> {
+        self.patch
+            .vectorize_list(&self.input.target, &self.dims, self.dims.ijk(voxel), true)
+    }
+
+    /// A search block over `centres` (with their lists and search patches).
+    pub fn block<'b>(
+        &'b self,
+        centres: &'b [usize],
+        list_of: &'b [u32],
+        patches: &'b [f32],
+    ) -> SearchBlock<'b> {
+        SearchBlock {
+            size: self.input.size,
+            centres,
+            list_of,
+            lists: &self.lists,
+            patch_radius: self.opts.patch_radius,
+            patches,
+            atlases: &self.input.atlases,
+            modalities: self.used(),
+            metric: self.opts.metric,
+        }
+    }
+
+    /// The normalised atlas weights of the centre at `voxel` with offset list `list` and the best
+    /// offsets `best` (one per atlas), in `f64` as the CPU fusion computes them.
+    pub fn weights(&self, voxel: usize, list: u32, best: &[u32]) -> Vec<f64> {
+        self.weights_at(self.dims.ijk(voxel), &self.lists[list as usize], best)
+    }
+
+    fn weights_at(&self, at: [isize; 3], list: &[[isize; 3]], best: &[u32]) -> Vec<f64> {
         let input = self.input;
         let p = self.patch.len();
         let t = input.target.len();
-        let m = input.atlases[0].len();
         let n = input.atlases.len();
         let used = self.used();
         let normalized = self
@@ -387,8 +480,6 @@ impl Fusion<'_> {
             .vectorize_list(&input.target, &self.dims, at, true);
         let width = p * t;
         let mut diffs = vec![0.0f64; n * width];
-        let mut original = vec![0.0f64; n * p * m];
-        let mut best_offsets = Vec::with_capacity(n);
         for (i, atlas) in input.atlases.iter().enumerate() {
             let off = list[best[i] as usize];
             let s = [at[0] + off[0], at[1] + off[1], at[2] + off[2]];
@@ -398,18 +489,32 @@ impl Fusion<'_> {
             for (k, (av, tv)) in a.iter().zip(normalized.iter()).enumerate() {
                 diffs[i * width + k] = f64::from((av - tv).abs());
             }
+        }
+        let mut mxbar = joint_error(&diffs, n, width, p, self.opts.beta);
+        for i in 0..n {
+            mxbar[i * n + i] += self.opts.alpha;
+        }
+        solve_weights(&mxbar, n, self.opts.nonnegative)
+    }
+
+    fn centre(&self, voxel: usize, list: &[[isize; 3]], best: &[u32]) -> Centre {
+        let at = self.dims.ijk(voxel);
+        let input = self.input;
+        let p = self.patch.len();
+        let m = input.atlases[0].len();
+        let weights = self.weights_at(at, list, best);
+        let mut estimate = vec![0.0f64; p * m];
+        let mut best_offsets = Vec::with_capacity(input.atlases.len());
+        let mut original = vec![0.0f64; input.atlases.len() * p * m];
+        for (i, atlas) in input.atlases.iter().enumerate() {
+            let off = list[best[i] as usize];
+            let s = [at[0] + off[0], at[1] + off[1], at[2] + off[2]];
             let o = self.patch.vectorize_list(atlas, &self.dims, s, false);
             for (k, v) in o.iter().enumerate() {
                 original[i * p * m + k] = f64::from(*v);
             }
             best_offsets.push(off);
         }
-        let mut mxbar = joint_error(&diffs, n, width, p, self.opts.beta);
-        for i in 0..n {
-            mxbar[i * n + i] += self.opts.alpha;
-        }
-        let weights = solve_weights(&mxbar, n, self.opts.nonnegative);
-        let mut estimate = vec![0.0f64; p * m];
         for (k, e) in estimate.iter_mut().enumerate() {
             let mut sum = 0.0f64;
             for (i, w) in weights.iter().enumerate() {
@@ -424,17 +529,72 @@ impl Fusion<'_> {
             estimate,
         }
     }
+
+    /// The fused voxels of `start..end` (ascending) with their offset lists.
+    pub fn active(&self, start: usize, end: usize) -> (Vec<usize>, Vec<u32>) {
+        (start..end.min(self.voxels))
+            .into_par_iter()
+            .filter_map(|v| self.list_at(v).map(|l| (v, l)))
+            .unzip()
+    }
+
+    /// [`Self::search_patch`] of each centre, concatenated.
+    pub fn search_patches(&self, centres: &[usize]) -> Vec<f32> {
+        centres
+            .par_iter()
+            .flat_map_iter(|&v| self.search_patch(v))
+            .collect()
+    }
+
+    /// [`Self::target_patch`] of each centre, concatenated.
+    pub fn target_patches(&self, centres: &[usize]) -> Vec<f32> {
+        centres
+            .par_iter()
+            .flat_map_iter(|&v| self.target_patch(v))
+            .collect()
+    }
+
+    /// [`Self::weights`] of each centre (`best` holds one offset per atlas and centre),
+    /// concatenated.
+    pub fn weights_many(&self, centres: &[usize], list_of: &[u32], best: &[u32]) -> Vec<f64> {
+        let n = self.input.atlases.len();
+        (0..centres.len())
+            .into_par_iter()
+            .flat_map_iter(|c| self.weights(centres[c], list_of[c], &best[c * n..(c + 1) * n]))
+            .collect()
+    }
+
+    /// Empty accumulators for this fusion.
+    pub fn accumulators(&self) -> Accumulators {
+        let n = self.voxels;
+        Accumulators {
+            intensity: vec![vec![0.0f32; n]; self.input.atlases[0].len()],
+            count: vec![0u32; n],
+            posteriors: vec![vec![0.0f32; n]; self.set.len()],
+            weight_sum: vec![0.0f32; n],
+            voting: if self.opts.voting_weights {
+                vec![vec![0.0f32; n]; self.input.atlases.len()]
+            } else {
+                Vec::new()
+            },
+        }
+    }
 }
 
-struct Accumulators {
-    intensity: Vec<Vec<f32>>,
-    count: Vec<u32>,
-    posteriors: Vec<Vec<f32>>,
-    weight_sum: Vec<f32>,
-    voting: Vec<Vec<f32>>,
+/// The sums of a fusion before its last step, per voxel (x fastest): the intensity sums of each
+/// atlas modality and how many patches added to them, the vote of each label of the label set, the
+/// sum of the votes and, when asked for, the vote of each atlas.
+#[doc(hidden)]
+#[non_exhaustive]
+pub struct Accumulators {
+    pub intensity: Vec<Vec<f32>>,
+    pub count: Vec<u32>,
+    pub posteriors: Vec<Vec<f32>>,
+    pub weight_sum: Vec<f32>,
+    pub voting: Vec<Vec<f32>>,
 }
 
-impl Fusion<'_> {
+impl FusionParts<'_> {
     fn add(&self, c: &Centre, acc: &mut Accumulators, set: &[u32]) {
         let input = self.input;
         let p = self.patch.len();
@@ -497,7 +657,7 @@ pub fn joint_fusion(
     if opts.device != JlfDevice::Cpu {
         return Err(invalid(
             "joint fusion",
-            "the hybrid search runs on a GPU: use fastwarp_gpu::jlf::joint_fusion",
+            "the hybrid and gpu modes run on a GPU: use fastwarp_gpu::jlf::joint_fusion",
         ));
     }
     block_ready(joint_fusion_with(input, opts, &mut CpuSearch, cancel))
@@ -531,47 +691,12 @@ async fn fuse<S: PatchSearch>(
     search: &mut S,
     cancel: Option<&AtomicBool>,
 ) -> Result<JlfOutput> {
-    let n = check(input, opts)?;
-    let dims = Dims::new(input.size);
-    let patch = Patch::new(opts.patch_radius, &dims);
-    let mut list_of_radius = BTreeMap::new();
-    let lists = match &opts.search {
-        SearchRadius::Box(r) => vec![search_offsets(*r, input.spacing)],
-        SearchRadius::Image(radii) => {
-            let mut lists = Vec::new();
-            for &r in radii {
-                if r > 0 && !list_of_radius.contains_key(&r) {
-                    list_of_radius.insert(r, lists.len() as u32);
-                    lists.push(search_offsets([r as usize; 3], input.spacing));
-                }
-            }
-            lists
-        }
-    };
-    let fusion = Fusion {
-        input,
-        opts,
-        dims,
-        patch,
-        lists,
-        list_of_radius,
-    };
-    let set = label_set(input);
+    let fusion = FusionParts::new(input, opts)?;
+    let n = fusion.voxels;
+    let set = fusion.set.clone();
     let atlases = input.atlases.len();
-    let modalities = input.atlases[0].len();
-    let mut acc = Accumulators {
-        intensity: vec![vec![0.0f32; n]; modalities],
-        count: vec![0u32; n],
-        posteriors: vec![vec![0.0f32; n]; set.len()],
-        weight_sum: vec![0.0f32; n],
-        voting: if opts.voting_weights {
-            vec![vec![0.0f32; n]; atlases]
-        } else {
-            Vec::new()
-        },
-    };
-    let used = fusion.used();
-    let width = fusion.patch.len() * used;
+    let mut acc = fusion.accumulators();
+    let width = fusion.patch.len() * fusion.used();
     let block_voxels = search.block_voxels(input.size, width).max(1);
     let mut start = 0;
     while start < n {
@@ -585,17 +710,7 @@ async fn fuse<S: PatchSearch>(
             .par_iter()
             .flat_map_iter(|&v| fusion.search_patch(v))
             .collect();
-        let block = SearchBlock {
-            size: input.size,
-            centres: &centres,
-            list_of: &list_of,
-            lists: &fusion.lists,
-            patch_radius: opts.patch_radius,
-            patches: &patches,
-            atlases: &input.atlases,
-            modalities: used,
-            metric: opts.metric,
-        };
+        let block = fusion.block(&centres, &list_of, &patches);
         let best = search.search(&block).await?;
         drop(patches);
         if best.len() != centres.len() * atlases
@@ -625,67 +740,80 @@ async fn fuse<S: PatchSearch>(
         start = end;
     }
     check_cancel(cancel)?;
-    let labels = if input.labels.is_empty() {
-        None
-    } else {
-        let mut out = vec![0u32; n];
-        for (v, label) in out.iter_mut().enumerate() {
-            if input.mask.as_ref().is_some_and(|m| m[v] == 0) {
-                continue;
-            }
-            let mut max = 0.0f64;
-            for (slot, &l) in set.iter().enumerate() {
-                let excluded = input
-                    .exclusions
-                    .iter()
-                    .rev()
-                    .find(|(x, _)| *x == l)
-                    .is_some_and(|(_, image)| image[v] != 0);
-                if excluded {
+    Ok(fusion.finish(acc))
+}
+
+impl FusionParts<'_> {
+    /// The last step: the labels from the votes (with the exclusions), the posteriors and voting
+    /// weights divided by the vote sum where it is at least 0.1, the intensities divided by their
+    /// counts.
+    pub fn finish(&self, mut acc: Accumulators) -> JlfOutput {
+        let input = self.input;
+        let opts = self.opts;
+        let n = self.voxels;
+        let set = self.set.clone();
+        let labels = if input.labels.is_empty() {
+            None
+        } else {
+            let mut out = vec![0u32; n];
+            for (v, label) in out.iter_mut().enumerate() {
+                if input.mask.as_ref().is_some_and(|m| m[v] == 0) {
                     continue;
                 }
-                let p = f64::from(acc.posteriors[slot][v]);
-                if max < p {
-                    max = p;
-                    *label = l;
+                let mut max = 0.0f64;
+                for (slot, &l) in set.iter().enumerate() {
+                    let excluded = input
+                        .exclusions
+                        .iter()
+                        .rev()
+                        .find(|(x, _)| *x == l)
+                        .is_some_and(|(_, image)| image[v] != 0);
+                    if excluded {
+                        continue;
+                    }
+                    let p = f64::from(acc.posteriors[slot][v]);
+                    if max < p {
+                        max = p;
+                        *label = l;
+                    }
                 }
             }
-        }
-        Some(out)
-    };
-    if opts.posteriors || opts.voting_weights {
-        for v in 0..n {
-            let sum = acc.weight_sum[v];
-            if sum < 0.1f32 {
-                continue;
-            }
-            if opts.posteriors {
-                for image in &mut acc.posteriors {
+            Some(out)
+        };
+        if opts.posteriors || opts.voting_weights {
+            for v in 0..n {
+                let sum = acc.weight_sum[v];
+                if sum < 0.1f32 {
+                    continue;
+                }
+                if opts.posteriors {
+                    for image in &mut acc.posteriors {
+                        image[v] /= sum;
+                    }
+                }
+                for image in &mut acc.voting {
                     image[v] /= sum;
                 }
             }
-            for image in &mut acc.voting {
-                image[v] /= sum;
+        }
+        for image in &mut acc.intensity {
+            for (value, &count) in image.iter_mut().zip(&acc.count) {
+                if count > 0 {
+                    *value /= count as f32;
+                }
             }
         }
-    }
-    for image in &mut acc.intensity {
-        for (value, &count) in image.iter_mut().zip(&acc.count) {
-            if count > 0 {
-                *value /= count as f32;
-            }
+        let posteriors = if opts.posteriors {
+            set.iter().copied().zip(acc.posteriors).collect()
+        } else {
+            Vec::new()
+        };
+        JlfOutput {
+            labels,
+            intensity: acc.intensity,
+            label_set: set,
+            posteriors,
+            voting_weights: acc.voting,
         }
     }
-    let posteriors = if opts.posteriors {
-        set.iter().copied().zip(acc.posteriors).collect()
-    } else {
-        Vec::new()
-    };
-    Ok(JlfOutput {
-        labels,
-        intensity: acc.intensity,
-        label_set: set,
-        posteriors,
-        voting_weights: acc.voting,
-    })
 }

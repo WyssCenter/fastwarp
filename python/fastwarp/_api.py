@@ -20,6 +20,7 @@ from ._core import (
     gpu_info,
 )
 from ._core import LinearSession as _LinearSession
+from ._core import ants_apply_transforms as _ants_apply_transforms
 from ._core import ants_joint_fusion as _ants_joint_fusion
 from ._core import apply_transforms as _apply_transforms
 from ._core import cohort_recipe as _cohort_recipe
@@ -864,7 +865,8 @@ def joint_label_fusion(
     Joint label fusion (Wang et al. 2013) weights the atlases at each voxel by how well their
     patches match the target's, taking into account that atlases make correlated errors. It runs
     the same code as ``fastwarp ants-joint-fusion`` on the CPU, in parallel, and needs no GPU;
-    with ``mode="hybrid"`` the patch search, most of the work, runs on the GPU.
+    with ``mode="hybrid"`` the patch search, most of the work, runs on the GPU, with ``mode="gpu"``
+    nearly everything.
     The atlases must already be registered to the target and resampled onto its grid (labels
     with ``"nearestNeighbor"``). Images are matched by voxel index, as in ANTs.
 
@@ -903,12 +905,15 @@ def joint_label_fusion(
         Also return each atlas's voting weight.
     cancel : CancelToken, optional
         Stops the fusion between blocks of voxels.
-    mode : {"cpu", "hybrid"}, default "cpu"
-        ``"hybrid"`` runs the patch search on the GPU in ``float32`` and the rest on the CPU. The
+    mode : {"cpu", "hybrid", "gpu"}, default "cpu"
+        ``"gpu"`` runs the search, the weights (a ``float32`` solve, with a ``float64`` CPU solve
+        where it is not reliable) and the votes and intensities on the GPU; results differ from
+        ``"cpu"`` by ``float32`` rounding (see the guide). ``"hybrid"`` runs the patch search on the
+        GPU in ``float32`` and the rest on the CPU. The
         search then picks the same patches as on the CPU except where two candidates score
         within ``float32`` rounding of each other (see the guide), so a few labels can differ.
     adapter : str, optional
-        With ``mode="hybrid"``: use the GPU whose name contains this text (overrides
+        With ``mode="hybrid"`` or ``"gpu"``: use the GPU whose name contains this text (overrides
         ``FASTWARP_GPU_ADAPTER``). Refused with ``mode="cpu"``.
 
     Returns
@@ -929,12 +934,12 @@ def joint_label_fusion(
     RegistrationCancelled
         ``cancel`` was set.
     GpuUnavailableError
-        ``mode="hybrid"`` and no usable GPU.
+        ``mode="hybrid"`` or ``"gpu"`` and no usable GPU.
     """
-    if mode not in ("cpu", "hybrid"):
-        raise ValueError("mode must be 'cpu' or 'hybrid'")
-    if adapter is not None and mode != "hybrid":
-        raise ValueError("adapter applies to mode='hybrid' only")
+    if mode not in ("cpu", "hybrid", "gpu"):
+        raise ValueError("mode must be 'cpu', 'hybrid' or 'gpu'")
+    if adapter is not None and mode == "cpu":
+        raise ValueError("adapter applies to mode='hybrid' or 'gpu' only")
     targets = _modalities(target)
     atlas_sets = [_modalities(a) for a in atlases]
     if len(atlas_sets) < 2:
@@ -1014,4 +1019,106 @@ def joint_label_fusion(
         result["weights"] = [
             image(_JLF_WEIGHTS.replace("%d", str(i + 1))) for i in range(len(atlas_sets))
         ]
+    return result
+
+
+def _first(img: Any) -> Any:
+    return img[0] if isinstance(img, list) else img
+
+
+def _warp_file(image: Any, reference: tuple, composite: str, path: str, labels: bool) -> None:
+    argv = ["-d", "3", "-i", "<moving>.nii", "-r", "<fixed>.nii", "-o", path, "-t", composite]
+    argv += ["-n", "NearestNeighbor" if labels else "Linear", "-u", "int" if labels else "float"]
+    args = _exact_args(image) if labels else _image_args(image)
+    _ants_apply_transforms(
+        argv, images=[("<moving>.nii", args)], grids=[("<fixed>.nii", reference)], keep=[]
+    )
+
+
+def register_atlases(
+    target: Any,
+    atlases: Sequence[Any],
+    labels: Sequence[Any] | None,
+    out_dir: str | PathLike[str],
+    *,
+    recipe: Mapping[str, Any] | None = None,
+    iso_mm: float = 1.0,
+    adapter: str | None = None,
+    cancel: CancelToken | None = None,
+) -> dict[str, list[Path]]:
+    """Register atlases to a target and warp their images and labels onto it, for
+    :func:`joint_label_fusion`.
+
+    Each atlas is registered to ``target`` with :func:`register_syn` (the default recipe unless
+    ``recipe`` is given) on the GPU; its images are then resampled onto the target's grid with
+    linear interpolation and its label image with nearest neighbour, as :func:`apply_transforms`
+    does. Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
+    :func:`register_syn`), ``atlasNN_Warped.nii.gz`` (one file per modality after the first:
+    ``atlasNN_Warped2.nii.gz``, ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
+
+    Parameters
+    ----------
+    target : ANTsImage or tuple
+        The fixed image.
+    atlases : list
+        The atlas images; an atlas may be a list of modalities, the first of which is registered.
+    labels : list or None
+        One label image per atlas (whole numbers up to 2**24: the resampling returns ``float32``
+        voxels, exact only up to 2**24), or ``None``.
+    out_dir : str or os.PathLike
+        The folder of the files; created when missing.
+    recipe, iso_mm, adapter, cancel
+        As for :func:`register_syn`.
+
+    Returns
+    -------
+    dict
+        ``"atlases"`` (the warped image files, one list per atlas), ``"labels"`` (the warped label
+        files, empty without ``labels``) and ``"transforms"`` (each atlas's ``Composite.h5``).
+
+    Raises
+    ------
+    ValueError
+        ``labels`` does not hold one image per atlas, or a label is not a whole number from 0 to
+        2**24.
+    GpuUnavailableError
+        No usable GPU for the registrations.
+    """
+    if labels is not None and len(labels) != len(atlases):
+        raise ValueError(f"{len(labels)} label images for {len(atlases)} atlases")
+    for lab in labels or ():
+        arr = np.asarray(lab[0] if isinstance(lab, tuple) else lab.numpy())
+        if arr.size and (arr.min() < 0 or arr.max() > 2**24 or np.any(arr != np.round(arr))):
+            raise ValueError("label values must be whole numbers from 0 to 2**24")
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if isinstance(target, tuple):
+        arr, spacing, origin, direction = target
+        reference = _grid_args((np.asarray(arr).shape, spacing, origin, direction))
+    else:
+        reference = _grid_args(target)
+    result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
+    for i, atlas in enumerate(atlases, 1):
+        prefix = out / f"atlas{i:02d}_"
+        register_syn(
+            target,
+            _first(atlas),
+            prefix,
+            iso_mm=iso_mm,
+            adapter=adapter,
+            cancel=cancel,
+            recipe=recipe,
+        )
+        composite = f"{prefix}Composite.h5"
+        files = []
+        for m, image in enumerate(_modalities(atlas)):
+            path = Path(f"{prefix}Warped{'' if m == 0 else m + 1}.nii.gz")
+            _warp_file(image, reference, composite, str(path), labels=False)
+            files.append(path)
+        result["atlases"].append(files)
+        if labels is not None:
+            path = Path(f"{prefix}WarpedLabels.nii.gz")
+            _warp_file(labels[i - 1], reference, composite, str(path), labels=True)
+            result["labels"].append(path)
+        result["transforms"].append(Path(composite))
     return result
