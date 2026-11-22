@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- New: joint label fusion almost entirely on the GPU: `fastwarp.joint_label_fusion(...,
+  mode="gpu")` adds to the GPU search the joint error matrix and an `f32` Cholesky solve per voxel
+  (`jlf_weights.wgsl`; voxels whose solve is not reliable, and all with `nonnegative`, get the CPU
+  `f64` weights) and the votes and intensities gathered per voxel in z slabs (`jlf_gather.wgsl`;
+  16 label slots per voxel, more are voted on the CPU). On a 1 mm brain with 5 atlases on an
+  integrated GPU: 40 s instead of 245 s on the CPU (51 to 68 s hybrid); with 20 atlases 243 s
+  instead of 1065 s (305 to 330 s hybrid); the same labels as the hybrid mode; in the tests, with the default `alpha`, 99 % of the GPU
+  weights within 1e-4 of the CPU's. More than 32 atlases run as hybrid. The default stays `mode="cpu"`. In Rust:
+  `JlfDevice::Gpu` and `fastwarp_gpu::jlf::joint_fusion_gpu_with` (with the search's budgets).
+- New: `fastwarp.register_atlases(target, atlases, labels, out_dir)` registers each atlas to the
+  target with `register_syn` and writes its images and labels on the target's grid
+  (`atlasNN_Warped.nii.gz`, `atlasNN_WarpedLabels.nii.gz`), ready for `joint_label_fusion`.
 - New: the patch search of joint label fusion on the GPU: `fastwarp.joint_label_fusion(...,
   mode="hybrid", adapter=...)` runs the search (a WGSL kernel, `jlf_search.wgsl`, in `f32`, over
   z slabs with a halo) on the GPU and the weights, votes and intensities on the CPU in `f64`. About

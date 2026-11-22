@@ -9,6 +9,10 @@ ANTsPy's own ants.joint_label_fusion (antsJointFusion, one ITK thread), which it
 
 from __future__ import annotations
 
+import gzip
+import struct
+from pathlib import Path
+
 import fastwarp as g
 import fastwarp.ants as fa
 import numpy as np
@@ -18,6 +22,28 @@ SHAPE = (16, 15, 14)
 SPACING = (1.0, 1.1, 1.3)
 ORIGIN = (3.0, -2.0, 1.0)
 DIRECTION = np.eye(3)
+
+_NIFTI_TYPES = {
+    2: np.uint8,
+    4: np.int16,
+    8: np.int32,
+    16: np.float32,
+    64: np.float64,
+    768: np.uint32,
+}
+
+
+def _read_nifti(path: Path) -> tuple[np.ndarray, int, np.ndarray]:
+    """(voxels with x fastest, datatype code, the sform rows) of a NIfTI-1 file."""
+    raw = gzip.decompress(path.read_bytes()) if path.suffix == ".gz" else path.read_bytes()
+    dim = struct.unpack_from("<8h", raw, 40)
+    datatype = struct.unpack_from("<h", raw, 70)[0]
+    offset = int(struct.unpack_from("<f", raw, 108)[0])
+    srow = np.array(struct.unpack_from("<12f", raw, 280)).reshape(3, 4)
+    shape = tuple(dim[1 : 1 + dim[0]])
+    count = int(np.prod(shape))
+    data = np.frombuffer(raw, dtype=_NIFTI_TYPES[datatype], count=count, offset=offset)
+    return data.reshape(shape, order="F"), datatype, srow
 
 
 def _texture(shift: float, noise: float, seed: int) -> np.ndarray:
@@ -155,17 +181,62 @@ def test_labels_outside_uint32_or_not_whole_are_refused(scene, bad):
 def test_the_hybrid_search_matches_the_cpu_search(scene):
     target, atlases, labels = scene
     with pytest.raises(ValueError, match="mode must be"):
-        g.joint_label_fusion(target, atlases, labels, mode="gpu")
+        g.joint_label_fusion(target, atlases, labels, mode="fpga")
     with pytest.raises(ValueError, match="adapter applies"):
         g.joint_label_fusion(target, atlases, labels, adapter="Arc")
     if not g.gpu_available():
         pytest.skip("no usable GPU adapter")
     cpu = g.joint_label_fusion(target, atlases, labels, patch_radius=1, search_radius=1)
-    gpu = g.joint_label_fusion(
-        target, atlases, labels, patch_radius=1, search_radius=1, mode="hybrid"
+    for mode in ("hybrid", "gpu"):
+        gpu = g.joint_label_fusion(
+            target, atlases, labels, patch_radius=1, search_radius=1, mode=mode
+        )
+        assert gpu["label_set"] == cpu["label_set"]
+        assert np.count_nonzero(gpu["labels"] != cpu["labels"]) <= cpu["labels"].size // 100
+        np.testing.assert_allclose(gpu["intensity"][0], cpu["intensity"][0], rtol=1e-2, atol=1e-2)
+
+
+@pytest.mark.filterwarnings("ignore:fastwarp. linear stage")
+def test_register_atlases_writes_files_for_label_fusion(tmp_path, scene):
+    target, atlases, labels = scene
+    with pytest.raises(ValueError, match="label images for"):
+        g.register_atlases(target, atlases, labels[:1], tmp_path)
+    big = _tuple(labels[0][0].astype(np.float64) + 2**25)
+    with pytest.raises(ValueError, match="whole numbers"):
+        g.register_atlases(target, atlases[:1], [big], tmp_path)
+    if not g.gpu_available():
+        pytest.skip("no usable GPU adapter")
+    out = g.register_atlases(target, atlases[:2], labels[:2], tmp_path / "reg", iso_mm=2.0)
+    assert [p.name for p in out["transforms"]] == ["atlas01_Composite.h5", "atlas02_Composite.h5"]
+    assert [p.name for p in out["labels"]] == [
+        "atlas01_WarpedLabels.nii.gz",
+        "atlas02_WarpedLabels.nii.gz",
+    ]
+    for path in [*out["labels"], *out["transforms"], *(f for fs in out["atlases"] for f in fs)]:
+        assert path.is_file() and path.stat().st_size > 0, path
+    grid = (SHAPE, SPACING, ORIGIN, DIRECTION)
+    ras = np.array(
+        [
+            [-SPACING[0], 0, 0, -ORIGIN[0]],
+            [0, -SPACING[1], 0, -ORIGIN[1]],
+            [0, 0, SPACING[2], ORIGIN[2]],
+        ]
     )
-    assert gpu["label_set"] == cpu["label_set"]
-    assert np.count_nonzero(gpu["labels"] != cpu["labels"]) <= cpu["labels"].size // 100
+    warped = []
+    for i, composite in enumerate(out["transforms"]):
+        expected = g.apply_transforms(atlases[i], grid, [composite])
+        data, datatype, srow = _read_nifti(out["atlases"][i][0])
+        assert datatype == 16 and data.shape == SHAPE
+        np.testing.assert_allclose(srow, ras, atol=1e-5)
+        np.testing.assert_array_equal(data, expected)
+        lab = g.apply_transforms(labels[i], grid, [composite], interpolation="nearestNeighbor")
+        data, datatype, srow = _read_nifti(out["labels"][i])
+        assert datatype == 8 and data.shape == SHAPE
+        np.testing.assert_allclose(srow, ras, atol=1e-5)
+        np.testing.assert_array_equal(data, lab.astype(np.int32))
+        warped.append(expected)
+    fused = g.joint_label_fusion(target, [_tuple(w) for w in warped], patch_radius=1)
+    assert fused["intensity"][0].shape == SHAPE
 
 
 def test_images_of_another_size_are_refused(scene):

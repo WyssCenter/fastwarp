@@ -241,7 +241,8 @@ pub fn ants_apply_transforms<'py>(
 }
 
 /// Runs an `antsJointFusion` argument list as `fastwarp ants-joint-fusion` does, on the CPU, or
-/// with `mode="hybrid"` with the patch search on the GPU (`adapter` picks it by a substring of its
+/// with `mode="hybrid"` with the patch search on the GPU, or with `mode="gpu"` with the search,
+/// weights, votes and intensities on the GPU (`adapter` picks it by a substring of its
 /// name). `images` maps names in the argument list to images held in memory; an output whose file name
 /// or name format is in `keep` is returned instead of written, under the expanded names. Returns
 /// `{"kind": "run", "warnings", "files", "kept", "label_set"}`, or the help or version text. The
@@ -261,9 +262,10 @@ pub fn ants_joint_fusion<'py>(
     let device = match mode {
         "cpu" => JlfDevice::Cpu,
         "hybrid" => JlfDevice::Hybrid,
+        "gpu" => JlfDevice::Gpu,
         other => {
             return Err(PyValueError::new_err(format!(
-                "{JOINT_FUSION}: mode must be 'cpu' or 'hybrid', not {other:?}"
+                "{JOINT_FUSION}: mode must be 'cpu', 'hybrid' or 'gpu', not {other:?}"
             )))
         }
     };

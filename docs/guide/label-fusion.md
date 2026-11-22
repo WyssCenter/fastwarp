@@ -5,28 +5,35 @@ image with its label image) is registered to the target, the atlas labels are re
 the target's grid, and the resampled labels are combined voxel by voxel. *Joint label fusion*
 (Wang et al. 2013) weights the atlases at each voxel by how well a small patch of each atlas
 matches the target there, and takes into account that atlases tend to make the same errors.
-FastWarp runs it as ANTs' `antsJointFusion` does, on the CPU and in parallel; it needs no GPU.
+FastWarp runs it as ANTs' `antsJointFusion` does, on the CPU and in parallel, or with most of
+the work on the GPU ([below](#running-on-the-gpu)).
 
-{func}`~fastwarp.joint_label_fusion` takes the target, the atlas images and their label images,
-all on the target's grid:
+{func}`~fastwarp.register_atlases` registers each atlas to the target with
+{func}`~fastwarp.register_syn` on the GPU and writes its images (linear interpolation) and its
+label image (nearest neighbour) on the target's grid; {func}`~fastwarp.joint_label_fusion` then
+fuses them:
 
 ```python
 import ants
 import fastwarp
 
 target = ants.image_read("sub-01_T1w.nii.gz")
-atlases, labels = [], []
-for name in ["atlas1", "atlas2", "atlas3"]:
-    atlas = ants.image_read(f"{name}_T1w.nii.gz")
-    fastwarp.register_syn(target, atlas, f"out/{name}_")
-    composite = [f"out/{name}_Composite.h5"]
-    atlases.append(fastwarp.apply_transforms(atlas, target, composite))
-    seg = ants.image_read(f"{name}_labels.nii.gz")
-    labels.append(fastwarp.apply_transforms(seg, target, composite, interpolation="nearestNeighbor"))
+names = ["atlas1", "atlas2", "atlas3"]
+atlases = [ants.image_read(f"{n}_T1w.nii.gz") for n in names]
+segs = [ants.image_read(f"{n}_labels.nii.gz") for n in names]
 
-out = fastwarp.joint_label_fusion(target, atlases, labels, mask=ants.get_mask(target))
+reg = fastwarp.register_atlases(target, atlases, segs, "out")
+warped = [ants.image_read(str(files[0])) for files in reg["atlases"]]
+labels = [ants.image_read(str(p)) for p in reg["labels"]]
+
+out = fastwarp.joint_label_fusion(target, warped, labels, mask=ants.get_mask(target))
 segmentation = out["labels"]
 ```
+
+`register_atlases` writes, for atlas `NN` (from 01), `atlasNN_Composite.h5` (with the other
+files of `register_syn`), `atlasNN_Warped.nii.gz` and `atlasNN_WarpedLabels.nii.gz` (`int`);
+label values above 2^24 are refused there, as the resampling of `apply_transforms` returns
+`float32` voxels (cast to `int` afterwards), which hold whole numbers exactly only up to 2^24.
 
 The result holds the fused labels (`"labels"`), the fused intensities (`"intensity"`, one
 image per atlas modality) and the labels found (`"label_set"`); `return_posteriors=True` adds
@@ -73,31 +80,51 @@ such as those of the Allen atlas stay exact. `alpha` and `beta` are rounded to `
 with the number of atlases, the number of search positions (343 for radius 3) and the patch
 size; a mask that covers only the structures of interest saves most of it.
 
-## The patch search on the GPU
+## Running on the GPU
 
 The search for the best-matching atlas patch is almost all of the work: for every voxel, atlas
-and search position, one patch comparison. With `mode="hybrid"`,
-{func}`~fastwarp.joint_label_fusion` runs it on the GPU (`adapter` picks one by name) and keeps
-the rest on the CPU in `float64`: the weights, the votes and the intensities.
+and search position, one patch comparison. Two modes move work to the GPU (`adapter` picks one by
+name):
+
+- `mode="hybrid"`: the search on the GPU, the weights, votes and intensities on the CPU in
+  `float64`.
+- `mode="gpu"`: the search, the weights (a `float32` Cholesky solve per voxel) and the votes and
+  intensities on the GPU. Where the `float32` solve is not reliable (a pivot that is not positive,
+  a 1-norm condition number of the matrix above 1000, weights that do not sum to a positive
+  number) the voxel's weights are computed on the CPU in `float64`, as are all weights with
+  `nonnegative=True`; a voxel with votes for more than 16 labels gets its votes on the CPU. More
+  than 32 atlases run as `"hybrid"`.
 
 ```python
-out = fastwarp.joint_label_fusion(target, atlases, labels, mask=mask, mode="hybrid")
+out = fastwarp.joint_label_fusion(target, atlases, labels, mask=mask, mode="gpu")
 ```
 
 The GPU computes the same `float32` patch scores in the same order, but a GPU may round a
 division less exactly and may fuse a multiplication with an addition, so two search positions
 whose scores lie within `float32` rounding of each other can be ranked the other way. On an
 Intel Arc 140V, for a brain-sized volume at 1 mm (182 x 218 x 182 voxels, 2.2 million in the
-mask) with 5 atlases, `patch_radius=2` and `search_radius=3`, 0.025 % of the (voxel, atlas)
-pairs picked another position than on the CPU, every one within 1.2e-4 (relative) of the best
-score; the search took 27 s instead of 268 s on 8 CPU threads, the whole fusion about 43 s
-instead of 285 s. Small test volumes with smooth textures, where near-ties are more common, show
-up to 1 %. Atlas voxels that are not finite count as on the CPU (a Pearson score of 0, a mean
-squares score that never wins). `mode="cpu"` (the default) gives the results of `antsJointFusion`; the hybrid
-mode is for when time matters more than those last near-ties. The atlases are held on the GPU in
-z slabs of at most 256 MiB with a halo of the search and patch radius, so memory stays bounded.
-The command line `fastwarp ants-joint-fusion` takes the `antsJointFusion` arguments only and
-always runs on the CPU.
+mask) with `patch_radius=2` and `search_radius=3` (two runs for `"hybrid"`; times vary by
+about 20 % between runs on this laptop):
+
+| Atlases | `"cpu"` (8 threads) | `"hybrid"` | `"gpu"` | Labels that differ from `"cpu"` |
+| --- | --- | --- | --- | --- |
+| 5 | 245 s | 51–68 s | 40 s | 62 voxels (2.8e-5 of the mask), the same in both GPU modes |
+| 20 | 1065 s | 305–330 s | 243 s | 58 voxels (2.6e-5), the same in both GPU modes |
+
+In the search, 0.025 % of the (voxel, atlas) pairs picked another position than on the CPU (5
+atlases), each within 1.2e-4 (relative) of the best score; small test volumes with smooth
+textures, where near-ties are more common, show up to 1 %. Between `"gpu"` and `"hybrid"`, which
+share the search, the labels were equal and the fused intensities agreed to 1.5e-6 (relative).
+In the tests (default `alpha`, no voxel on the CPU solve), the GPU weights matched the CPU's to
+1.5e-5 (4 atlases) and 7.6e-5 (12 atlases) relative error at the 99th percentile; with
+`alpha=1e-6` the error reached 1.8e-4, as the `float32` matrix then decides the weights. With many atlases
+the GPU weights take about as long as the search, so `"gpu"` gains little over `"hybrid"` there. Atlas voxels that are not finite
+count as on the CPU (a Pearson score of 0, a mean squares score that never wins). `mode="cpu"`
+(the default) gives the results of `antsJointFusion` and needs no GPU; the GPU modes are for when
+time matters more than those last near-ties. The atlases are held on the GPU in z slabs of at most
+256 MiB with a halo of the search and patch radius, and the votes are gathered in z slabs, so
+memory stays bounded. The command line `fastwarp ants-joint-fusion` takes the `antsJointFusion`
+arguments only and always runs on the CPU.
 
 ## Matching ANTs
 

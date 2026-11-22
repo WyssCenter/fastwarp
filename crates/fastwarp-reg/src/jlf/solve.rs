@@ -31,7 +31,9 @@
 
 const SQRT_EPS: f64 = 1.490_116_119_384_765_6e-8;
 
-pub(crate) fn float_almost_equal(a: f64, b: f64) -> bool {
+/// ITK's `FloatAlmostEqual` with its defaults (4 ULPs, or an absolute difference of a tenth of
+/// `f64::EPSILON`).
+pub fn float_almost_equal(a: f64, b: f64) -> bool {
     if (a - b).abs() <= 0.1 * f64::EPSILON {
         return true;
     }

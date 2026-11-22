@@ -733,9 +733,9 @@ Takes the arguments of `antsJointFusion` (ANTs 2.6.5) and writes what it writes:
 and intensity fusion of registered atlases onto a target, on the CPU and in parallel, with the
 code of {func}`~fastwarp.joint_label_fusion` (see [Label fusion](guide/label-fusion.md)). The
 results are those of `antsJointFusion` on one thread, voxel for voxel, except where search
-scores tie (below). Refusals work as for `ants-registration`. The patch search on the GPU is
-available from Python only (`mode="hybrid"`, see
-[Label fusion](guide/label-fusion.md#the-patch-search-on-the-gpu)), as this command takes the
+scores tie (below). Refusals work as for `ants-registration`. The GPU modes are available
+from Python only (`mode="hybrid"` or `"gpu"`, see
+[Label fusion](guide/label-fusion.md#running-on-the-gpu)), as this command takes the
 `antsJointFusion` arguments only.
 
 ```bash

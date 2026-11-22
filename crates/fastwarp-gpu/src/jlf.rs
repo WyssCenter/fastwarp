@@ -39,8 +39,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
+use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
+
 use fastwarp_reg::jlf::{
-    joint_fusion_with, JlfInput, JlfOptions, JlfOutput, PatchMetric, PatchSearch, SearchBlock,
+    float_almost_equal, joint_fusion_with, Accumulators, FusionParts, JlfDevice, JlfInput,
+    JlfOptions, JlfOutput, PatchMetric, PatchSearch, SearchBlock,
 };
 use fastwarp_reg::{RegError, Result as RegResult};
 
@@ -49,6 +53,12 @@ use crate::error::{GpuError, GpuResult};
 use crate::wgpu_backend::block_reg;
 
 const SRC: &str = include_str!("shaders/jlf_search.wgsl");
+const WEIGH_SRC: &str = include_str!("shaders/jlf_weights.wgsl");
+const WEIGH_TILED_SRC: &str = include_str!("shaders/jlf_weights_tiled.wgsl");
+const TILED_FROM: usize = 11;
+
+/// The most atlases the GPU weights and votes take (`JlfDevice::Gpu` runs as `Hybrid` above).
+pub const MAX_GPU_ATLASES: usize = 32;
 const WG: u32 = 64;
 const PATCH_BYTES: u64 = 64 << 20;
 const ATLAS_BYTES: u64 = 256 << 20;
@@ -89,6 +99,53 @@ impl SlabKey {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct WeighU {
+    dims: [u32; 4],
+    slab: [u32; 4],
+    patch: [u32; 4],
+    par: [f32; 4],
+}
+
+/// Counters of a [`GpuJlfSearch`]: atlas slabs uploaded for the search, z slabs of the vote
+/// gather, voxels whose votes were redone on the CPU (more than 16 labels), and dispatches of the
+/// workgroup-per-voxel weights kernel (11 atlases or more).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GpuJlfStats {
+    pub slab_uploads: u64,
+    pub gather_slabs: u64,
+    pub vote_redos: u64,
+    pub tiled_weight_dispatches: u64,
+}
+
+/// What the device weights need besides the search block: the z-scored target patches of every
+/// centre (searched modalities x patch length each), `alpha` and `beta`.
+#[derive(Clone, Copy, Debug)]
+pub struct WeighArgs<'a> {
+    normalized: &'a [f32],
+    alpha: f32,
+    beta: f32,
+    beta_mode: u32,
+    cond_limit: f32,
+}
+
+impl<'a> WeighArgs<'a> {
+    /// The arguments for `normalized` target patches and the fusion's `alpha` and `beta` (used
+    /// in `f32`); a centre whose matrix has a 1-norm condition number above 1000 is flagged for the
+    /// CPU.
+    pub fn new(normalized: &'a [f32], alpha: f64, beta: f64) -> Self {
+        WeighArgs {
+            normalized,
+            alpha: alpha as f32,
+            beta: beta as f32,
+            beta_mode: beta_mode(beta),
+            cond_limit: COND_LIMIT,
+        }
+    }
+}
+
 struct AtlasSlab {
     key: SlabKey,
     zlo: usize,
@@ -120,6 +177,11 @@ pub struct GpuJlfSearch {
     reuse: bool,
     slab: Option<AtlasSlab>,
     uploads: u64,
+    gathers: u64,
+    vote_redos: u64,
+    tiled_dispatches: u64,
+    weigh: Option<(bool, wgpu::ComputePipeline)>,
+    gather_budget: u64,
 }
 
 impl GpuJlfSearch {
@@ -145,6 +207,11 @@ impl GpuJlfSearch {
             reuse: false,
             slab: None,
             uploads: 0,
+            gathers: 0,
+            vote_redos: 0,
+            tiled_dispatches: 0,
+            weigh: None,
+            gather_budget: GATHER_OUT_BYTES.min(binding),
             pipeline,
             ctx,
         })
@@ -164,9 +231,26 @@ impl GpuJlfSearch {
         self
     }
 
+    /// Caps the bytes of the vote records of one gather of the GPU mode (default 64 MiB, at most
+    /// the binding limit); a smaller cap gathers fewer planes at a time.
+    pub fn with_gather_budget(mut self, bytes: u64) -> Self {
+        self.gather_budget = bytes.clamp(4, self.binding);
+        self
+    }
+
     /// How many atlas slabs this search has uploaded.
     pub fn slab_uploads(&self) -> u64 {
         self.uploads
+    }
+
+    /// What this search has done so far.
+    pub fn stats(&self) -> GpuJlfStats {
+        GpuJlfStats {
+            slab_uploads: self.uploads,
+            gather_slabs: self.gathers,
+            vote_redos: self.vote_redos,
+            tiled_weight_dispatches: self.tiled_dispatches,
+        }
     }
 
     /// The device context.
@@ -237,19 +321,65 @@ impl GpuJlfSearch {
         if !self.reuse {
             self.slab = None;
         }
-        let out = self.search_blocks(block).await;
+        let out = self.search_blocks(block, None).await.map(|(best, _)| best);
         if !self.reuse || out.is_err() {
             self.slab = None;
         }
         out
     }
 
-    async fn search_blocks(&mut self, block: &SearchBlock<'_>) -> GpuResult<Vec<u32>> {
+    /// [`Self::search_async`] followed, on the device, by the weights of every centre: for centre
+    /// `c`, `atlases + 1` values at `c * (atlases + 1)`, the normalised weights and then a flag (the
+    /// bits of a `u32`, 1 where the `f32` solve was not reliable and the weights are 0). At most
+    /// [`MAX_GPU_ATLASES`] atlases.
+    pub async fn search_and_weigh_async(
+        &mut self,
+        block: &SearchBlock<'_>,
+        weigh: &WeighArgs<'_>,
+    ) -> GpuResult<(Vec<u32>, Vec<f32>)> {
+        if block.atlases.len() > MAX_GPU_ATLASES {
+            return Err(GpuError::Invalid(format!(
+                "the GPU weights take at most {MAX_GPU_ATLASES} atlases"
+            )));
+        }
+        let tiled = block.atlases.len() >= TILED_FROM;
+        if self.weigh.as_ref().is_none_or(|(t, _)| *t != tiled) {
+            let pipeline = if tiled {
+                self.ctx
+                    .compile_async(
+                        "k_jlf_weights_tiled",
+                        WEIGH_TILED_SRC,
+                        "k_jlf_weights_tiled",
+                    )
+                    .await?
+            } else {
+                self.ctx
+                    .compile_async("k_jlf_weights", WEIGH_SRC, "k_jlf_weights")
+                    .await?
+            };
+            self.weigh = Some((tiled, pipeline));
+        }
+        if !self.reuse {
+            self.slab = None;
+        }
+        let out = self.search_blocks(block, Some(weigh)).await;
+        if !self.reuse || out.is_err() {
+            self.slab = None;
+        }
+        out
+    }
+
+    async fn search_blocks(
+        &mut self,
+        block: &SearchBlock<'_>,
+        weigh: Option<&WeighArgs<'_>>,
+    ) -> GpuResult<(Vec<u32>, Vec<f32>)> {
         let atlases = block.atlases.len();
         let centres = block.centres.len();
         let mut best = Vec::with_capacity(centres * atlases);
+        let mut weights = Vec::new();
         if centres == 0 || atlases == 0 {
-            return Ok(best);
+            return Ok((best, weights));
         }
         let [nx, ny, nz] = block.size;
         let plane = nx * ny;
@@ -289,7 +419,8 @@ impl GpuJlfSearch {
             self.binding / (atlases as u64 * 4),
             self.binding / 16,
             self.binding / (width.max(1) as u64 * 4),
-            u64::from(u32::MAX) / atlases as u64,
+            self.binding / ((atlases as u64 + 1) * 4),
+            u64::from(u32::MAX) / (atlases as u64 + 1),
         ]
         .into_iter()
         .min()
@@ -370,6 +501,7 @@ impl GpuJlfSearch {
                     pad: [0; 4],
                 };
                 self.dispatch(
+                    &self.pipeline,
                     &[
                         &slab.buffer,
                         &target_buf,
@@ -378,11 +510,70 @@ impl GpuJlfSearch {
                         &patch_buf,
                         &out_buf,
                     ],
-                    &uniform,
+                    bytemuck::bytes_of(&uniform),
                     [gx, gy],
                 )
                 .await?;
                 base += run;
+            }
+            let mut tiled_runs = 0u64;
+            if let (Some(args), Some((tiled, pipeline))) = (weigh, self.weigh.as_ref()) {
+                let normalized = &args.normalized[first * width..last * width];
+                let tn_buf = self
+                    .storage("jlf normalised target patches", normalized)
+                    .await?;
+                let wout = self
+                    .storage("jlf weights", &vec![0f32; count * (atlases + 1)])
+                    .await?;
+                let per_centre = (width * atlases * (atlases + 2)) as u64;
+                let per_dispatch =
+                    (WORK_PER_DISPATCH / per_centre.max(1)).clamp(u64::from(WG), 1 << 22) as u32;
+                let total = count as u32;
+                let mut base = 0u32;
+                while base < total {
+                    let run = per_dispatch.min(total - base);
+                    let tiled = *tiled;
+                    tiled_runs += u64::from(tiled);
+                    let (gx, gy, stride) = if tiled {
+                        let gx = run.min(self.max_groups);
+                        (gx, run.div_ceil(gx), gx)
+                    } else {
+                        let (gx, gy) = self.groups(run);
+                        (gx, gy, gx * WG)
+                    };
+                    let uniform = WeighU {
+                        dims: [nx as u32, ny as u32, nz as u32, base + run],
+                        slab: [
+                            zlo as u32,
+                            planes as u32,
+                            atlases as u32,
+                            block.modalities as u32,
+                        ],
+                        patch: [p as u32, args.beta_mode, stride, base],
+                        par: [args.alpha, args.beta, args.cond_limit, 0.0],
+                    };
+                    self.dispatch(
+                        pipeline,
+                        &[
+                            &slab.buffer,
+                            &tn_buf,
+                            &centre_buf,
+                            &offsets_buf,
+                            &patch_buf,
+                            &out_buf,
+                            &wout,
+                        ],
+                        bytemuck::bytes_of(&uniform),
+                        [gx, gy],
+                    )
+                    .await?;
+                    base += run;
+                }
+                weights.extend(
+                    self.ctx
+                        .read_f32_async(&wout, count * (atlases + 1))
+                        .await?,
+                );
             }
             let got = self.ctx.read_u32_async(&out_buf, items as usize).await?;
             for (k, j) in got.iter().enumerate() {
@@ -396,18 +587,28 @@ impl GpuJlfSearch {
                 }
             }
             best.extend(got);
+            self.tiled_dispatches += tiled_runs;
             first = last;
         }
-        Ok(best)
+        Ok((best, weights))
+    }
+
+    fn groups(&self, items: u32) -> (u32, u32) {
+        let groups = items.div_ceil(WG);
+        if groups <= self.max_groups {
+            (groups, 1)
+        } else {
+            (self.max_groups, groups.div_ceil(self.max_groups))
+        }
     }
 
     async fn dispatch(
         &self,
+        pipeline: &wgpu::ComputePipeline,
         buffers: &[&wgpu::Buffer],
-        uniform: &SearchU,
+        bytes: &[u8],
         groups: [u32; 2],
     ) -> GpuResult<()> {
-        let bytes = bytemuck::bytes_of(uniform);
         let ubuf = self
             .ctx
             .scoped_async("jlf search uniform", bytes.len() as u64, || {
@@ -420,7 +621,7 @@ impl GpuJlfSearch {
             })
             .await?;
         self.ctx.queue.write_buffer(&ubuf, 0, bytes);
-        let layout = self.pipeline.get_bind_group_layout(0);
+        let layout = pipeline.get_bind_group_layout(0);
         let group = self
             .ctx
             .scoped_async("jlf search bind group", 0, || {
@@ -456,7 +657,7 @@ impl GpuJlfSearch {
                 label: Some("jlf search"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(groups[0], groups[1], 1);
         }
@@ -496,8 +697,14 @@ impl PatchSearch for GpuJlfSearch {
     }
 }
 
-/// Joint label fusion with the patch search on the GPU of `ctx` and everything else on the CPU
-/// (whatever [`JlfOptions::device`] says); an error on wasm32 (use [`joint_fusion_async`]).
+/// Joint label fusion on the GPU of `ctx`: with [`JlfDevice::Gpu`] the search, the weights and the
+/// votes and intensities (see [`MAX_GPU_ATLASES`] and the fallbacks below), otherwise the patch
+/// search only, with everything else on the CPU ([`JlfDevice::Hybrid`]). In the GPU mode the
+/// weights of a centre whose `f32` Cholesky solve is not reliable (a pivot that is not positive, a
+/// 1-norm condition number of the matrix above 1000, weights that do not sum to a positive number)
+/// are computed on the CPU in `f64`, as are all weights with `nonnegative`; a voxel with more than 16
+/// voted labels gets its votes on the CPU; more than [`MAX_GPU_ATLASES`] atlases run as
+/// [`JlfDevice::Hybrid`]. An error on wasm32 (use [`joint_fusion_async`]).
 pub fn joint_fusion(
     ctx: Arc<GpuContext>,
     input: &JlfInput,
@@ -517,6 +724,486 @@ pub async fn joint_fusion_async(
     opts: &JlfOptions,
     cancel: Option<&AtomicBool>,
 ) -> RegResult<JlfOutput> {
+    if opts.device == JlfDevice::Gpu {
+        return gpu_fusion(ctx, input, opts, cancel).await;
+    }
     let mut search = GpuJlfSearch::new_async(ctx).await.map_err(gerr)?;
     joint_fusion_with(input, opts, &mut search, cancel).await
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GatherU {
+    dims: [u32; 4],
+    a: [u32; 4],
+    b: [u32; 4],
+    c: [u32; 4],
+    e: [u32; 4],
+}
+
+const GATHER_SRC: &str = include_str!("shaders/jlf_gather.wgsl");
+const SLOTS: usize = 16;
+const COND_LIMIT: f32 = 1.0e3;
+const GATHER_OUT_BYTES: u64 = 64 << 20;
+
+struct PlaneCentres {
+    voxels: Vec<usize>,
+    weights: Vec<f32>,
+    offsets: Vec<u32>,
+}
+
+fn pack(o: [isize; 3]) -> u32 {
+    ((o[0] + 128) as u32) | (((o[1] + 128) as u32) << 8) | (((o[2] + 128) as u32) << 16)
+}
+
+fn unpack(o: u32) -> [isize; 3] {
+    [
+        (o & 0xff) as isize - 128,
+        ((o >> 8) & 0xff) as isize - 128,
+        ((o >> 16) & 0xff) as isize - 128,
+    ]
+}
+
+struct Full<'a> {
+    parts: FusionParts<'a>,
+    input: &'a JlfInput,
+    opts: &'a JlfOptions,
+    gather: wgpu::ComputePipeline,
+    slots: Vec<Vec<u32>>,
+    store: BTreeMap<usize, PlaneCentres>,
+    patch: Vec<[isize; 3]>,
+}
+
+impl Full<'_> {
+    fn inside(&self, p: [isize; 3]) -> bool {
+        (0..3).all(|d| p[d] >= 0 && p[d] < self.input.size[d] as isize)
+    }
+
+    fn index(&self, p: [isize; 3]) -> usize {
+        let [nx, ny, _] = self.input.size;
+        (p[0] as usize) + nx * (p[1] as usize + ny * p[2] as usize)
+    }
+
+    fn ijk(&self, v: usize) -> [isize; 3] {
+        let [nx, ny, _] = self.input.size;
+        [
+            (v % nx) as isize,
+            ((v / nx) % ny) as isize,
+            (v / (nx * ny)) as isize,
+        ]
+    }
+
+    fn centre(&self, c: [isize; 3]) -> Option<(&PlaneCentres, usize)> {
+        let plane = self.store.get(&(c[2] as usize))?;
+        let v = self.index(c);
+        plane.voxels.binary_search(&v).ok().map(|k| (plane, k))
+    }
+
+    fn redo_votes(&self, v: usize, acc: &mut Accumulators) {
+        let n = self.input.atlases.len();
+        let at = self.ijk(v);
+        for off in self.patch.iter().rev() {
+            let c = [at[0] - off[0], at[1] - off[1], at[2] - off[2]];
+            if !self.inside(c) {
+                continue;
+            }
+            let Some((plane, k)) = self.centre(c) else {
+                continue;
+            };
+            for i in 0..n {
+                let s = unpack(plane.offsets[k * n + i]);
+                let q = [at[0] + s[0], at[1] + s[1], at[2] + s[2]];
+                if !self.inside(q) {
+                    continue;
+                }
+                let slot = self.slots[i][self.index(q)];
+                if slot != UNSET {
+                    acc.posteriors[slot as usize][v] += plane.weights[k * n + i];
+                }
+            }
+        }
+    }
+}
+
+impl GpuJlfSearch {
+    async fn gather_planes(
+        &mut self,
+        full: &Full<'_>,
+        acc: &mut Accumulators,
+        z0: usize,
+        z1: usize,
+    ) -> GpuResult<()> {
+        let input = full.input;
+        let [nx, ny, nz] = input.size;
+        let plane = nx * ny;
+        let n = input.atlases.len();
+        let modalities = input.atlases[0].len();
+        let p = full.patch.len();
+        let rp = input_reach(&full.patch);
+        let rs = full
+            .parts
+            .lists()
+            .iter()
+            .flatten()
+            .map(|o| o[2].unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        let labelled = !input.labels.is_empty();
+        let voting = full.opts.voting_weights;
+        let rsize = 3 + 2 * SLOTS + modalities + if voting { n } else { 0 };
+        let plane_bytes = (plane * 4) as u64;
+        let fits = |planes: usize| -> bool {
+            let atlas_planes = (planes + 2 * rs).min(nz) as u64;
+            let centre_planes = (planes + 2 * rp).min(nz) as u64;
+            let out = plane_bytes * (rsize * planes) as u64;
+            let atlas = plane_bytes * (n * modalities) as u64 * atlas_planes;
+            let slots = plane_bytes * n as u64 * atlas_planes;
+            let cmap = plane_bytes * centre_planes;
+            let centres = plane_bytes * n as u64 * centre_planes;
+            out <= self.gather_budget
+                && atlas <= self.atlas_budget
+                && slots.max(cmap).max(centres) <= self.binding
+        };
+        if !fits(1) {
+            return Err(GpuError::Invalid(format!(
+                "one plane of the vote gather (with a halo of {rs} planes of atlases and {rp} of \
+                 centres) needs more than the GPU's buffer limit ({} bytes) or the gather and \
+                 atlas budgets",
+                self.binding
+            )));
+        }
+        let mut a = z0;
+        while a < z1 {
+            let mut b = a + 1;
+            while b < z1 && fits(b + 1 - a) {
+                b += 1;
+            }
+            self.gathers += 1;
+            let ga = a.saturating_sub(rs);
+            let gb = (b + rs).min(nz);
+            let ca = a.saturating_sub(rp);
+            let cb = (b + rp).min(nz);
+            let apl = (gb - ga) * plane;
+            let mut atlas = Vec::with_capacity(n * modalities * apl);
+            for at in &input.atlases {
+                for image in at {
+                    atlas.extend_from_slice(&image[ga * plane..gb * plane]);
+                }
+            }
+            let mut slots = Vec::new();
+            if labelled {
+                slots.reserve(n * apl);
+                for s in &full.slots {
+                    slots.extend_from_slice(&s[ga * plane..gb * plane]);
+                }
+            }
+            let mut cmap = vec![UNSET; (cb - ca) * plane];
+            let mut cw = Vec::new();
+            let mut co = Vec::new();
+            for z in ca..cb {
+                let Some(pc) = full.store.get(&z) else {
+                    continue;
+                };
+                for (k, v) in pc.voxels.iter().enumerate() {
+                    cmap[v - ca * plane] = (cw.len() / n) as u32;
+                    cw.extend_from_slice(&pc.weights[k * n..(k + 1) * n]);
+                    co.extend_from_slice(&pc.offsets[k * n..(k + 1) * n]);
+                }
+            }
+            let voxels = (b - a) * plane;
+            let mask: Vec<u32> = match &input.mask {
+                Some(m) => m[a * plane..b * plane]
+                    .iter()
+                    .map(|v| u32::from(*v != 0))
+                    .collect(),
+                None => vec![1; voxels],
+            };
+            let poff: Vec<[i32; 4]> = full
+                .patch
+                .iter()
+                .map(|o| [o[0] as i32, o[1] as i32, o[2] as i32, 0])
+                .collect();
+            let atlas_buf = self.storage("jlf gather atlases", &atlas).await?;
+            let slots_buf = self.storage("jlf gather label slots", &slots).await?;
+            let cmap_buf = self.storage("jlf gather centre map", &cmap).await?;
+            let cw_buf = self.storage("jlf gather weights", &cw).await?;
+            let co_buf = self.storage("jlf gather offsets", &co).await?;
+            let mask_buf = self.storage("jlf gather mask", &mask).await?;
+            let poff_buf = self.storage("jlf gather patch offsets", &poff).await?;
+            let out_len = voxels
+                .checked_mul(rsize)
+                .ok_or_else(|| too_large("the gather output"))?;
+            let out_buf = self
+                .storage("jlf gather output", &vec![0u32; out_len])
+                .await?;
+            let per_voxel = (p * n * (modalities + 1)) as u64;
+            let per_dispatch =
+                (WORK_PER_DISPATCH / per_voxel.max(1)).clamp(u64::from(WG), 1 << 22) as usize;
+            let mut first = 0usize;
+            while first < voxels {
+                let run = per_dispatch.min(voxels - first);
+                let (gx, gy) = self.groups(run as u32);
+                let uniform = GatherU {
+                    dims: [nx as u32, ny as u32, nz as u32, (first + run) as u32],
+                    a: [a as u32, ga as u32, ca as u32, n as u32],
+                    b: [modalities as u32, p as u32, gx * WG, rsize as u32],
+                    c: [
+                        u32::from(labelled),
+                        (cb - ca) as u32,
+                        apl as u32,
+                        u32::from(voting),
+                    ],
+                    e: [first as u32, 0, 0, 0],
+                };
+                self.dispatch(
+                    &full.gather,
+                    &[
+                        &atlas_buf, &slots_buf, &cmap_buf, &cw_buf, &co_buf, &mask_buf, &poff_buf,
+                        &out_buf,
+                    ],
+                    bytemuck::bytes_of(&uniform),
+                    [gx, gy],
+                )
+                .await?;
+                first += run;
+            }
+            let rec = self.ctx.read_u32_async(&out_buf, out_len).await?;
+            for t in 0..voxels {
+                let v = a * plane + t;
+                let r = &rec[t * rsize..(t + 1) * rsize];
+                let used = (r[0] & 0x7fff_ffff) as usize;
+                let overflow = r[0] >> 31 != 0;
+                acc.count[v] = r[1];
+                acc.weight_sum[v] = f32::from_bits(r[2]);
+                for m in 0..modalities {
+                    acc.intensity[m][v] = f32::from_bits(r[3 + 2 * SLOTS + m]);
+                }
+                if voting {
+                    for i in 0..n {
+                        acc.voting[i][v] = f32::from_bits(r[3 + 2 * SLOTS + modalities + i]);
+                    }
+                }
+                if overflow {
+                    self.vote_redos += 1;
+                    full.redo_votes(v, acc);
+                } else {
+                    for k in 0..used.min(SLOTS) {
+                        let slot = r[3 + 2 * k] as usize;
+                        acc.posteriors[slot][v] = f32::from_bits(r[4 + 2 * k]);
+                    }
+                }
+            }
+            a = b;
+        }
+        Ok(())
+    }
+}
+
+fn input_reach(patch: &[[isize; 3]]) -> usize {
+    patch.iter().map(|o| o[2].unsigned_abs()).max().unwrap_or(0)
+}
+
+fn beta_mode(beta: f64) -> u32 {
+    if float_almost_equal(beta, 1.0) {
+        0
+    } else if float_almost_equal(beta, 2.0) {
+        1
+    } else {
+        2
+    }
+}
+
+fn cancelled(cancel: Option<&AtomicBool>) -> RegResult<()> {
+    if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+        Err(RegError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+async fn fuse_on_gpu(
+    search: &mut GpuJlfSearch,
+    input: &JlfInput,
+    opts: &JlfOptions,
+    cancel: Option<&AtomicBool>,
+) -> RegResult<JlfOutput> {
+    let parts = FusionParts::new(input, opts)?;
+    let gather = search
+        .ctx
+        .compile_async("k_jlf_gather", GATHER_SRC, "k_jlf_gather")
+        .await
+        .map_err(gerr)?;
+    let set = parts.label_set().to_vec();
+    let slots = input
+        .labels
+        .iter()
+        .map(|l| {
+            l.iter()
+                .map(|x| set.binary_search(x).map_or(UNSET, |s| s as u32))
+                .collect()
+        })
+        .collect();
+    let [nx, ny, nz] = input.size;
+    let plane = nx * ny;
+    let n = input.atlases.len();
+    let width = parts.patch_len() * parts.used();
+    let per_block = (search.block_voxels(input.size, width) / plane).max(1);
+    let lists: Vec<Vec<[isize; 3]>> = parts.lists().to_vec();
+    if lists
+        .iter()
+        .flatten()
+        .flatten()
+        .any(|c| !(-127..=127).contains(c))
+    {
+        return Err(RegError::Invalid {
+            what: "joint fusion",
+            message: "a search offset is beyond 127 voxels".into(),
+        });
+    }
+    let mut full = Full {
+        patch: box_patch(opts.patch_radius),
+        parts,
+        input,
+        opts,
+        gather,
+        slots,
+        store: BTreeMap::new(),
+    };
+    let rp = input_reach(&full.patch);
+    let mut acc = full.parts.accumulators();
+    let pc = opts.metric == PatchMetric::PearsonCorrelation;
+    let mut next = 0usize;
+    let mut z0 = 0usize;
+    while z0 < nz {
+        cancelled(cancel)?;
+        let z1 = (z0 + per_block).min(nz);
+        let (centres, list_of) = full.parts.active(z0 * plane, z1 * plane);
+        let patches = full.parts.search_patches(&centres);
+        let block = full.parts.block(&centres, &list_of, &patches);
+        let (best, gpu) = if opts.nonnegative {
+            (search.search_async(&block).await.map_err(gerr)?, Vec::new())
+        } else {
+            let normalized = if pc {
+                None
+            } else {
+                Some(full.parts.target_patches(&centres))
+            };
+            let args = WeighArgs::new(
+                normalized.as_deref().unwrap_or(&patches),
+                opts.alpha,
+                opts.beta,
+            );
+            search
+                .search_and_weigh_async(&block, &args)
+                .await
+                .map_err(gerr)?
+        };
+        let mut weights = vec![0f32; centres.len() * n];
+        let mut redo = Vec::new();
+        for c in 0..centres.len() {
+            let flagged = gpu.get(c * (n + 1) + n).is_none_or(|f| f.to_bits() != 0);
+            if flagged {
+                redo.push(c);
+            } else {
+                weights[c * n..(c + 1) * n].copy_from_slice(&gpu[c * (n + 1)..c * (n + 1) + n]);
+            }
+        }
+        if !redo.is_empty() {
+            let rc: Vec<usize> = redo.iter().map(|&c| centres[c]).collect();
+            let rl: Vec<u32> = redo.iter().map(|&c| list_of[c]).collect();
+            let rb: Vec<u32> = redo
+                .iter()
+                .flat_map(|&c| best[c * n..(c + 1) * n].iter().copied())
+                .collect();
+            let cpu = full.parts.weights_many(&rc, &rl, &rb);
+            for (k, &c) in redo.iter().enumerate() {
+                for i in 0..n {
+                    weights[c * n + i] = cpu[k * n + i] as f32;
+                }
+            }
+        }
+        drop(patches);
+        for (c, &v) in centres.iter().enumerate() {
+            let list = &lists[list_of[c] as usize];
+            let entry = full.store.entry(v / plane).or_insert_with(|| PlaneCentres {
+                voxels: Vec::new(),
+                weights: Vec::new(),
+                offsets: Vec::new(),
+            });
+            entry.voxels.push(v);
+            entry
+                .weights
+                .extend_from_slice(&weights[c * n..(c + 1) * n]);
+            for j in &best[c * n..(c + 1) * n] {
+                let Some(off) = list.get(*j as usize) else {
+                    return Err(RegError::Invalid {
+                        what: "joint fusion",
+                        message: "the patch search returned offsets that do not fit its block"
+                            .into(),
+                    });
+                };
+                entry.offsets.push(pack(*off));
+            }
+        }
+        let ready = if z1 == nz { nz } else { z1.saturating_sub(rp) };
+        if ready > next {
+            search
+                .gather_planes(&full, &mut acc, next, ready)
+                .await
+                .map_err(gerr)?;
+            next = ready;
+        }
+        full.store.retain(|z, _| z + rp >= next);
+        z0 = z1;
+    }
+    cancelled(cancel)?;
+    Ok(full.parts.finish(acc))
+}
+
+fn box_patch(radius: [usize; 3]) -> Vec<[isize; 3]> {
+    let r = radius.map(|v| v as isize);
+    let mut out = Vec::new();
+    for z in -r[2]..=r[2] {
+        for y in -r[1]..=r[1] {
+            for x in -r[0]..=r[0] {
+                out.push([x, y, z]);
+            }
+        }
+    }
+    out
+}
+
+async fn gpu_fusion(
+    ctx: Arc<GpuContext>,
+    input: &JlfInput,
+    opts: &JlfOptions,
+    cancel: Option<&AtomicBool>,
+) -> RegResult<JlfOutput> {
+    let mut search = GpuJlfSearch::new_async(ctx).await.map_err(gerr)?;
+    joint_fusion_gpu_with(&mut search, input, opts, cancel).await
+}
+
+/// The [`JlfDevice::Gpu`] fusion of [`joint_fusion_async`] on `search`, with its budgets
+/// ([`GpuJlfSearch::with_patch_budget`], [`GpuJlfSearch::with_atlas_budget`],
+/// [`GpuJlfSearch::with_gather_budget`]), whatever [`JlfOptions::device`] says.
+pub async fn joint_fusion_gpu_with(
+    search: &mut GpuJlfSearch,
+    input: &JlfInput,
+    opts: &JlfOptions,
+    cancel: Option<&AtomicBool>,
+) -> RegResult<JlfOutput> {
+    if input.atlases.len() > MAX_GPU_ATLASES {
+        return joint_fusion_with(input, opts, search, cancel).await;
+    }
+    search.begin();
+    let guard = Finishing(search);
+    fuse_on_gpu(&mut *guard.0, input, opts, cancel).await
+}
+
+struct Finishing<'a>(&'a mut GpuJlfSearch);
+
+impl Drop for Finishing<'_> {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
 }
