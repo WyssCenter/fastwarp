@@ -79,6 +79,13 @@ Install the wheel from PyPI, check that FastWarp finds your GPU, or build from s
 Register one brain image onto a template with public sample data.
 :::
 
+:::{grid-item-card} {fas}`globe` Try it in your browser
+:link: browser
+:link-type: doc
+
+Run a registration on your GPU through WebGPU, without installing anything or uploading images.
+:::
+
 :::{grid-item-card} {fas}`book-open` User guide
 :link: user-guide
 :link-type: doc
