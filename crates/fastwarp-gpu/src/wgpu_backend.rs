@@ -31,6 +31,7 @@
 //! tree, so results are bit-identical from run to run on one device.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,11 +48,11 @@ use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
 use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::volume::Volume;
 
-use crate::device::{BackendSelect, GpuContext};
+use crate::device::{block_gpu, blocking_unavailable, BackendSelect, GpuContext, WEB};
 use crate::error::{GpuError, GpuResult};
 use crate::kernels::{BoxParams, BOX_RADIUS_MAX};
 use crate::parity;
-use crate::pool::BufferPool;
+use crate::pool::{acquire_from, BufferPool};
 mod mi;
 
 pub use mi::GpuMiLevel;
@@ -81,6 +82,13 @@ fn bad(message: impl Into<String>) -> RegError {
 
 fn gerr(e: GpuError) -> RegError {
     bad(e.to_string())
+}
+
+pub(crate) fn block_reg<T>(what: &str, future: impl Future<Output = RegResult<T>>) -> RegResult<T> {
+    if WEB {
+        return Err(gerr(blocking_unavailable(what)));
+    }
+    pollster::block_on(future)
 }
 
 struct PoolBuf {
@@ -337,27 +345,49 @@ impl WgpuBackend {
         GpuContext::new_with(select, Self::from_context)
     }
 
+    /// Async [`Self::new`]: the device request, the kernel compilation and the known-answer
+    /// check are awaited, so it also runs on wasm32.
+    pub async fn new_async(select: &BackendSelect) -> GpuResult<Self> {
+        GpuContext::new_with_async(select, Self::from_context_async).await
+    }
+
     /// Wraps an existing context.
     pub fn from_context(ctx: GpuContext) -> GpuResult<Self> {
         Self::from_shared_context(Arc::new(ctx))
     }
 
-    /// Wraps a context that other engines (N4) share, so a run creates the device once.
+    /// Async [`Self::from_context`].
+    pub async fn from_context_async(ctx: GpuContext) -> GpuResult<Self> {
+        Self::from_shared_context_async(Arc::new(ctx)).await
+    }
+
+    /// Wraps a context that other engines (N4) share, so a run creates the device once; an error
+    /// on wasm32 (use [`Self::from_shared_context_async`]).
     pub fn from_shared_context(ctx: Arc<GpuContext>) -> GpuResult<Self> {
-        let kernels = SynKernels::new(&ctx)?;
-        let mi_kernels = mi::MiKernels::new(&ctx)?;
+        block_gpu(
+            "WgpuBackend::from_shared_context",
+            Self::from_shared_context_async(ctx),
+        )
+    }
+
+    /// Async [`Self::from_shared_context`].
+    pub async fn from_shared_context_async(ctx: Arc<GpuContext>) -> GpuResult<Self> {
+        let kernels = SynKernels::new_async(&ctx).await?;
+        let mi_kernels = mi::MiKernels::new(&ctx).await?;
         let alignment = u64::from(ctx.device.limits().min_uniform_buffer_offset_alignment);
         let stride = SLOT_BYTES.max(alignment);
-        let ring_buf = ctx.scoped("uniform ring", stride * RING_SLOTS, || {
-            ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("fastwarp-gpu uniform ring"),
-                size: stride * RING_SLOTS,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+        let ring_buf = ctx
+            .scoped_async("uniform ring", stride * RING_SLOTS, || {
+                ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("fastwarp-gpu uniform ring"),
+                    size: stride * RING_SLOTS,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
             })
-        })?;
+            .await?;
         let max_groups = ctx.device.limits().max_compute_workgroups_per_dimension;
-        let scalar_staging = ctx.staging_buffer(SCALAR_STAGING_BYTES)?;
+        let scalar_staging = ctx.staging_buffer_async(SCALAR_STAGING_BYTES).await?;
         let mut backend = WgpuBackend {
             ctx,
             kernels,
@@ -380,13 +410,13 @@ impl WgpuBackend {
             partial_staging: Mutex::new(None),
             trimmed_for: Mutex::new(None),
         };
-        backend.run_selftest()?;
+        backend.run_selftest().await?;
         Ok(backend)
     }
 
-    fn run_selftest(&mut self) -> GpuResult<()> {
-        let syn = self.selftest_syn(&parity::Case::selftest())?;
-        let mi = self.selftest_mi(&parity::Case::selftest_mi())?;
+    async fn run_selftest(&mut self) -> GpuResult<()> {
+        let syn = self.selftest_syn(&parity::Case::selftest()).await?;
+        let mi = self.selftest_mi(&parity::Case::selftest_mi()).await?;
         let mut rec = self.selftest.lock().unwrap_or_else(|p| p.into_inner());
         *rec = SelfTestRecord {
             attempts: syn.attempts.max(mi.attempts),
@@ -398,10 +428,11 @@ impl WgpuBackend {
         Ok(())
     }
 
-    fn selftest_syn(&mut self, case: &parity::Case) -> GpuResult<FamilyCheck> {
+    async fn selftest_syn(&mut self, case: &parity::Case) -> GpuResult<FamilyCheck> {
         let mut first = Vec::new();
         for attempt in 1..=SELFTEST_ATTEMPTS {
-            let results = parity::check_all(self, case)
+            let results = parity::check_all_async(self, case)
+                .await
                 .map_err(|e| GpuError::Verification(format!("known-answer SyN run failed: {e}")))?;
             let failures: Vec<String> =
                 results.iter().filter(|r| !r.ok).map(|r| r.line()).collect();
@@ -418,19 +449,24 @@ impl WgpuBackend {
             if attempt == SELFTEST_ATTEMPTS {
                 return Err(self.selftest_failed("SyN", &failures));
             }
-            self.kernels = SynKernels::new(&self.ctx)?;
+            self.kernels = SynKernels::new_async(&self.ctx).await?;
         }
         Ok(FamilyCheck::default())
     }
 
-    fn selftest_mi(&mut self, case: &parity::Case) -> GpuResult<FamilyCheck> {
+    async fn selftest_mi(&mut self, case: &parity::Case) -> GpuResult<FamilyCheck> {
         let mut first = Vec::new();
         for attempt in 1..=SELFTEST_ATTEMPTS {
-            let mut results = parity::check_mi(self, case)
+            let mut results = parity::check_mi_async(self, case)
+                .await
                 .map_err(|e| GpuError::Verification(format!("known-answer MI run failed: {e}")))?;
-            results.extend(parity::check_mi_chunked(self, case).map_err(|e| {
-                GpuError::Verification(format!("known-answer chunked MI run failed: {e}"))
-            })?);
+            results.extend(
+                parity::check_mi_chunked_async(self, case)
+                    .await
+                    .map_err(|e| {
+                        GpuError::Verification(format!("known-answer chunked MI run failed: {e}"))
+                    })?,
+            );
             let failures: Vec<String> =
                 results.iter().filter(|r| !r.ok).map(|r| r.line()).collect();
             if failures.is_empty() {
@@ -446,7 +482,7 @@ impl WgpuBackend {
             if attempt == SELFTEST_ATTEMPTS {
                 return Err(self.selftest_failed("MI", &failures));
             }
-            self.mi_kernels = mi::MiKernels::new(&self.ctx)?;
+            self.mi_kernels = mi::MiKernels::new(&self.ctx).await?;
         }
         Ok(FamilyCheck::default())
     }
@@ -539,7 +575,9 @@ impl WgpuBackend {
     }
 
     /// Turns per-operation GPU timing on or off. While on, every operation is submitted alone and
-    /// waited for (timestamps bracket its commands), so wall-clock time grows.
+    /// waited for (timestamps bracket its commands), so wall-clock time grows. On wasm32, run one
+    /// operation at a time while profiling: the timestamp read-back buffer and the uniform ring are
+    /// shared while an operation waits.
     pub fn set_profiling(&self, enabled: bool) {
         let mut p = self.profile.lock().unwrap_or_else(|p| p.into_inner());
         p.enabled = enabled;
@@ -568,18 +606,15 @@ impl WgpuBackend {
         ProfileReport { ops, timeline }
     }
 
-    fn acquire(&self, label: &str, bytes: u64) -> RegResult<PoolBuf> {
+    async fn acquire(&self, label: &str, bytes: u64) -> RegResult<PoolBuf> {
         let limit = self.ctx.caps.max_storage_buffer_binding_size;
         if bytes > limit {
             return Err(bad(format!(
                 "{label} needs {bytes} bytes, the device binds at most {limit} bytes per storage buffer"
             )));
         }
-        let buf = self
-            .pool
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .acquire(&self.ctx, label, bytes)
+        let buf = acquire_from(&*self.pool, &self.ctx, label, bytes)
+            .await
             .map_err(gerr)?;
         Ok(PoolBuf {
             buf,
@@ -587,15 +622,15 @@ impl WgpuBackend {
         })
     }
 
-    fn image_buffer(&self, grid: &Grid) -> RegResult<PoolBuf> {
-        self.acquire("image", grid.num_voxels() as u64 * 4)
+    async fn image_buffer(&self, grid: &Grid) -> RegResult<PoolBuf> {
+        self.acquire("image", grid.num_voxels() as u64 * 4).await
     }
 
-    fn field_buffer(&self, grid: &Grid) -> RegResult<PoolBuf> {
-        self.acquire("field", grid.num_voxels() as u64 * 12)
+    async fn field_buffer(&self, grid: &Grid) -> RegResult<PoolBuf> {
+        self.acquire("field", grid.num_voxels() as u64 * 12).await
     }
 
-    fn run_encoder(
+    async fn run_encoder(
         &self,
         label: &'static str,
         record: impl FnOnce(&mut wgpu::CommandEncoder) -> RegResult<()>,
@@ -611,9 +646,10 @@ impl WgpuBackend {
             let mut result = Ok(());
             let timing = self
                 .ctx
-                .timed(false, |enc| {
+                .timed_async(false, |enc| {
                     result = record(enc).and_then(|()| self.check_ring(label, first_slot))
                 })
+                .await
                 .map_err(gerr)?;
             result?;
             let mut p = self.profile.lock().unwrap_or_else(|p| p.into_inner());
@@ -628,7 +664,14 @@ impl WgpuBackend {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
             record(&mut enc)?;
             self.check_ring(label, first_slot)?;
-            self.ctx.queue.submit(Some(enc.finish()));
+            if WEB {
+                self.ctx
+                    .scoped_async(label, 0, || self.ctx.queue.submit(Some(enc.finish())))
+                    .await
+                    .map_err(gerr)?;
+            } else {
+                self.ctx.queue.submit(Some(enc.finish()));
+            }
         }
         self.ctx
             .check_errors()
@@ -646,7 +689,7 @@ impl WgpuBackend {
         Ok(())
     }
 
-    fn run_pass(
+    async fn run_pass(
         &self,
         label: &'static str,
         record: impl FnOnce(&mut wgpu::ComputePass<'_>) -> RegResult<()>,
@@ -658,6 +701,7 @@ impl WgpuBackend {
             });
             record(&mut pass)
         })
+        .await
     }
 
     fn launch<U: Pod>(
@@ -729,10 +773,23 @@ impl WgpuBackend {
         Ok(())
     }
 
-    /// Copies an image back to the host as `f64`.
+    /// Copies an image back to the host as `f64`; an error on wasm32 (use
+    /// [`Self::download_image_async`]).
     pub fn download_image(&self, image: &GpuImage) -> RegResult<Vec<f64>> {
+        block_reg(
+            "WgpuBackend::download_image",
+            self.download_image_async(image),
+        )
+    }
+
+    /// Async [`Self::download_image`].
+    pub async fn download_image_async(&self, image: &GpuImage) -> RegResult<Vec<f64>> {
         let n = image.grid.num_voxels();
-        let data = self.ctx.read_f32(image.buf.buffer(), n).map_err(gerr)?;
+        let data = self
+            .ctx
+            .read_f32_async(image.buf.buffer(), n)
+            .await
+            .map_err(gerr)?;
         Ok(data.into_iter().map(f64::from).collect())
     }
 
@@ -756,18 +813,25 @@ impl WgpuBackend {
         Ok([gx as u32, gy as u32, 1])
     }
 
-    fn read_scalar_bytes(&self, buffer: &wgpu::Buffer, len: u64) -> RegResult<Vec<u8>> {
+    async fn read_scalar_bytes(&self, buffer: &wgpu::Buffer, len: u64) -> RegResult<Vec<u8>> {
         self.scalar_readbacks.fetch_add(1, Ordering::Relaxed);
         if len > SCALAR_STAGING_BYTES {
-            return self.ctx.read_bytes(buffer, 0, len).map_err(gerr);
+            return self
+                .ctx
+                .read_bytes_async(buffer, 0, len)
+                .await
+                .map_err(gerr);
         }
-        let staging = self.take_scalar_staging()?;
-        let values = self.ctx.read_bytes_staged(buffer, 0, len, &staging);
+        let staging = self.take_scalar_staging().await?;
+        let values = self
+            .ctx
+            .read_bytes_staged_async(buffer, 0, len, &staging)
+            .await;
         self.put_scalar_staging(staging);
         values.map_err(gerr)
     }
 
-    fn take_scalar_staging(&self) -> RegResult<wgpu::Buffer> {
+    async fn take_scalar_staging(&self) -> RegResult<wgpu::Buffer> {
         let taken = self
             .scalar_staging
             .lock()
@@ -775,7 +839,11 @@ impl WgpuBackend {
             .take();
         match taken {
             Some(buffer) => Ok(buffer),
-            None => self.ctx.staging_buffer(SCALAR_STAGING_BYTES).map_err(gerr),
+            None => self
+                .ctx
+                .staging_buffer_async(SCALAR_STAGING_BYTES)
+                .await
+                .map_err(gerr),
         }
     }
 
@@ -786,17 +854,17 @@ impl WgpuBackend {
             .unwrap_or_else(|p| p.into_inner()) = Some(buffer);
     }
 
-    fn read_scalars(&self, buffer: &wgpu::Buffer, count: usize) -> RegResult<Vec<f32>> {
-        let bytes = self.read_scalar_bytes(buffer, (count * 4) as u64)?;
+    async fn read_scalars(&self, buffer: &wgpu::Buffer, count: usize) -> RegResult<Vec<f32>> {
+        let bytes = self.read_scalar_bytes(buffer, (count * 4) as u64).await?;
         Ok(bytemuck::pod_collect_to_vec(&bytes))
     }
 
-    fn read_sources(&self, sources: &[(&wgpu::Buffer, u64)]) -> RegResult<Vec<u8>> {
+    async fn read_sources(&self, sources: &[(&wgpu::Buffer, u64)]) -> RegResult<Vec<u8>> {
         let len: u64 = sources.iter().map(|(_, bytes)| bytes).sum();
         self.scalar_readbacks.fetch_add(1, Ordering::Relaxed);
         if len <= SCALAR_STAGING_BYTES {
-            let staging = self.take_scalar_staging()?;
-            let values = self.read_sources_staged(sources, len, &staging);
+            let staging = self.take_scalar_staging().await?;
+            let values = self.read_sources_staged(sources, len, &staging).await;
             self.put_scalar_staging(staging);
             return values;
         }
@@ -807,9 +875,9 @@ impl WgpuBackend {
             .take();
         let buf = match taken {
             Some(b) if b.size() >= len => b,
-            _ => self.ctx.staging_buffer(len).map_err(gerr)?,
+            _ => self.ctx.staging_buffer_async(len).await.map_err(gerr)?,
         };
-        let values = self.read_sources_staged(sources, len, &buf);
+        let values = self.read_sources_staged(sources, len, &buf).await;
         *self
             .partial_staging
             .lock()
@@ -817,7 +885,7 @@ impl WgpuBackend {
         values
     }
 
-    fn read_sources_staged(
+    async fn read_sources_staged(
         &self,
         sources: &[(&wgpu::Buffer, u64)],
         len: u64,
@@ -835,7 +903,10 @@ impl WgpuBackend {
             offset += bytes;
         }
         self.ctx.queue.submit(Some(enc.finish()));
-        self.ctx.read_staging(staging, len).map_err(gerr)
+        self.ctx
+            .read_staging_async(staging, len)
+            .await
+            .map_err(gerr)
     }
 
     fn require_same_grid(&self, what: &str, a: &Grid, b: &Grid) -> RegResult<()> {
@@ -845,11 +916,16 @@ impl WgpuBackend {
         Ok(())
     }
 
-    fn tap_set(&self, variance: f64, size: [usize; 3]) -> RegResult<Arc<TapSet>> {
+    async fn tap_set(&self, variance: f64, size: [usize; 3]) -> RegResult<Arc<TapSet>> {
         let key = (variance.to_bits(), size);
-        let mut cache = self.taps.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(t) = cache.get(&key) {
-            return Ok(t.clone());
+        let cached = self
+            .taps
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&key)
+            .cloned();
+        if let Some(t) = cached {
+            return Ok(t);
         }
         let mut all: Vec<f32> = Vec::new();
         let mut offset = [0u32; 3];
@@ -863,7 +939,7 @@ impl WgpuBackend {
         let bytes = (all.len() * 4) as u64;
         let buf = self
             .ctx
-            .scoped("gaussian taps", bytes, || {
+            .scoped_async("gaussian taps", bytes, || {
                 self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("gaussian taps"),
                     size: bytes,
@@ -871,6 +947,7 @@ impl WgpuBackend {
                     mapped_at_creation: false,
                 })
             })
+            .await
             .map_err(gerr)?;
         self.ctx
             .queue
@@ -880,6 +957,7 @@ impl WgpuBackend {
             offset,
             radius,
         });
+        let mut cache = self.taps.lock().unwrap_or_else(|p| p.into_inner());
         if cache.len() > 64 {
             cache.clear();
         }
@@ -887,9 +965,10 @@ impl WgpuBackend {
         Ok(set)
     }
 
-    fn reduction_partials(&self, grid: &Grid) -> RegResult<PoolBuf> {
+    async fn reduction_partials(&self, grid: &Grid) -> RegResult<PoolBuf> {
         let groups = self.groups_1d(grid.num_voxels() as u64)?;
         self.acquire("reduction partials", u64::from(groups[0] * groups[1]) * 4)
+            .await
     }
 
     fn encode_reduce(
@@ -930,9 +1009,14 @@ impl WgpuBackend {
         )
     }
 
-    fn reduce_field(&self, field: &GpuField, mode: u32, label: &'static str) -> RegResult<f32> {
-        let part = self.reduction_partials(&field.grid)?;
-        let scalar = self.acquire("reduction scalar", 16)?;
+    async fn reduce_field(
+        &self,
+        field: &GpuField,
+        mode: u32,
+        label: &'static str,
+    ) -> RegResult<f32> {
+        let part = self.reduction_partials(&field.grid).await?;
+        let scalar = self.acquire("reduction scalar", 16).await?;
         self.run_pass(label, |pass| {
             self.encode_reduce(
                 pass,
@@ -942,8 +1026,9 @@ impl WgpuBackend {
                 part.buffer(),
                 scalar.buffer(),
             )
-        })?;
-        let v = self.read_scalars(scalar.buffer(), 1)?;
+        })
+        .await?;
+        let v = self.read_scalars(scalar.buffer(), 1).await?;
         Ok(v[0])
     }
 
@@ -952,7 +1037,7 @@ impl WgpuBackend {
     /// the second direction only rebinds them. Results are in evaluation order; with `norms`, the
     /// second vector holds the [`Backend::l2_norm`] of each derivative, read back together with
     /// the metric values.
-    fn cc_evaluate(
+    async fn cc_evaluate(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -966,33 +1051,33 @@ impl WgpuBackend {
         let n = grid.num_voxels();
         let plane_bytes = n as u64 * 4;
         let planes = [
-            self.acquire("cc plane a", plane_bytes)?,
-            self.acquire("cc plane b", plane_bytes)?,
-            self.acquire("cc plane aa", plane_bytes)?,
-            self.acquire("cc plane bb", plane_bytes)?,
-            self.acquire("cc plane ab", plane_bytes)?,
+            self.acquire("cc plane a", plane_bytes).await?,
+            self.acquire("cc plane b", plane_bytes).await?,
+            self.acquire("cc plane aa", plane_bytes).await?,
+            self.acquire("cc plane bb", plane_bytes).await?,
+            self.acquire("cc plane ab", plane_bytes).await?,
         ];
         let sums = [
-            self.acquire("cc sum a", plane_bytes)?,
-            self.acquire("cc sum b", plane_bytes)?,
-            self.acquire("cc sum aa", plane_bytes)?,
-            self.acquire("cc sum bb", plane_bytes)?,
-            self.acquire("cc sum ab", plane_bytes)?,
+            self.acquire("cc sum a", plane_bytes).await?,
+            self.acquire("cc sum b", plane_bytes).await?,
+            self.acquire("cc sum aa", plane_bytes).await?,
+            self.acquire("cc sum bb", plane_bytes).await?,
+            self.acquire("cc sum ab", plane_bytes).await?,
         ];
         let directions = if swapped { 2 } else { 1 };
         let g3 = self.groups_3d(&grid);
         let count = g3[0] * g3[1] * g3[2];
         let mut outs = Vec::with_capacity(directions);
         for _ in 0..directions {
-            outs.push(self.field_buffer(&grid)?);
+            outs.push(self.field_buffer(&grid).await?);
         }
         let parts_bytes = u64::from(count) * directions as u64 * 4;
-        let parts = self.acquire("cc partials", parts_bytes)?;
+        let parts = self.acquire("cc partials", parts_bytes).await?;
         let reduction = if norms {
-            let part = self.reduction_partials(&grid)?;
+            let part = self.reduction_partials(&grid).await?;
             let mut scalars = Vec::with_capacity(directions);
             for _ in 0..directions {
-                scalars.push(self.acquire("reduction scalar", 16)?);
+                scalars.push(self.acquire("reduction scalar", 16).await?);
             }
             Some((part, scalars))
         } else {
@@ -1091,12 +1176,13 @@ impl WgpuBackend {
                 }
             }
             Ok(())
-        })?;
+        })
+        .await?;
         let mut sources = vec![(parts.buffer(), parts_bytes)];
         if let Some((_, scalars)) = &reduction {
             sources.extend(scalars.iter().map(|s| (s.buffer(), 4)));
         }
-        let values: Vec<f32> = bytemuck::pod_collect_to_vec(&self.read_sources(&sources)?);
+        let values: Vec<f32> = bytemuck::pod_collect_to_vec(&self.read_sources(&sources).await?);
         let (partials, squared_norms) = values.split_at(count as usize * directions);
         let evaluations = outs
             .into_iter()
@@ -1133,7 +1219,7 @@ impl WgpuBackend {
     /// not valid), so the masked derivative kernel binds as many storage buffers as the unmasked
     /// one. The value kernel also counts the valid voxels of each workgroup, read back with the
     /// value partials; each value is the mean over the valid voxels.
-    fn cc_evaluate_masked(
+    async fn cc_evaluate_masked(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
@@ -1148,33 +1234,36 @@ impl WgpuBackend {
         let n = grid.num_voxels();
         let plane_bytes = n as u64 * 4;
         let planes = [
-            self.acquire("cc plane a", plane_bytes)?,
-            self.acquire("cc plane b", plane_bytes)?,
-            self.acquire("cc plane aa", plane_bytes)?,
-            self.acquire("cc plane bb", plane_bytes)?,
-            self.acquire("cc plane ab", plane_bytes)?,
-            self.acquire("cc plane count", plane_bytes)?,
+            self.acquire("cc plane a", plane_bytes).await?,
+            self.acquire("cc plane b", plane_bytes).await?,
+            self.acquire("cc plane aa", plane_bytes).await?,
+            self.acquire("cc plane bb", plane_bytes).await?,
+            self.acquire("cc plane ab", plane_bytes).await?,
+            self.acquire("cc plane count", plane_bytes).await?,
         ];
         let sums = [
-            self.acquire("cc sum a", plane_bytes)?,
-            self.acquire("cc sum b", plane_bytes)?,
-            self.acquire("cc sum aa", plane_bytes)?,
-            self.acquire("cc sum bb", plane_bytes)?,
-            self.acquire("cc sum ab", plane_bytes)?,
-            self.acquire("cc sum count", plane_bytes)?,
+            self.acquire("cc sum a", plane_bytes).await?,
+            self.acquire("cc sum b", plane_bytes).await?,
+            self.acquire("cc sum aa", plane_bytes).await?,
+            self.acquire("cc sum bb", plane_bytes).await?,
+            self.acquire("cc sum ab", plane_bytes).await?,
+            self.acquire("cc sum count", plane_bytes).await?,
         ];
         let g3 = self.groups_3d(&grid);
         let count = g3[0] * g3[1] * g3[2];
-        let outs = [self.field_buffer(&grid)?, self.field_buffer(&grid)?];
+        let outs = [
+            self.field_buffer(&grid).await?,
+            self.field_buffer(&grid).await?,
+        ];
         let parts_bytes = u64::from(count) * 2 * 4;
-        let parts = self.acquire("cc partials", parts_bytes)?;
+        let parts = self.acquire("cc partials", parts_bytes).await?;
         let valid_parts_bytes = u64::from(count) * 4;
-        let valid_parts = self.acquire("cc valid partials", valid_parts_bytes)?;
+        let valid_parts = self.acquire("cc valid partials", valid_parts_bytes).await?;
         let reduction = if norms {
-            let part = self.reduction_partials(&grid)?;
+            let part = self.reduction_partials(&grid).await?;
             let scalars = [
-                self.acquire("reduction scalar", 16)?,
-                self.acquire("reduction scalar", 16)?,
+                self.acquire("reduction scalar", 16).await?,
+                self.acquire("reduction scalar", 16).await?,
             ];
             Some((part, scalars))
         } else {
@@ -1291,7 +1380,8 @@ impl WgpuBackend {
                 }
             }
             Ok(())
-        })?;
+        })
+        .await?;
         let mut sources = vec![
             (parts.buffer(), parts_bytes),
             (valid_parts.buffer(), valid_parts_bytes),
@@ -1299,7 +1389,7 @@ impl WgpuBackend {
         if let Some((_, scalars)) = &reduction {
             sources.extend(scalars.iter().map(|s| (s.buffer(), 4)));
         }
-        let values: Vec<f32> = bytemuck::pod_collect_to_vec(&self.read_sources(&sources)?);
+        let values: Vec<f32> = bytemuck::pod_collect_to_vec(&self.read_sources(&sources).await?);
         let (partials, rest) = values.split_at(count as usize * 2);
         let (valid_partials, squared_norms) = rest.split_at(count as usize);
         let valid_voxels: f64 = valid_partials.iter().map(|v| f64::from(*v)).sum();
@@ -1324,28 +1414,37 @@ impl WgpuBackend {
     /// [`Backend::smooth_field`] with the gather kernel on every axis, the pre-tiling
     /// implementation; the tiled kernels must match it bit for bit.
     #[doc(hidden)]
-    pub fn smooth_field_gather(&self, field: &GpuField, variance: f64) -> RegResult<GpuField> {
+    pub async fn smooth_field_gather(
+        &self,
+        field: &GpuField,
+        variance: f64,
+    ) -> RegResult<GpuField> {
         if variance <= 0.0 {
-            return self.copy_field(field);
+            return self.copy_field(field).await;
         }
-        self.smooth_with(field, variance, false)
+        self.smooth_with(field, variance, false).await
     }
 
     /// Whether the Gaussian of `variance` on `size` runs on the tiled kernels on every axis.
     #[doc(hidden)]
-    pub fn smoothing_is_tiled(&self, variance: f64, size: [usize; 3]) -> RegResult<bool> {
-        let taps = self.tap_set(variance, size)?;
+    pub async fn smoothing_is_tiled(&self, variance: f64, size: [usize; 3]) -> RegResult<bool> {
+        let taps = self.tap_set(variance, size).await?;
         Ok(taps.radius.iter().all(|r| *r <= BOX_RADIUS_MAX))
     }
 
-    fn smooth_with(&self, field: &GpuField, variance: f64, tiled: bool) -> RegResult<GpuField> {
+    async fn smooth_with(
+        &self,
+        field: &GpuField,
+        variance: f64,
+        tiled: bool,
+    ) -> RegResult<GpuField> {
         let grid = field.grid;
         let size = grid.size();
-        let taps = self.tap_set(variance, size)?;
+        let taps = self.tap_set(variance, size).await?;
         let n = grid.num_voxels();
-        let t1 = self.field_buffer(&grid)?;
-        let t2 = self.field_buffer(&grid)?;
-        let out = self.field_buffer(&grid)?;
+        let t1 = self.field_buffer(&grid).await?;
+        let t2 = self.field_buffer(&grid).await?;
+        let out = self.field_buffer(&grid).await?;
         let w1 = if variance < 0.5 {
             1.0 - variance / 0.5
         } else {
@@ -1401,7 +1500,8 @@ impl WgpuBackend {
                 }
             }
             Ok(())
-        })?;
+        })
+        .await?;
         Ok(GpuField { buf: out, grid })
     }
 
@@ -1460,11 +1560,28 @@ impl WgpuBackend {
     }
 }
 
-impl WgpuBackend {
-    #[doc(hidden)]
-    pub fn upload_image(&self, volume: &Volume<f64>) -> RegResult<GpuImage> {
+impl Backend for WgpuBackend {
+    type Image = GpuImage;
+    type Field = GpuField;
+
+    fn name(&self) -> String {
+        format!(
+            "wgpu-f32 ({}, {})",
+            self.ctx.info.backend, self.ctx.info.name
+        )
+    }
+
+    fn release_idle_buffers(&self) {
+        self.release_idle();
+    }
+
+    fn field_grid(&self, field: &GpuField) -> Grid {
+        field.grid
+    }
+
+    async fn upload_image(&self, volume: &Volume<f64>) -> RegResult<GpuImage> {
         let grid = *volume.grid();
-        let buf = self.image_buffer(&grid)?;
+        let buf = self.image_buffer(&grid).await?;
         let data: Vec<f32> = volume.data().iter().map(|v| *v as f32).collect();
         self.ctx
             .queue
@@ -1474,22 +1591,21 @@ impl WgpuBackend {
         Ok(GpuImage { buf, grid })
     }
 
-    #[doc(hidden)]
-    pub fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
-        let buf = self.field_buffer(grid)?;
+    async fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
+        let buf = self.field_buffer(grid).await?;
         self.run_encoder("zero_field", |enc| {
             enc.clear_buffer(buf.buffer(), 0, None);
             Ok(())
-        })?;
+        })
+        .await?;
         self.trim_pool_once_for(grid);
         Ok(GpuField { buf, grid: *grid })
     }
 
-    #[doc(hidden)]
-    pub fn upload_field(&self, field: &VectorField) -> RegResult<GpuField> {
+    async fn upload_field(&self, field: &VectorField) -> RegResult<GpuField> {
         let grid = *field.grid();
         let n = grid.num_voxels();
-        let buf = self.field_buffer(&grid)?;
+        let buf = self.field_buffer(&grid).await?;
         let mut data = vec![0.0f32; 3 * n];
         for (i, v) in field.data().iter().enumerate() {
             data[i] = v[0] as f32;
@@ -1504,11 +1620,14 @@ impl WgpuBackend {
         Ok(GpuField { buf, grid })
     }
 
-    #[doc(hidden)]
-    pub fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
+    async fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
         let n = field.grid.num_voxels();
         self.field_downloads.fetch_add(1, Ordering::Relaxed);
-        let data = self.ctx.read_f32(field.buf.buffer(), 3 * n).map_err(gerr)?;
+        let data = self
+            .ctx
+            .read_f32_async(field.buf.buffer(), 3 * n)
+            .await
+            .map_err(gerr)?;
         let vectors: Vec<Vec3> = (0..n)
             .map(|i| {
                 [
@@ -1521,22 +1640,21 @@ impl WgpuBackend {
         VectorField::from_vec(field.grid, vectors)
     }
 
-    #[doc(hidden)]
-    pub fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {
-        let buf = self.field_buffer(&field.grid)?;
+    async fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {
+        let buf = self.field_buffer(&field.grid).await?;
         let bytes = field.grid.num_voxels() as u64 * 12;
         self.run_encoder("copy_field", |enc| {
             enc.copy_buffer_to_buffer(field.buf.buffer(), 0, buf.buffer(), 0, bytes);
             Ok(())
-        })?;
+        })
+        .await?;
         Ok(GpuField {
             buf,
             grid: field.grid,
         })
     }
 
-    #[doc(hidden)]
-    pub fn warp_through_field(
+    async fn warp_through_field(
         &self,
         source: &GpuImage,
         field: &GpuField,
@@ -1544,7 +1662,7 @@ impl WgpuBackend {
         affine: Option<&AffineTransform>,
     ) -> RegResult<GpuImage> {
         let grid = field.grid;
-        let out = self.image_buffer(&grid)?;
+        let out = self.image_buffer(&grid).await?;
         if let Some(pre) = pre {
             let uniform = warp_pre_uniform(&grid, &pre.grid, &source.grid, affine, 1)?;
             self.run_pass("warp_pre", |pass| {
@@ -1560,7 +1678,8 @@ impl WgpuBackend {
                     &uniform,
                     self.groups_3d(&grid),
                 )
-            })?;
+            })
+            .await?;
             return Ok(GpuImage { buf: out, grid });
         }
         let uniform = warp_uniform(&grid, &source.grid, affine, true, 1)?;
@@ -1572,12 +1691,12 @@ impl WgpuBackend {
                 &uniform,
                 self.groups_3d(&grid),
             )
-        })?;
+        })
+        .await?;
         Ok(GpuImage { buf: out, grid })
     }
 
-    #[doc(hidden)]
-    pub fn warp_mask_through_field(
+    async fn warp_mask_through_field(
         &self,
         mask: &GpuImage,
         field: &GpuField,
@@ -1591,7 +1710,7 @@ impl WgpuBackend {
                 self.require_same_grid("warp mask product", &grid, &p.grid)?;
                 (p.buf, WARP_NEAREST | WARP_MULTIPLY)
             }
-            None => (self.image_buffer(&grid)?, WARP_NEAREST),
+            None => (self.image_buffer(&grid).await?, WARP_NEAREST),
         };
         if let Some(pre) = pre {
             let mut uniform = warp_pre_uniform(&grid, &pre.grid, &mask.grid, affine, 1)?;
@@ -1609,7 +1728,8 @@ impl WgpuBackend {
                     &uniform,
                     self.groups_3d(&grid),
                 )
-            })?;
+            })
+            .await?;
             return Ok(GpuImage { buf: out, grid });
         }
         let mut uniform = warp_uniform(&grid, &mask.grid, affine, true, 1)?;
@@ -1622,95 +1742,99 @@ impl WgpuBackend {
                 &uniform,
                 self.groups_3d(&grid),
             )
-        })?;
+        })
+        .await?;
         Ok(GpuImage { buf: out, grid })
     }
 
-    #[doc(hidden)]
-    pub fn cc_value_derivative_pair_masked(
+    async fn cc_value_derivative_pair_masked(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
         valid: &GpuImage,
         radius: usize,
     ) -> RegResult<MetricPair<GpuField>> {
-        let (out, _) = self.cc_evaluate_masked(fixed, moving, valid, radius, false)?;
+        let (out, _) = self
+            .cc_evaluate_masked(fixed, moving, valid, radius, false)
+            .await?;
         cc_pair(out)
     }
 
-    #[doc(hidden)]
-    pub fn cc_value_derivative_pair_masked_with_norms(
+    async fn cc_value_derivative_pair_masked_with_norms(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
         valid: &GpuImage,
         radius: usize,
     ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
-        let (out, norms) = self.cc_evaluate_masked(fixed, moving, valid, radius, true)?;
+        let (out, norms) = self
+            .cc_evaluate_masked(fixed, moving, valid, radius, true)
+            .await?;
         let norms: [f64; 2] = norms
             .try_into()
             .map_err(|_| bad("cc pair produced fewer than two norms"))?;
         Ok((cc_pair(out)?, norms))
     }
 
-    #[doc(hidden)]
-    pub fn cc_value_derivative(
+    async fn cc_value_derivative(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
         radius: usize,
     ) -> RegResult<(f64, GpuField)> {
-        let (mut out, _) = self.cc_evaluate(fixed, moving, radius, false, false)?;
+        let (mut out, _) = self
+            .cc_evaluate(fixed, moving, radius, false, false)
+            .await?;
         out.pop().ok_or_else(|| bad("cc produced no result"))
     }
 
-    #[doc(hidden)]
-    pub fn cc_value_derivative_pair(
+    async fn cc_value_derivative_pair(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
         radius: usize,
     ) -> RegResult<MetricPair<GpuField>> {
-        let (out, _) = self.cc_evaluate(fixed, moving, radius, true, false)?;
+        let (out, _) = self.cc_evaluate(fixed, moving, radius, true, false).await?;
         cc_pair(out)
     }
 
-    #[doc(hidden)]
-    pub fn cc_value_derivative_pair_with_norms(
+    async fn cc_value_derivative_pair_with_norms(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
         radius: usize,
     ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
-        let (out, norms) = self.cc_evaluate(fixed, moving, radius, true, true)?;
+        let (out, norms) = self.cc_evaluate(fixed, moving, radius, true, true).await?;
         let norms: [f64; 2] = norms
             .try_into()
             .map_err(|_| bad("cc pair produced fewer than two norms"))?;
         Ok((cc_pair(out)?, norms))
     }
 
-    #[doc(hidden)]
-    pub fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
+    async fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
         if variance <= 0.0 {
             return Ok(field);
         }
-        self.smooth_with(&field, variance, true)
+        self.smooth_with(&field, variance, true).await
     }
 
-    #[doc(hidden)]
-    pub fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
-        Ok(f64::from(self.reduce_field(field, 0, "max_scaled_norm")?))
+    async fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
+        Ok(f64::from(
+            self.reduce_field(field, 0, "max_scaled_norm").await?,
+        ))
     }
 
-    #[doc(hidden)]
-    pub fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
+    async fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
         if a.grid != b.grid {
-            return Ok((self.max_scaled_norm(a)?, self.max_scaled_norm(b)?));
+            return Ok((
+                self.max_scaled_norm(a).await?,
+                self.max_scaled_norm(b).await?,
+            ));
         }
-        let part = self.reduction_partials(&a.grid)?;
+        let part = self.reduction_partials(&a.grid).await?;
         let scalars = [
-            self.acquire("reduction scalar", 16)?,
-            self.acquire("reduction scalar", 16)?,
+            self.acquire("reduction scalar", 16).await?,
+            self.acquire("reduction scalar", 16).await?,
         ];
         self.run_pass("max_scaled_norm_pair", |pass| {
             for (field, scalar) in [a, b].into_iter().zip(&scalars) {
@@ -1724,18 +1848,20 @@ impl WgpuBackend {
                 )?;
             }
             Ok(())
-        })?;
-        let bytes = self.read_sources(&[(scalars[0].buffer(), 4), (scalars[1].buffer(), 4)])?;
+        })
+        .await?;
+        let bytes = self
+            .read_sources(&[(scalars[0].buffer(), 4), (scalars[1].buffer(), 4)])
+            .await?;
         let v: Vec<f32> = bytemuck::pod_collect_to_vec(&bytes);
         Ok((f64::from(v[0]), f64::from(v[1])))
     }
 
-    #[doc(hidden)]
-    pub fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
-        Ok(f64::from(self.reduce_field(field, 1, "l2_norm")?).sqrt())
+    async fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
+        Ok(f64::from(self.reduce_field(field, 1, "l2_norm").await?).sqrt())
     }
 
-    pub(crate) fn scale(&self, field: &mut GpuField, s: f64) -> RegResult<()> {
+    async fn scale(&self, field: &mut GpuField, s: f64) -> RegResult<()> {
         let total = field.grid.num_voxels() as u64 * 3;
         let groups = self.groups_1d(total)?;
         self.run_pass("scale", |pass| {
@@ -1751,9 +1877,10 @@ impl WgpuBackend {
                 groups,
             )
         })
+        .await
     }
 
-    pub(crate) fn axpy(&self, acc: &mut GpuField, a: f64, x: &GpuField) -> RegResult<()> {
+    async fn axpy(&self, acc: &mut GpuField, a: f64, x: &GpuField) -> RegResult<()> {
         self.require_same_grid("axpy", &acc.grid, &x.grid)?;
         let total = acc.grid.num_voxels() as u64 * 3;
         let groups = self.groups_1d(total)?;
@@ -1770,13 +1897,13 @@ impl WgpuBackend {
                 groups,
             )
         })
+        .await
     }
 
-    #[doc(hidden)]
-    pub fn compose(&self, displacement: &GpuField, warping: &GpuField) -> RegResult<GpuField> {
+    async fn compose(&self, displacement: &GpuField, warping: &GpuField) -> RegResult<GpuField> {
         self.require_same_grid("compose", &displacement.grid, &warping.grid)?;
         let grid = warping.grid;
-        let out = self.field_buffer(&grid)?;
+        let out = self.field_buffer(&grid).await?;
         let ifo = index_from_offset(&grid)?;
         let uniform = ComposeU {
             dims: dims4(&grid),
@@ -1794,39 +1921,40 @@ impl WgpuBackend {
                 &uniform,
                 self.groups_3d(&grid),
             )
-        })?;
+        })
+        .await?;
         Ok(GpuField { buf: out, grid })
     }
 
-    #[doc(hidden)]
-    pub fn invert(
+    async fn invert(
         &self,
         field: &GpuField,
         initial: GpuField,
         params: &InvertParams,
     ) -> RegResult<(GpuField, InvertStats)> {
-        let (psi, state) = self.invert_encode(field, initial, params)?;
+        let (psi, state) = self.invert_encode(field, initial, params).await?;
         let words: Vec<u32> = match state {
             Some(state) => {
-                bytemuck::pod_collect_to_vec(&self.read_scalar_bytes(state.buffer(), 16)?)
+                bytemuck::pod_collect_to_vec(&self.read_scalar_bytes(state.buffer(), 16).await?)
             }
             None => vec![0; 4],
         };
         Ok((psi, invert_stats(&words)))
     }
 
-    #[doc(hidden)]
-    pub fn invert_pair(
+    async fn invert_pair(
         &self,
         field: GpuField,
         inverse: GpuField,
         params: &InvertParams,
     ) -> RegResult<InversionPair<GpuField>> {
-        let (inverse, inverse_state) = self.invert_encode(&field, inverse, params)?;
-        let (field, field_state) = self.invert_encode(&inverse, field, params)?;
+        let (inverse, inverse_state) = self.invert_encode(&field, inverse, params).await?;
+        let (field, field_state) = self.invert_encode(&inverse, field, params).await?;
         let words: Vec<u32> = match (&inverse_state, &field_state) {
             (Some(a), Some(b)) => bytemuck::pod_collect_to_vec(
-                &self.read_sources(&[(a.buffer(), 16), (b.buffer(), 16)])?,
+                &self
+                    .read_sources(&[(a.buffer(), 16), (b.buffer(), 16)])
+                    .await?,
             ),
             _ => vec![0; 8],
         };
@@ -1836,12 +1964,11 @@ impl WgpuBackend {
         ))
     }
 
-    #[doc(hidden)]
-    pub fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
+    async fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
         if field.grid == *grid {
-            return self.copy_field(field);
+            return self.copy_field(field).await;
         }
-        let out = self.field_buffer(grid)?;
+        let out = self.field_buffer(grid).await?;
         let uniform = warp_uniform(grid, &field.grid, None, false, 3)?;
         self.run_pass("resample_field", |pass| {
             self.launch(
@@ -1851,7 +1978,8 @@ impl WgpuBackend {
                 &uniform,
                 self.groups_3d(grid),
             )
-        })?;
+        })
+        .await?;
         self.trim_pool_for(grid);
         self.forget_trim();
         Ok(GpuField {
@@ -1861,169 +1989,11 @@ impl WgpuBackend {
     }
 }
 
-impl Backend for WgpuBackend {
-    type Image = GpuImage;
-    type Field = GpuField;
-
-    fn name(&self) -> String {
-        format!(
-            "wgpu-f32 ({}, {})",
-            self.ctx.info.backend, self.ctx.info.name
-        )
-    }
-
-    fn release_idle_buffers(&self) {
-        self.release_idle();
-    }
-
-    async fn upload_image(&self, volume: &Volume<f64>) -> RegResult<GpuImage> {
-        WgpuBackend::upload_image(self, volume)
-    }
-
-    async fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
-        WgpuBackend::zero_field(self, grid)
-    }
-
-    async fn upload_field(&self, field: &VectorField) -> RegResult<GpuField> {
-        WgpuBackend::upload_field(self, field)
-    }
-
-    async fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
-        WgpuBackend::download_field(self, field)
-    }
-
-    fn field_grid(&self, field: &GpuField) -> Grid {
-        field.grid
-    }
-
-    async fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {
-        WgpuBackend::copy_field(self, field)
-    }
-
-    async fn warp_through_field(
-        &self,
-        source: &GpuImage,
-        field: &GpuField,
-        pre: Option<&GpuField>,
-        affine: Option<&AffineTransform>,
-    ) -> RegResult<GpuImage> {
-        WgpuBackend::warp_through_field(self, source, field, pre, affine)
-    }
-
-    async fn warp_mask_through_field(
-        &self,
-        mask: &GpuImage,
-        field: &GpuField,
-        pre: Option<&GpuField>,
-        affine: Option<&AffineTransform>,
-        product: Option<GpuImage>,
-    ) -> RegResult<GpuImage> {
-        WgpuBackend::warp_mask_through_field(self, mask, field, pre, affine, product)
-    }
-
-    async fn cc_value_derivative_pair_masked(
-        &self,
-        fixed: &GpuImage,
-        moving: &GpuImage,
-        valid: &GpuImage,
-        radius: usize,
-    ) -> RegResult<MetricPair<GpuField>> {
-        WgpuBackend::cc_value_derivative_pair_masked(self, fixed, moving, valid, radius)
-    }
-
-    async fn cc_value_derivative_pair_masked_with_norms(
-        &self,
-        fixed: &GpuImage,
-        moving: &GpuImage,
-        valid: &GpuImage,
-        radius: usize,
-    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
-        WgpuBackend::cc_value_derivative_pair_masked_with_norms(self, fixed, moving, valid, radius)
-    }
-
-    async fn cc_value_derivative(
-        &self,
-        fixed: &GpuImage,
-        moving: &GpuImage,
-        radius: usize,
-    ) -> RegResult<(f64, GpuField)> {
-        WgpuBackend::cc_value_derivative(self, fixed, moving, radius)
-    }
-
-    async fn cc_value_derivative_pair(
-        &self,
-        fixed: &GpuImage,
-        moving: &GpuImage,
-        radius: usize,
-    ) -> RegResult<MetricPair<GpuField>> {
-        WgpuBackend::cc_value_derivative_pair(self, fixed, moving, radius)
-    }
-
-    async fn cc_value_derivative_pair_with_norms(
-        &self,
-        fixed: &GpuImage,
-        moving: &GpuImage,
-        radius: usize,
-    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
-        WgpuBackend::cc_value_derivative_pair_with_norms(self, fixed, moving, radius)
-    }
-
-    async fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
-        WgpuBackend::smooth_field(self, field, variance)
-    }
-
-    async fn max_scaled_norm(&self, field: &GpuField) -> RegResult<f64> {
-        WgpuBackend::max_scaled_norm(self, field)
-    }
-
-    async fn max_scaled_norm_pair(&self, a: &GpuField, b: &GpuField) -> RegResult<(f64, f64)> {
-        WgpuBackend::max_scaled_norm_pair(self, a, b)
-    }
-
-    async fn l2_norm(&self, field: &GpuField) -> RegResult<f64> {
-        WgpuBackend::l2_norm(self, field)
-    }
-
-    async fn scale(&self, field: &mut GpuField, s: f64) -> RegResult<()> {
-        WgpuBackend::scale(self, field, s)
-    }
-
-    async fn axpy(&self, acc: &mut GpuField, a: f64, x: &GpuField) -> RegResult<()> {
-        WgpuBackend::axpy(self, acc, a, x)
-    }
-
-    async fn compose(&self, displacement: &GpuField, warping: &GpuField) -> RegResult<GpuField> {
-        WgpuBackend::compose(self, displacement, warping)
-    }
-
-    async fn invert(
-        &self,
-        field: &GpuField,
-        initial: GpuField,
-        params: &InvertParams,
-    ) -> RegResult<(GpuField, InvertStats)> {
-        WgpuBackend::invert(self, field, initial, params)
-    }
-
-    async fn invert_pair(
-        &self,
-        field: GpuField,
-        inverse: GpuField,
-        params: &InvertParams,
-    ) -> RegResult<InversionPair<GpuField>> {
-        WgpuBackend::invert_pair(self, field, inverse, params)
-    }
-
-    async fn resample_field(&self, field: &GpuField, grid: &Grid) -> RegResult<GpuField> {
-        WgpuBackend::resample_field(self, field, grid)
-    }
-}
-
 impl WgpuBackend {
     /// Records ITK's fixed-point inversion of `field` from `initial` (updated in place and
     /// returned) and returns the device buffer of its state words (maximum and mean error, steps
     /// executed), `None` when `params` allows no step.
-    fn invert_encode(
+    async fn invert_encode(
         &self,
         field: &GpuField,
         initial: GpuField,
@@ -2033,11 +2003,13 @@ impl WgpuBackend {
         let grid = field.grid;
         let n = grid.num_voxels();
         let psi = initial;
-        let err = self.field_buffer(&grid)?;
+        let err = self.field_buffer(&grid).await?;
         let g3 = self.groups_3d(&grid);
         let count = g3[0] * g3[1] * g3[2];
-        let part = self.acquire("invert partials", u64::from(count) * 8)?;
-        let state = self.acquire("invert state", 16)?;
+        let part = self
+            .acquire("invert partials", u64::from(count) * 8)
+            .await?;
+        let state = self.acquire("invert state", 16).await?;
         let init: [u32; 4] = [f32::MAX.to_bits(), f32::MAX.to_bits(), 0, 1];
         self.ctx
             .queue
@@ -2112,7 +2084,8 @@ impl WgpuBackend {
                     self.dispatch(pass, &self.kernels.inv_update, update, g3)?;
                 }
                 Ok(())
-            })?;
+            })
+            .await?;
             first += take;
         }
         Ok((psi, (params.max_iterations > 0).then_some(state)))

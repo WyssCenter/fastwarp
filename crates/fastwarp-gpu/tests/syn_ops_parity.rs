@@ -10,6 +10,7 @@ use fastwarp_reg::linalg::{Vec3, IDENTITY3};
 use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
 use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::{Grid, Volume};
+use pollster::block_on;
 
 fn require_adapter() -> bool {
     fastwarp_gpu::device::env_var("FASTWARP_GPU_REQUIRE_ADAPTER")
@@ -117,26 +118,25 @@ fn gpu_results_are_bit_identical_across_runs() {
     let Some(b) = backend() else { return };
     let case = Case::awkward([29, 23, 19], [1.2, 1.6, 2.0], true, 3);
     let grid = case.grid().unwrap();
-    let fixed = b.upload_image(&image(&grid, 3, 0.2)).unwrap();
-    let moving = b.upload_image(&image(&grid, 4, 0.2)).unwrap();
+    let fixed = block_on(b.upload_image(&image(&grid, 3, 0.2))).unwrap();
+    let moving = block_on(b.upload_image(&image(&grid, 4, 0.2))).unwrap();
     let f0 = field(&grid, 2.0, 5);
     let run = || {
-        let f = b.upload_field(&f0).unwrap();
-        let w = b
-            .warp_through_field(
-                &moving,
-                &f,
-                None,
-                Some(&AffineTransform::from_translation([0.4, -0.3, 0.2])),
-            )
-            .unwrap();
-        let (value, d) = b.cc_value_derivative(&fixed, &w, 3).unwrap();
-        let s = b.smooth_field(d, 3.0).unwrap();
-        let m = b.max_scaled_norm(&s).unwrap();
-        let l = b.l2_norm(&s).unwrap();
-        let c = b.compose(&s, &f).unwrap();
-        let (inv, stats) = b.invert(&c, f, &InvertParams::SYN).unwrap();
-        let down = b.download_field(&inv).unwrap();
+        let f = block_on(b.upload_field(&f0)).unwrap();
+        let w = block_on(b.warp_through_field(
+            &moving,
+            &f,
+            None,
+            Some(&AffineTransform::from_translation([0.4, -0.3, 0.2])),
+        ))
+        .unwrap();
+        let (value, d) = block_on(b.cc_value_derivative(&fixed, &w, 3)).unwrap();
+        let s = block_on(b.smooth_field(d, 3.0)).unwrap();
+        let m = block_on(b.max_scaled_norm(&s)).unwrap();
+        let l = block_on(b.l2_norm(&s)).unwrap();
+        let c = block_on(b.compose(&s, &f)).unwrap();
+        let (inv, stats) = block_on(b.invert(&c, f, &InvertParams::SYN)).unwrap();
+        let down = block_on(b.download_field(&inv)).unwrap();
         let mut flat: Vec<f64> = down.data().iter().flat_map(|v| v.iter().copied()).collect();
         flat.extend([
             value,
@@ -167,14 +167,15 @@ fn an_inversion_longer_than_one_submission_runs_every_step_and_matches_the_cpu()
         max_error_tolerance: 0.0,
         enforce_boundary_condition: true,
     };
-    let f = b.upload_field(&f0).unwrap();
-    let (inverse, stats) = b.invert(&f, b.zero_field(&grid).unwrap(), &params).unwrap();
+    let f = block_on(b.upload_field(&f0)).unwrap();
+    let (inverse, stats) =
+        block_on(b.invert(&f, block_on(b.zero_field(&grid)).unwrap(), &params)).unwrap();
     let (cpu_inverse, cpu_stats) = cpu
         .invert(&f0, cpu.zero_field(&grid).unwrap(), &params)
         .unwrap();
     assert_eq!(stats.iterations, 1030);
     assert_eq!(cpu_stats.iterations, 1030);
-    let gpu_inverse = b.download_field(&inverse).unwrap();
+    let gpu_inverse = block_on(b.download_field(&inverse)).unwrap();
     let worst = gpu_inverse
         .data()
         .iter()
@@ -190,10 +191,10 @@ fn cc_of_an_image_with_itself_is_minus_one_with_zero_derivative() {
     let grid = Case::awkward([13, 11, 9], [1.0, 1.0, 1.0], false, 2)
         .grid()
         .unwrap();
-    let img = b.upload_image(&image(&grid, 9, 0.3)).unwrap();
-    let (value, d) = b.cc_value_derivative(&img, &img, 2).unwrap();
+    let img = block_on(b.upload_image(&image(&grid, 9, 0.3))).unwrap();
+    let (value, d) = block_on(b.cc_value_derivative(&img, &img, 2)).unwrap();
     assert!((value + 1.0).abs() < 1e-5, "{value}");
-    let d = b.download_field(&d).unwrap();
+    let d = block_on(b.download_field(&d)).unwrap();
     let worst = d
         .data()
         .iter()
@@ -212,13 +213,16 @@ fn the_cc_pair_matches_the_cpu_in_both_directions_and_two_gpu_calls_bit_for_bit(
     ] {
         let grid = Case::awkward(dims, spacing, true, 3).grid().unwrap();
         let (fa, fb) = (image(&grid, 3, 0.2), image(&grid, 4, 0.2));
-        let (ga, gb) = (b.upload_image(&fa).unwrap(), b.upload_image(&fb).unwrap());
-        let ((v1, d1), (v2, d2)) = b.cc_value_derivative_pair(&ga, &gb, radius).unwrap();
-        let (s1, e1) = b.cc_value_derivative(&ga, &gb, radius).unwrap();
-        let (s2, e2) = b.cc_value_derivative(&gb, &ga, radius).unwrap();
+        let (ga, gb) = (
+            block_on(b.upload_image(&fa)).unwrap(),
+            block_on(b.upload_image(&fb)).unwrap(),
+        );
+        let ((v1, d1), (v2, d2)) = block_on(b.cc_value_derivative_pair(&ga, &gb, radius)).unwrap();
+        let (s1, e1) = block_on(b.cc_value_derivative(&ga, &gb, radius)).unwrap();
+        let (s2, e2) = block_on(b.cc_value_derivative(&gb, &ga, radius)).unwrap();
         assert_eq!(v1.to_bits(), s1.to_bits());
         assert_eq!(v2.to_bits(), s2.to_bits());
-        let down = |f| b.download_field(&f).unwrap();
+        let down = |f| block_on(b.download_field(&f)).unwrap();
         assert_eq!(down(d1).data(), down(e1).data());
         let swapped = down(d2);
         assert_eq!(swapped.data(), down(e2).data());
@@ -255,48 +259,57 @@ fn paired_scalar_operations_match_the_single_ones_bit_for_bit_in_one_read_back()
     let grid = Case::awkward([29, 23, 19], [1.2, 1.6, 2.0], true, 3)
         .grid()
         .unwrap();
-    let fixed = b.upload_image(&image(&grid, 3, 0.2)).unwrap();
-    let moving = b.upload_image(&image(&grid, 4, 0.2)).unwrap();
+    let fixed = block_on(b.upload_image(&image(&grid, 3, 0.2))).unwrap();
+    let moving = block_on(b.upload_image(&image(&grid, 4, 0.2))).unwrap();
     let field_bits = |f: &GpuField| -> Vec<u64> {
-        let down = b.download_field(f).unwrap();
+        let down = block_on(b.download_field(f)).unwrap();
         let flat: Vec<f64> = down.data().iter().flat_map(|v| v.iter().copied()).collect();
         bits(&flat)
     };
     let reads = || b.stats().scalar_readbacks;
 
     let before = reads();
-    let (((v1, d1), (v2, d2)), [n1, n2]) = b
-        .cc_value_derivative_pair_with_norms(&fixed, &moving, 3)
-        .unwrap();
+    let (((v1, d1), (v2, d2)), [n1, n2]) =
+        block_on(b.cc_value_derivative_pair_with_norms(&fixed, &moving, 3)).unwrap();
     assert_eq!(reads() - before, 1);
-    let ((s1, e1), (s2, e2)) = b.cc_value_derivative_pair(&fixed, &moving, 3).unwrap();
-    let (m1, m2) = (b.l2_norm(&e1).unwrap(), b.l2_norm(&e2).unwrap());
+    let ((s1, e1), (s2, e2)) = block_on(b.cc_value_derivative_pair(&fixed, &moving, 3)).unwrap();
+    let (m1, m2) = (
+        block_on(b.l2_norm(&e1)).unwrap(),
+        block_on(b.l2_norm(&e2)).unwrap(),
+    );
     assert_eq!(bits(&[v1, v2, n1, n2]), bits(&[s1, s2, m1, m2]));
     assert_eq!(field_bits(&d1), field_bits(&e1));
     assert_eq!(field_bits(&d2), field_bits(&e2));
 
-    let fixed_side = b.smooth_field(d1, 3.0).unwrap();
-    let moving_side = b.smooth_field(d2, 3.0).unwrap();
+    let fixed_side = block_on(b.smooth_field(d1, 3.0)).unwrap();
+    let moving_side = block_on(b.smooth_field(d2, 3.0)).unwrap();
     let before = reads();
-    let (max1, max2) = b.max_scaled_norm_pair(&fixed_side, &moving_side).unwrap();
+    let (max1, max2) = block_on(b.max_scaled_norm_pair(&fixed_side, &moving_side)).unwrap();
     assert_eq!(reads() - before, 1);
     let single = [
-        b.max_scaled_norm(&fixed_side).unwrap(),
-        b.max_scaled_norm(&moving_side).unwrap(),
+        block_on(b.max_scaled_norm(&fixed_side)).unwrap(),
+        block_on(b.max_scaled_norm(&moving_side)).unwrap(),
     ];
     assert_eq!(bits(&[max1, max2]), bits(&single));
 
     let f0 = field(&grid, 2.0, 5);
     let g0 = field(&grid, 0.5, 6);
-    let (f, g) = (b.upload_field(&f0).unwrap(), b.upload_field(&g0).unwrap());
+    let (f, g) = (
+        block_on(b.upload_field(&f0)).unwrap(),
+        block_on(b.upload_field(&g0)).unwrap(),
+    );
     let before = reads();
     let ((inverse, inverse_stats), (forward, forward_stats)) =
-        b.invert_pair(f, g, &InvertParams::SYN).unwrap();
+        block_on(b.invert_pair(f, g, &InvertParams::SYN)).unwrap();
     assert_eq!(reads() - before, 1);
-    let (f, g) = (b.upload_field(&f0).unwrap(), b.upload_field(&g0).unwrap());
-    let (single_inverse, single_inverse_stats) = b.invert(&f, g, &InvertParams::SYN).unwrap();
+    let (f, g) = (
+        block_on(b.upload_field(&f0)).unwrap(),
+        block_on(b.upload_field(&g0)).unwrap(),
+    );
+    let (single_inverse, single_inverse_stats) =
+        block_on(b.invert(&f, g, &InvertParams::SYN)).unwrap();
     let (single_forward, single_forward_stats) =
-        b.invert(&single_inverse, f, &InvertParams::SYN).unwrap();
+        block_on(b.invert(&single_inverse, f, &InvertParams::SYN)).unwrap();
     assert!(inverse_stats.iterations > 0 && forward_stats.iterations > 0);
     assert_eq!(inverse_stats, single_inverse_stats);
     assert_eq!(forward_stats, single_forward_stats);
@@ -354,18 +367,18 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
         [0.7, -0.4, 0.3],
         c,
     );
-    let (gf, gg) = (b.upload_field(&f0).unwrap(), b.upload_field(&g0).unwrap());
-    let (m1, m2) = (
-        b.upload_image(&first).unwrap(),
-        b.upload_image(&second).unwrap(),
+    let (gf, gg) = (
+        block_on(b.upload_field(&f0)).unwrap(),
+        block_on(b.upload_field(&g0)).unwrap(),
     );
-    let single = b
-        .warp_mask_through_field(&m1, &gf, None, None, None)
-        .unwrap();
+    let (m1, m2) = (
+        block_on(b.upload_image(&first)).unwrap(),
+        block_on(b.upload_image(&second)).unwrap(),
+    );
+    let single = block_on(b.warp_mask_through_field(&m1, &gf, None, None, None)).unwrap();
     let single_gpu = b.download_image(&single).unwrap();
-    let product = b
-        .warp_mask_through_field(&m2, &gg, None, Some(&affine), Some(single))
-        .unwrap();
+    let product =
+        block_on(b.warp_mask_through_field(&m2, &gg, None, Some(&affine), Some(single))).unwrap();
     let product_gpu = b.download_image(&product).unwrap();
     let single_cpu = cpu
         .warp_mask_through_field(&first, &f0, None, None, None)
@@ -401,15 +414,14 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
     let want = cpu
         .warp_mask_through_field(&stripes, &zero, None, None, None)
         .unwrap();
-    let got = b
-        .warp_mask_through_field(
-            &b.upload_image(&stripes).unwrap(),
-            &b.upload_field(&zero).unwrap(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+    let got = block_on(b.warp_mask_through_field(
+        &block_on(b.upload_image(&stripes)).unwrap(),
+        &block_on(b.upload_field(&zero)).unwrap(),
+        None,
+        None,
+        None,
+    ))
+    .unwrap();
     let got = b.download_image(&got).unwrap();
     assert_eq!(got, want.data(), "half-voxel points round up on both");
     assert_eq!(want.data()[level.linear_index(1, 0, 0)], 0.0);
@@ -421,15 +433,14 @@ fn the_nearest_mask_warp_matches_the_cpu_and_multiplies_into_a_product() {
     let want = cpu
         .warp_mask_through_field(&ball, &zero, None, None, None)
         .unwrap();
-    let got = b
-        .warp_mask_through_field(
-            &b.upload_image(&ball).unwrap(),
-            &b.upload_field(&zero).unwrap(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+    let got = block_on(b.warp_mask_through_field(
+        &block_on(b.upload_image(&ball)).unwrap(),
+        &block_on(b.upload_field(&zero)).unwrap(),
+        None,
+        None,
+        None,
+    ))
+    .unwrap();
     let got = b.download_image(&got).unwrap();
     let wrong = mismatches(&got, want.data());
     let inside = want.data().iter().filter(|v| **v == 1.0).count();
@@ -497,12 +508,12 @@ fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair(
         )
         .unwrap();
         let (ga, gb, gv) = (
-            b.upload_image(&fa).unwrap(),
-            b.upload_image(&fb).unwrap(),
-            b.upload_image(&valid).unwrap(),
+            block_on(b.upload_image(&fa)).unwrap(),
+            block_on(b.upload_image(&fb)).unwrap(),
+            block_on(b.upload_image(&valid)).unwrap(),
         );
         let field_values = |f: &GpuField| -> Vec<f64> {
-            b.download_field(f)
+            block_on(b.download_field(f))
                 .unwrap()
                 .data()
                 .iter()
@@ -510,14 +521,15 @@ fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair(
                 .collect()
         };
         let before = b.stats().scalar_readbacks;
-        let (((v1, d1), (v2, d2)), [n1, n2]) = b
-            .cc_value_derivative_pair_masked_with_norms(&ga, &gb, &gv, radius)
-            .unwrap();
+        let (((v1, d1), (v2, d2)), [n1, n2]) =
+            block_on(b.cc_value_derivative_pair_masked_with_norms(&ga, &gb, &gv, radius)).unwrap();
         assert_eq!(b.stats().scalar_readbacks - before, 1);
-        let ((s1, e1), (s2, e2)) = b
-            .cc_value_derivative_pair_masked(&ga, &gb, &gv, radius)
-            .unwrap();
-        let (m1, m2) = (b.l2_norm(&e1).unwrap(), b.l2_norm(&e2).unwrap());
+        let ((s1, e1), (s2, e2)) =
+            block_on(b.cc_value_derivative_pair_masked(&ga, &gb, &gv, radius)).unwrap();
+        let (m1, m2) = (
+            block_on(b.l2_norm(&e1)).unwrap(),
+            block_on(b.l2_norm(&e2)).unwrap(),
+        );
         assert_eq!(bits(&[v1, v2, n1, n2]), bits(&[s1, s2, m1, m2]));
         assert_eq!(bits(&field_values(&d1)), bits(&field_values(&e1)));
         assert_eq!(bits(&field_values(&d2)), bits(&field_values(&e2)));
@@ -527,7 +539,7 @@ fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair(
         assert!((v1 - cv1).abs() < 1e-4 * cv1.abs().max(1e-6), "{v1} {cv1}");
         assert!((v2 - cv2).abs() < 1e-4 * cv2.abs().max(1e-6), "{v2} {cv2}");
         for (gpu, reference) in [(d1, &cd1), (d2, &cd2)] {
-            let gpu = b.download_field(&gpu).unwrap();
+            let gpu = block_on(b.download_field(&gpu)).unwrap();
             let range = reference
                 .data()
                 .iter()
@@ -551,13 +563,12 @@ fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair(
             eprintln!("{dims:?}: masked derivative max diff {worst:.3e} of {range:.3e}");
             assert!(worst < 2e-4 * range, "masked derivative {worst} of {range}");
         }
-        let ones = b
-            .upload_image(&Volume::from_vec(grid, vec![1.0; n]).unwrap())
-            .unwrap();
-        let ((o1, od1), (o2, od2)) = b
-            .cc_value_derivative_pair_masked(&ga, &gb, &ones, radius)
-            .unwrap();
-        let ((u1, ud1), (u2, ud2)) = b.cc_value_derivative_pair(&ga, &gb, radius).unwrap();
+        let ones =
+            block_on(b.upload_image(&Volume::from_vec(grid, vec![1.0; n]).unwrap())).unwrap();
+        let ((o1, od1), (o2, od2)) =
+            block_on(b.cc_value_derivative_pair_masked(&ga, &gb, &ones, radius)).unwrap();
+        let ((u1, ud1), (u2, ud2)) =
+            block_on(b.cc_value_derivative_pair(&ga, &gb, radius)).unwrap();
         for (masked, plain) in [(o1, u1), (o2, u2)] {
             assert!(
                 (masked - plain).abs() <= 1e-6 * plain.abs(),
@@ -578,9 +589,8 @@ fn the_masked_cc_pair_matches_the_cpu_and_an_all_ones_mask_is_the_unmasked_pair(
             );
             assert!(worst <= 1e-5 * range, "{worst} of {range}");
         }
-        let zeros = b.upload_image(&Volume::zeros(grid)).unwrap();
-        let err = b
-            .cc_value_derivative_pair_masked(&ga, &gb, &zeros, radius)
+        let zeros = block_on(b.upload_image(&Volume::zeros(grid))).unwrap();
+        let err = block_on(b.cc_value_derivative_pair_masked(&ga, &gb, &zeros, radius))
             .err()
             .expect("an empty mask is refused");
         assert!(err.to_string().contains(NO_VOXEL_IN_MASKS), "{err}");
@@ -594,11 +604,11 @@ fn zero_field_is_zero_after_pool_reuse() {
         .grid()
         .unwrap();
     {
-        let f = b.upload_field(&field(&grid, 3.0, 1)).unwrap();
+        let f = block_on(b.upload_field(&field(&grid, 3.0, 1))).unwrap();
         drop(f);
     }
-    let z = b.zero_field(&grid).unwrap();
-    let down = b.download_field(&z).unwrap();
+    let z = block_on(b.zero_field(&grid)).unwrap();
+    let down = block_on(b.download_field(&z)).unwrap();
     assert!(down.data().iter().all(|v| v == &[0.0, 0.0, 0.0]));
 }
 
@@ -612,36 +622,36 @@ fn zero_field_trims_the_pool_once_per_grid_until_new_data_arrives() {
     let (large, small) = (cube(64), cube(16));
     let large_field_bytes = 64 * 64 * 64 * 12;
     let small_field_bytes = 16 * 16 * 16 * 12;
-    let large_field = b.zero_field(&large).unwrap();
-    let _first = b.zero_field(&small).unwrap();
-    drop(b.copy_field(&large_field).unwrap());
+    let large_field = block_on(b.zero_field(&large)).unwrap();
+    let _first = block_on(b.zero_field(&small)).unwrap();
+    drop(block_on(b.copy_field(&large_field)).unwrap());
     let with_idle_copy = b.allocated_bytes();
-    let _second = b.zero_field(&small).unwrap();
+    let _second = block_on(b.zero_field(&small)).unwrap();
     assert_eq!(b.allocated_bytes(), with_idle_copy + small_field_bytes);
-    let _image = b.upload_image(&image(&small, 1, 0.1)).unwrap();
+    let _image = block_on(b.upload_image(&image(&small, 1, 0.1))).unwrap();
     let after_upload = b.allocated_bytes();
-    let _third = b.zero_field(&small).unwrap();
+    let _third = block_on(b.zero_field(&small)).unwrap();
     assert_eq!(
         b.allocated_bytes(),
         after_upload - large_field_bytes + small_field_bytes
     );
     let resets: [(&str, &dyn Fn()); 3] = [
         ("resample_field", &|| {
-            drop(b.resample_field(&large_field, &small).unwrap())
+            drop(block_on(b.resample_field(&large_field, &small)).unwrap())
         }),
         ("upload_field", &|| {
-            drop(b.upload_field(&field(&small, 1.0, 2)).unwrap())
+            drop(block_on(b.upload_field(&field(&small, 1.0, 2))).unwrap())
         }),
         ("release_idle", &|| {
             b.release_idle();
         }),
     ];
     for (label, reset) in resets {
-        let _trimmed = b.zero_field(&small).unwrap();
+        let _trimmed = block_on(b.zero_field(&small)).unwrap();
         reset();
-        drop(b.copy_field(&large_field).unwrap());
+        drop(block_on(b.copy_field(&large_field)).unwrap());
         let with_idle_copy = b.allocated_bytes();
-        let _after_reset = b.zero_field(&small).unwrap();
+        let _after_reset = block_on(b.zero_field(&small)).unwrap();
         assert!(
             b.allocated_bytes() + large_field_bytes <= with_idle_copy + small_field_bytes,
             "{label} did not make zero_field trim again"
@@ -661,14 +671,14 @@ fn idle_pooled_buffers_are_released_on_request() {
     .unwrap();
     let field_bytes = 16 * 16 * 16 * 12;
     {
-        let f = b.zero_field(&grid).unwrap();
-        let _g = b.copy_field(&f).unwrap();
+        let f = block_on(b.zero_field(&grid)).unwrap();
+        let _g = block_on(b.copy_field(&f)).unwrap();
     }
     let before = b.allocated_bytes();
     let freed = b.release_idle();
     assert!(freed >= 2 * field_bytes, "{freed}");
     assert_eq!(b.allocated_bytes(), before - freed);
-    let kept = b.zero_field(&grid).unwrap();
+    let kept = block_on(b.zero_field(&grid)).unwrap();
     assert_eq!(b.release_idle(), 0);
     drop(kept);
     assert_eq!(b.release_idle(), field_bytes);

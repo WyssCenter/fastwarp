@@ -40,6 +40,7 @@ use std::sync::atomic::AtomicBool;
 
 use crate::convergence::WindowConvergenceMonitor;
 use crate::error::{check_cancel, Result};
+use crate::exec::block_ready;
 use crate::grid::Grid;
 use crate::linalg::{vec3_norm, vec3_sub, Vec3};
 use crate::transform::LinearMovingTransform;
@@ -51,11 +52,16 @@ const RESPHI: f64 = 2.0 - 1.618034;
 ///
 /// Both methods evaluate at the transform they are given. ITK's sign convention holds:
 /// `derivative` is the direction in which the parameters are added to decrease `value`.
+///
+/// Both methods are `async`, so that a metric can wait for its device without blocking (WebGPU
+/// in a browser). As for [`crate::Backend`], the futures need not be `Send`, and on a native
+/// engine they are ready when first polled.
+#[allow(async_fn_in_trait)]
 pub trait LinearMetric {
     /// The metric value (ITK `GetValue`).
-    fn value(&self, t: &LinearMovingTransform) -> Result<f64>;
+    async fn value(&self, t: &LinearMovingTransform) -> Result<f64>;
     /// The metric value and its derivative (ITK `GetValueAndDerivative`).
-    fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)>;
+    async fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)>;
 }
 
 /// Settings of one optimiser run (one level of one linear stage).
@@ -238,7 +244,7 @@ struct LineSearch<'a, M: LinearMetric> {
 }
 
 impl<M: LinearMetric> LineSearch<'_, M> {
-    fn value_at(&mut self, step: f64) -> Result<f64> {
+    async fn value_at(&mut self, step: f64) -> Result<f64> {
         self.evaluations += 1;
         let params: Vec<f64> = self
             .start
@@ -248,10 +254,12 @@ impl<M: LinearMetric> LineSearch<'_, M> {
             .zip(self.direction)
             .map(|(p, d)| p + step * d)
             .collect();
-        self.metric.value(&self.start.with_parameters(&params)?)
+        self.metric
+            .value(&self.start.with_parameters(&params)?)
+            .await
     }
 
-    fn golden(&mut self, mut a: f64, mut b: f64, mut c: f64) -> Result<f64> {
+    async fn golden(&mut self, mut a: f64, mut b: f64, mut c: f64) -> Result<f64> {
         let mut metric_b = f64::MAX;
         loop {
             if self.iterations > self.settings.max_line_search_iterations {
@@ -266,9 +274,9 @@ impl<M: LinearMetric> LineSearch<'_, M> {
             if (c - a).abs() < self.settings.epsilon * (b.abs() + x.abs()) {
                 return Ok((c + a) / 2.0);
             }
-            let metric_x = self.value_at(x)?;
+            let metric_x = self.value_at(x).await?;
             if metric_b == f64::MAX {
-                metric_b = self.value_at(b)?;
+                metric_b = self.value_at(b).await?;
             }
             if metric_x < metric_b {
                 if c - b > b - a {
@@ -307,6 +315,19 @@ pub fn optimise_level<M: LinearMetric>(
     settings: &CgSettings,
     cancel: Option<&AtomicBool>,
 ) -> Result<(LinearMovingTransform, CgTrace)> {
+    block_ready(optimise_level_async(
+        metric, corners, start, settings, cancel,
+    ))
+}
+
+/// [`optimise_level`] as a future, for a metric that waits for its device.
+pub async fn optimise_level_async<M: LinearMetric>(
+    metric: &M,
+    corners: &[Vec3],
+    start: LinearMovingTransform,
+    settings: &CgSettings,
+    cancel: Option<&AtomicBool>,
+) -> Result<(LinearMovingTransform, CgTrace)> {
     let n = start.optimised.number_of_parameters();
     let scales = estimate_scales(corners, &start, settings.small_parameter_variation)?;
     let mut current = start;
@@ -330,7 +351,7 @@ pub fn optimise_level<M: LinearMetric>(
     let mut iteration = 0u32;
     while iteration < settings.iterations {
         check_cancel(cancel)?;
-        let (value, mut gradient) = metric.value_and_derivative(&current)?;
+        let (value, mut gradient) = metric.value_and_derivative(&current).await?;
         monitor.add_energy_value(value);
         if monitor.convergence_value() <= settings.convergence_threshold {
             trace.converged = true;
@@ -380,11 +401,13 @@ pub fn optimise_level<M: LinearMetric>(
             iterations: 0,
             evaluations: 0,
         };
-        learning_rate = search.golden(
-            learning_rate * settings.lower_limit,
-            learning_rate,
-            learning_rate * settings.upper_limit,
-        )?;
+        learning_rate = search
+            .golden(
+                learning_rate * settings.lower_limit,
+                learning_rate,
+                learning_rate * settings.upper_limit,
+            )
+            .await?;
         trace.line_search_evaluations += search.evaluations;
         let params: Vec<f64> = current
             .optimised
@@ -419,18 +442,18 @@ mod tests {
     }
 
     impl LinearMetric for Quadratic {
-        fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
+        async fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
             let p = t.optimised.parameters();
             Ok((0..6)
                 .map(|i| self.weights[i] * (p[i] - self.target[i]).powi(2))
                 .sum())
         }
-        fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
+        async fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
             let p = t.optimised.parameters();
             let d = (0..6)
                 .map(|i| -2.0 * self.weights[i] * (p[i] - self.target[i]))
                 .collect();
-            Ok((self.value(t)?, d))
+            Ok((self.value(t).await?, d))
         }
     }
 
@@ -547,16 +570,16 @@ mod tests {
     }
 
     impl LinearMetric for CancelAfter<'_> {
-        fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
-            self.inner.value(t)
+        async fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
+            self.inner.value(t).await
         }
-        fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
+        async fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
             let n = self.evaluations.get() + 1;
             self.evaluations.set(n);
             if n >= self.limit {
                 self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            self.inner.value_and_derivative(t)
+            self.inner.value_and_derivative(t).await
         }
     }
 

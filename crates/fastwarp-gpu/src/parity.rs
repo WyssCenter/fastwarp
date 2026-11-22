@@ -7,6 +7,7 @@
 //! level-1 tests on larger awkward grids. Every operation reports its largest absolute error, the
 //! reference range it is judged against, and the tolerance of the plan's `f32` budget.
 
+use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
 use fastwarp_reg::error::{RegError, Result as RegResult};
 use fastwarp_reg::field_ops::{InvertParams, VectorField};
@@ -18,7 +19,7 @@ use fastwarp_reg::sampling::{metric_sample_points, SamplingSpec, SamplingStrateg
 use fastwarp_reg::transform::{AffineTransform, LinearMovingTransform, ParametricTransform};
 use fastwarp_reg::volume::Volume;
 
-use crate::wgpu_backend::WgpuBackend;
+use crate::wgpu_backend::{block_reg, WgpuBackend};
 
 /// Tolerances (largest absolute error over the reference range) of each operation.
 pub mod tol {
@@ -295,8 +296,14 @@ fn mismatch(what: &str, e: RegError) -> RegError {
     }
 }
 
-/// Runs every operation of the backend on `case` against the CPU reference.
+/// Runs every operation of the backend on `case` against the CPU reference; an error on wasm32
+/// (use [`check_all_async`]).
 pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
+    block_reg("parity::check_all", check_all_async(gpu, case))
+}
+
+/// Async [`check_all`].
+pub async fn check_all_async(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     let cpu = CpuBackend;
     let grid = case.grid()?;
     let other = case.other_grid()?;
@@ -305,10 +312,10 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
 
     let amp = 1.4 * grid.spacing()[0];
     let f0 = field(&grid, amp, case.seed);
-    let gf = gpu.upload_field(&f0)?;
+    let gf = gpu.upload_field(&f0).await?;
     let cf = cpu.upload_field(&f0)?;
 
-    let back = gpu.download_field(&gf)?;
+    let back = gpu.download_field(&gf).await?;
     out.push(compare(
         "upload_field/download_field",
         &flatten(&back),
@@ -318,7 +325,7 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     ));
 
     let src_img = image(&other, case.seed + 1, 0.1);
-    let g_src = gpu.upload_image(&src_img)?;
+    let g_src = gpu.upload_image(&src_img).await?;
     let c_src = cpu.upload_image(&src_img)?;
     let affine = AffineTransform::new(
         mul(&rot_z(0.07), &rot_x(-0.05)),
@@ -326,7 +333,7 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
         [1.0, 2.0, -1.0],
     );
     let pre = field(&other, 0.8 * amp, case.seed + 9);
-    let g_pre = gpu.upload_field(&pre)?;
+    let g_pre = gpu.upload_field(&pre).await?;
     for (name, aff, with_pre) in [
         ("warp_through_field", None, false),
         ("warp_through_field+affine", Some(&affine), false),
@@ -339,9 +346,10 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
         };
         let g = gpu
             .warp_through_field(&g_src, &gf, gp, aff)
+            .await
             .map_err(|e| mismatch(name, e))?;
         let c = cpu.warp_through_field(&c_src, &cf, cp, aff)?;
-        let got: Vec<f64> = gpu.download_image(&g)?;
+        let got: Vec<f64> = gpu.download_image_async(&g).await?;
         let want = c.data();
         let flips = got
             .iter()
@@ -363,13 +371,13 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
 
     let fixed = image(&grid, case.seed + 2, 0.2);
     let moving = image(&grid, case.seed + 3, 0.2);
-    let g_fix = gpu.upload_image(&fixed)?;
-    let g_mov = gpu.upload_image(&moving)?;
+    let g_fix = gpu.upload_image(&fixed).await?;
+    let g_mov = gpu.upload_image(&moving).await?;
     let c_fix = cpu.upload_image(&fixed)?;
     let c_mov = cpu.upload_image(&moving)?;
-    let (gv, gd) = gpu.cc_value_derivative(&g_fix, &g_mov, case.radius)?;
+    let (gv, gd) = gpu.cc_value_derivative(&g_fix, &g_mov, case.radius).await?;
     let (cv, cd) = cpu.cc_value_derivative(&c_fix, &c_mov, case.radius)?;
-    let gd = gpu.download_field(&gd)?;
+    let gd = gpu.download_field(&gd).await?;
     let value_err = (gv - cv).abs() / cv.abs().max(1e-12);
     out.push(OpResult {
         op: "cc_value".to_string(),
@@ -413,12 +421,14 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     r.ok = r.rel <= tol::CC_DERIVATIVE;
     out.push(r);
 
-    let ((pv_a, pd_a), (pv_b, pd_b)) = gpu.cc_value_derivative_pair(&g_fix, &g_mov, case.radius)?;
-    let (sv_b, sd_b) = gpu.cc_value_derivative(&g_mov, &g_fix, case.radius)?;
+    let ((pv_a, pd_a), (pv_b, pd_b)) = gpu
+        .cc_value_derivative_pair(&g_fix, &g_mov, case.radius)
+        .await?;
+    let (sv_b, sd_b) = gpu.cc_value_derivative(&g_mov, &g_fix, case.radius).await?;
     let (cv_b, cd_b) = cpu.cc_value_derivative(&c_mov, &c_fix, case.radius)?;
-    let pd_a = flatten(&gpu.download_field(&pd_a)?);
-    let pd_b = flatten(&gpu.download_field(&pd_b)?);
-    let sd_b = flatten(&gpu.download_field(&sd_b)?);
+    let pd_a = flatten(&gpu.download_field(&pd_a).await?);
+    let pd_b = flatten(&gpu.download_field(&pd_b).await?);
+    let sd_b = flatten(&gpu.download_field(&sd_b).await?);
     let swapped_range = cd_b
         .data()
         .iter()
@@ -446,8 +456,8 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     let same = |a: &[f64], b: &[f64]| {
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
     };
-    let first_direction = gpu.cc_value_derivative(&g_fix, &g_mov, case.radius)?;
-    let first_direction = flatten(&gpu.download_field(&first_direction.1)?);
+    let first_direction = gpu.cc_value_derivative(&g_fix, &g_mov, case.radius).await?;
+    let first_direction = flatten(&gpu.download_field(&first_direction.1).await?);
     let identical = pv_b.to_bits() == sv_b.to_bits()
         && pv_a.to_bits() == gv.to_bits()
         && same(&pd_b, &sd_b)
@@ -471,14 +481,15 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
             })
             .collect(),
     )?;
-    let g_valid = gpu.upload_image(&valid)?;
+    let g_valid = gpu.upload_image(&valid).await?;
     let c_valid = cpu.upload_image(&valid)?;
-    let ((mv_a, md_a), (mv_b, md_b)) =
-        gpu.cc_value_derivative_pair_masked(&g_fix, &g_mov, &g_valid, case.radius)?;
+    let ((mv_a, md_a), (mv_b, md_b)) = gpu
+        .cc_value_derivative_pair_masked(&g_fix, &g_mov, &g_valid, case.radius)
+        .await?;
     let ((cmv_a, cmd_a), (cmv_b, cmd_b)) =
         cpu.cc_value_derivative_pair_masked(&c_fix, &c_mov, &c_valid, case.radius)?;
-    let md_a = gpu.download_field(&md_a)?;
-    let md_b = gpu.download_field(&md_b)?;
+    let md_a = gpu.download_field(&md_a).await?;
+    let md_b = gpu.download_field(&md_b).await?;
     for (label, gv, cv, gd, cd) in [
         ("first", mv_a, cmv_a, &md_a, &cmd_a),
         ("second", mv_b, cmv_b, &md_b, &cmd_b),
@@ -523,24 +534,26 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
             .map(|v| f64::from(u8::from(*v > 0.5)))
             .collect(),
     )?;
-    let g_mask = gpu.upload_image(&mask_src)?;
+    let g_mask = gpu.upload_image(&mask_src).await?;
     let g_pre_warped = gpu
         .warp_mask_through_field(&g_mask, &gf, Some(&g_pre), Some(&affine), None)
+        .await
         .map_err(|e| mismatch("warp_mask_through_field+pre", e))?;
     let c_pre_warped =
         cpu.warp_mask_through_field(&mask_src, &cf, Some(&pre), Some(&affine), None)?;
     out.push(mask_warp_result(
         "warp_mask_through_field+pre+affine",
-        &gpu.download_image(&g_pre_warped)?,
+        &gpu.download_image_async(&g_pre_warped).await?,
         c_pre_warped.data(),
         n,
     ));
     drop(g_pre_warped);
     let g_warped = gpu
         .warp_mask_through_field(&g_mask, &gf, None, Some(&affine), None)
+        .await
         .map_err(|e| mismatch("warp_mask_through_field", e))?;
     let c_warped = cpu.warp_mask_through_field(&mask_src, &cf, None, Some(&affine), None)?;
-    let got = gpu.download_image(&g_warped)?;
+    let got = gpu.download_image_async(&g_warped).await?;
     out.push(mask_warp_result(
         "warp_mask_through_field+affine",
         &got,
@@ -555,23 +568,26 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
             .map(|v| f64::from(u8::from(*v > 0.4)))
             .collect(),
     )?;
-    let g_second = gpu.upload_image(&second_src)?;
+    let g_second = gpu.upload_image(&second_src).await?;
     let g_product = gpu
         .warp_mask_through_field(&g_second, &gf, None, None, Some(g_warped))
+        .await
         .map_err(|e| mismatch("warp_mask_through_field product", e))?;
     let c_product = cpu.warp_mask_through_field(&second_src, &cf, None, None, Some(c_warped))?;
     out.push(mask_warp_result(
         "warp_mask_through_field product",
-        &gpu.download_image(&g_product)?,
+        &gpu.download_image_async(&g_product).await?,
         c_product.data(),
         n,
     ));
 
     for variance in [3.0, 0.3, 0.8, 14.0] {
-        let g = gpu.smooth_field(gpu.copy_field(&gf)?, variance)?;
+        let g = gpu
+            .smooth_field(gpu.copy_field(&gf).await?, variance)
+            .await?;
         let c = cpu.smooth_field(cpu.copy_field(&cf)?, variance)?;
-        let tiled = gpu.smoothing_is_tiled(variance, grid.size())?;
-        let g = flatten(&gpu.download_field(&g)?);
+        let tiled = gpu.smoothing_is_tiled(variance, grid.size()).await?;
+        let g = flatten(&gpu.download_field(&g).await?);
         out.push(compare(
             &format!("smooth_field variance {variance}"),
             &g,
@@ -582,8 +598,8 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
                 if tiled { "tiled" } else { "gather fallback" }
             ),
         ));
-        let gather = gpu.smooth_field_gather(&gf, variance)?;
-        let gather = flatten(&gpu.download_field(&gather)?);
+        let gather = gpu.smooth_field_gather(&gf, variance).await?;
+        let gather = flatten(&gpu.download_field(&gather).await?);
         out.push(OpResult {
             op: format!("smooth_field variance {variance} equals gather kernel"),
             max_abs: 0.0,
@@ -598,60 +614,62 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
         });
     }
 
-    let gm = gpu.max_scaled_norm(&gf)?;
+    let gm = gpu.max_scaled_norm(&gf).await?;
     let cm = cpu.max_scaled_norm(&cf)?;
     out.push(scalar("max_scaled_norm", gm, cm, tol::NORM));
-    let gl = gpu.l2_norm(&gf)?;
+    let gl = gpu.l2_norm(&gf).await?;
     let cl = cpu.l2_norm(&cf)?;
     out.push(scalar("l2_norm", gl, cl, tol::NORM));
 
-    let mut g_acc = gpu.copy_field(&gf)?;
+    let mut g_acc = gpu.copy_field(&gf).await?;
     let mut c_acc = cpu.copy_field(&cf)?;
-    gpu.scale(&mut g_acc, 0.37)?;
+    gpu.scale(&mut g_acc, 0.37).await?;
     cpu.scale(&mut c_acc, 0.37)?;
     out.push(compare(
         "scale",
-        &flatten(&gpu.download_field(&g_acc)?),
+        &flatten(&gpu.download_field(&g_acc).await?),
         &flatten(&c_acc),
         tol::ELEMENTWISE,
         String::new(),
     ));
     let f1 = field(&grid, 0.5 * amp, case.seed + 5);
-    let g1 = gpu.upload_field(&f1)?;
+    let g1 = gpu.upload_field(&f1).await?;
     let c1 = cpu.upload_field(&f1)?;
-    gpu.axpy(&mut g_acc, -1.3, &g1)?;
+    gpu.axpy(&mut g_acc, -1.3, &g1).await?;
     cpu.axpy(&mut c_acc, -1.3, &c1)?;
     out.push(compare(
         "axpy",
-        &flatten(&gpu.download_field(&g_acc)?),
+        &flatten(&gpu.download_field(&g_acc).await?),
         &flatten(&c_acc),
         tol::ELEMENTWISE,
         String::new(),
     ));
 
     let big = field(&grid, 3.0 * grid.spacing()[0], case.seed + 9);
-    let gb_ = gpu.upload_field(&big)?;
+    let gb_ = gpu.upload_field(&big).await?;
     let cb_ = cpu.upload_field(&big)?;
-    let gc = gpu.compose(&gf, &gb_)?;
+    let gc = gpu.compose(&gf, &gb_).await?;
     let cc = cpu.compose(&cf, &cb_)?;
     out.push(compare(
         "compose",
-        &flatten(&gpu.download_field(&gc)?),
+        &flatten(&gpu.download_field(&gc).await?),
         &flatten(&cc),
         tol::COMPOSE,
         String::new(),
     ));
 
     let small = field(&grid, 0.6 * grid.spacing()[0], case.seed + 13);
-    let gs = gpu.upload_field(&small)?;
+    let gs = gpu.upload_field(&small).await?;
     let cs = cpu.upload_field(&small)?;
-    let g_zero = gpu.zero_field(&grid)?;
+    let g_zero = gpu.zero_field(&grid).await?;
     let c_zero = cpu.zero_field(&grid)?;
-    let (gi_f, gst) = gpu.invert(&gs, gpu.copy_field(&g_zero)?, &InvertParams::SYN)?;
+    let (gi_f, gst) = gpu
+        .invert(&gs, gpu.copy_field(&g_zero).await?, &InvertParams::SYN)
+        .await?;
     let (ci_f, cst) = cpu.invert(&cs, cpu.copy_field(&c_zero)?, &InvertParams::SYN)?;
     let mut r = compare(
         "invert",
-        &flatten(&gpu.download_field(&gi_f)?),
+        &flatten(&gpu.download_field(&gi_f).await?),
         &flatten(&ci_f),
         tol::INVERT,
         format!(
@@ -668,13 +686,13 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
             tiny.data_mut()[idx] = [0.0; 3];
         }
     }
-    let gt = gpu.upload_field(&tiny)?;
+    let gt = gpu.upload_field(&tiny).await?;
     let ct = cpu.upload_field(&tiny)?;
-    let (gt_i, gt_s) = gpu.invert(&gt, g_zero, &InvertParams::SYN)?;
+    let (gt_i, gt_s) = gpu.invert(&gt, g_zero, &InvertParams::SYN).await?;
     let (ct_i, ct_s) = cpu.invert(&ct, c_zero, &InvertParams::SYN)?;
     let mut r = compare(
         "invert (early stop)",
-        &flatten(&gpu.download_field(&gt_i)?),
+        &flatten(&gpu.download_field(&gt_i).await?),
         &flatten(&ct_i),
         tol::INVERT,
         format!(
@@ -685,11 +703,11 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     r.ok = r.ok && gt_s.iterations.abs_diff(ct_s.iterations) <= 1 && ct_s.iterations < 20;
     out.push(r);
 
-    let g_re = gpu.resample_field(&gf, &other)?;
+    let g_re = gpu.resample_field(&gf, &other).await?;
     let c_re = cpu.resample_field(&cf, &other)?;
     out.push(compare(
         "resample_field",
-        &flatten(&gpu.download_field(&g_re)?),
+        &flatten(&gpu.download_field(&g_re).await?),
         &flatten(&c_re),
         tol::RESAMPLE,
         String::new(),
@@ -698,14 +716,29 @@ pub fn check_all(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     Ok(out)
 }
 
-/// Runs the Mattes mutual-information kernels of the backend on `case` against the CPU reference.
+/// Runs the Mattes mutual-information kernels of the backend on `case` against the CPU reference;
+/// an error on wasm32 (use [`check_mi_async`]).
 pub fn check_mi(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
-    check_mi_with(gpu, case, 0.25, None, "")
+    block_reg("parity::check_mi", check_mi_async(gpu, case))
+}
+
+/// Async [`check_mi`].
+pub async fn check_mi_async(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
+    check_mi_with(gpu, case, 0.25, None, "").await
 }
 
 /// The MI known-answer run with every grid voxel sampled and 256 samples per workgroup, so the
-/// histogram kernel runs workgroups past the first and the merge kernel loops over many stripes.
+/// histogram kernel runs workgroups past the first and the merge kernel loops over many stripes;
+/// an error on wasm32 (use [`check_mi_chunked_async`]).
 pub fn check_mi_chunked(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
+    block_reg(
+        "parity::check_mi_chunked",
+        check_mi_chunked_async(gpu, case),
+    )
+}
+
+/// Async [`check_mi_chunked`].
+pub async fn check_mi_chunked_async(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
     check_mi_with(
         gpu,
         case,
@@ -713,12 +746,13 @@ pub fn check_mi_chunked(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResul
         Some(MI_CHUNKED_SAMPLES_PER_GROUP),
         "chunked ",
     )
+    .await
 }
 
 /// Samples per workgroup of [`check_mi_chunked`].
 pub const MI_CHUNKED_SAMPLES_PER_GROUP: u32 = 256;
 
-fn check_mi_with(
+async fn check_mi_with(
     gpu: &WgpuBackend,
     case: &Case,
     percentage: f32,
@@ -738,10 +772,15 @@ fn check_mi_with(
         None,
     );
     let samples = prepare_samples(&fixed, &moving, &raw, 32)?;
-    let cpu = CpuLinearEngine.prepare_level(fixed.clone(), moving.clone(), samples.clone())?;
+    let cpu = CpuLinearEngine
+        .prepare_level(fixed.clone(), moving.clone(), samples.clone())
+        .await?;
     let gpu_level = match chunk {
-        Some(c) => gpu.prepare_level_with_chunk(moving, samples, c)?,
-        None => gpu.prepare_level(fixed, moving, samples)?,
+        Some(c) => {
+            gpu.prepare_level_with_chunk_async(moving, samples, c)
+                .await?
+        }
+        None => gpu.prepare_level(fixed, moving, samples).await?,
     };
 
     let s = grid.size();
@@ -767,8 +806,8 @@ fn check_mi_with(
     for (name, t) in [("rigid", &rigid), ("affine", &affine)] {
         let name = format!("mi {label}({name})");
         let name = name.as_str();
-        let (cv, cd) = cpu.value_and_derivative(t)?;
-        let (gv, gd) = gpu_level.value_and_derivative(t)?;
+        let (cv, cd) = cpu.value_and_derivative(t).await?;
+        let (gv, gd) = gpu_level.value_and_derivative(t).await?;
         let vrel = (gv - cv).abs() / cv.abs().max(1e-12);
         out.push(OpResult {
             op: format!("{name} value"),

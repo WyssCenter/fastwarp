@@ -64,6 +64,11 @@ impl<T> Drop for Sender<T> {
 }
 
 impl<T> Receiver<T> {
+    pub(crate) fn is_done(&self) -> bool {
+        let s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        s.value.is_some() || s.sender_dropped
+    }
+
     pub(crate) fn try_recv(&self) -> Option<T> {
         self.state
             .lock()
