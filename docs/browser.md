@@ -1,69 +1,76 @@
 # Try FastWarp in your browser
 
-This page runs FastWarp's default registration, the same rigid, affine and {term}`SyN` stages as
-`fastwarp register`, on your own graphics card through [WebGPU](https://www.w3.org/TR/webgpu/).
-Nothing is installed and **nothing is uploaded**: the images you choose stay on your computer, the
-registration runs in this browser tab, and the result is a zip file that the page hands to your
-browser's download folder.
+<p class="fw-subtitle">Nothing is uploaded. Runs on your GPU.</p>
 
 ```{raw} html
 <link rel="stylesheet" href="_static/web/app.css">
 <div class="fw-demo" id="fw-demo">
-  <p id="fw-support" role="status">Checking whether this browser offers WebGPU...</p>
   <p id="fw-message" class="fw-message" role="alert" hidden></p>
-  <dl id="fw-adapter" class="fw-adapter" hidden></dl>
   <form id="fw-form">
-    <fieldset>
-      <label>Fixed image, for example a template (NIfTI, .nii or .nii.gz)
-        <input type="file" id="fw-fixed" accept=".nii,.gz,application/gzip">
+    <fieldset class="fw-files-in">
+      <label class="fw-pick" id="fw-pick-fixed">
+        <span class="fw-pick-title">Fixed image</span>
+        <span class="fw-hint">for example a template (.nii or .nii.gz)</span>
+        <span class="fw-pick-row">
+          <input type="file" id="fw-fixed" accept=".nii,.gz,application/gzip">
+          <span class="fw-drop">or drop a file here</span>
+        </span>
+        <span id="fw-fixed-name" class="fw-name">No file chosen</span>
       </label>
-      <label>Moving image, the scan to register onto it
-        <input type="file" id="fw-moving" accept=".nii,.gz,application/gzip">
-      </label>
-      <div id="fw-sample-row" hidden>
-        <button type="button" id="fw-sample" class="fw-secondary">Load sample data</button>
-        <p class="fw-small">The sample pair: <code>sample-t1w-defaced.nii.gz</code>, a T1-weighted
-        MPRAGE at 1 mm of an adult volunteer who agreed to its public use, with the header reduced
-        to the geometry and the face, eyes and ears removed (CC0-1.0); and
-        <code>mni152nlin2009basym-head-1mm.nii.gz</code>, the MNI ICBM 2009b nonlinear asymmetric
-        T1w template (every second voxel of the 0.5 mm original), cut the same way. Both come from
-        the <a href="https://github.com/WyssCenter/fastwarp/releases/tag/sample-data-1">sample-data-1</a>
-        release of FastWarp.</p>
-        <p class="fw-small">MNI template: Copyright (C) 1993-2004 Louis Collins, McConnell Brain
-        Imaging Centre, Montreal Neurological Institute, McGill University. Permission to use,
-        copy, modify, and distribute this software and its documentation for any purpose and
-        without fee is hereby granted, provided that the above copyright notice appear in all
-        copies. The authors and McGill University make no representations about the suitability
-        of this software for any purpose. It is provided "as is" without express or implied
-        warranty.</p>
-      </div>
-      <p id="fw-selected" class="fw-small"></p>
-      <label>Registration grid
-        <select id="fw-grid">
-          <option value="1mm">1 mm (default)</option>
-          <option value="2mm">2 mm (about 8 times less memory and time)</option>
-        </select>
+      <label class="fw-pick" id="fw-pick-moving">
+        <span class="fw-pick-title">Moving image</span>
+        <span class="fw-hint">the scan to register onto it</span>
+        <span class="fw-pick-row">
+          <input type="file" id="fw-moving" accept=".nii,.gz,application/gzip">
+          <span class="fw-drop">or drop a file here</span>
+        </span>
+        <span id="fw-moving-name" class="fw-name">No file chosen</span>
       </label>
     </fieldset>
-    <div class="fw-actions">
-      <button type="submit" id="fw-run" disabled>Run</button>
-      <button type="button" id="fw-cancel" class="fw-secondary" disabled>Cancel</button>
-      <a id="fw-download" class="fw-button" hidden>Download zip</a>
+    <p id="fw-sample-row" class="fw-sample-line" hidden>Don't have any data?
+      <button type="button" id="fw-sample" class="fw-secondary">Load sample data</button>
+      <span id="fw-sample-state" hidden>Sample loaded</span></p>
+    <div class="fw-run-row">
+      <label class="fw-grid-label">Registration grid
+        <select id="fw-grid">
+          <option value="1mm">1 mm</option>
+          <option value="2mm">2 mm (faster, less memory)</option>
+        </select>
+      </label>
+      <div class="fw-actions">
+        <span id="fw-hint" class="fw-run-hint"></span>
+        <button type="submit" id="fw-run" disabled>Run</button>
+        <button type="button" id="fw-cancel" class="fw-secondary" hidden>Cancel</button>
+        <a id="fw-download" class="fw-button" hidden>Download zip</a>
+      </div>
     </div>
   </form>
   <div class="fw-status">
-    <progress id="fw-progress" max="1" value="0"></progress>
-    <span id="fw-stage"></span>
-    <span id="fw-elapsed"></span>
+    <progress id="fw-progress" max="1" value="0" aria-label="Progress"></progress>
+    <div class="fw-statusline" aria-live="polite">
+      <span id="fw-stage"></span>
+      <span id="fw-elapsed"></span>
+    </div>
   </div>
-  <ul id="fw-files"></ul>
-  <pre id="fw-log" class="fw-log" aria-live="polite"></pre>
+  <details class="fw-more fw-logbox">
+    <summary>Log</summary>
+    <pre id="fw-log" class="fw-log" aria-live="polite"></pre>
+  </details>
   <output id="fw-result" hidden></output>
+  <div class="fw-meta">
+    <p id="fw-support" role="status">Checking whether this browser offers WebGPU...</p>
+    <details id="fw-adapter-box" class="fw-more" hidden>
+      <summary id="fw-adapter-summary">WebGPU</summary>
+      <dl id="fw-adapter" class="fw-adapter"></dl>
+    </details>
+  </div>
 </div>
 <script type="module" src="_static/web/app.js"></script>
 ```
 
 ## What runs where
+
+FastWarp's default registration, the same rigid, affine and {term}`SyN` stages as `fastwarp register`, runs on your own graphics card through [WebGPU](https://www.w3.org/TR/webgpu/). Nothing is installed; the result is a zip file that the page hands to your browser's download folder.
 
 - **Served by Read the Docs:** this page, its script, the WebAssembly module and the two sample
   images, as static files. The page has no server part of its own.
@@ -135,6 +142,12 @@ antsApplyTransforms -d 3 -i fixed.nii.gz -r moving.nii.gz -o fixed_in_moving.nii
 `fastwarp apply` takes the same `-i`, `-r`, `-o` and `-t` arguments
 ([Command line: apply](cli.md#apply)); in Python,
 `fastwarp.apply_transforms(moving, fixed, ["1Warp.nii.gz", "0GenericAffine.mat"])`.
+
+## About the sample data
+
+The sample pair is `sample-t1w-defaced.nii.gz`, a T1-weighted MPRAGE at 1 mm of an adult volunteer who agreed to its public use, with the header reduced to the geometry and the face, eyes and ears removed (CC0-1.0), and `mni152nlin2009basym-head-1mm.nii.gz`, the MNI ICBM 2009b nonlinear asymmetric T1w template (every second voxel of the 0.5 mm original), cut the same way. Both come from the [sample-data-1](https://github.com/WyssCenter/fastwarp/releases/tag/sample-data-1) release of FastWarp.
+
+MNI template: Copyright (C) 1993-2004 Louis Collins, McConnell Brain Imaging Centre, Montreal Neurological Institute, McGill University. Permission to use, copy, modify, and distribute this software and its documentation for any purpose and without fee is hereby granted, provided that the above copyright notice appear in all copies. The authors and McGill University make no representations about the suitability of this software for any purpose. It is provided "as is" without express or implied warranty.
 
 ## Building this page
 

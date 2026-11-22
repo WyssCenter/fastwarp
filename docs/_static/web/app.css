@@ -3,15 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+.fw-subtitle {
+  font-size: 1.25rem;
+  color: var(--pst-color-text-muted);
+  margin: -0.5rem 0 1.5rem;
+}
+
 .fw-demo [hidden] {
   display: none !important;
 }
 
 .fw-demo {
   border: 1px solid var(--pst-color-border);
-  border-radius: 0.5rem;
-  padding: 1rem 1.25rem;
-  margin: 1.5rem 0;
+  border-radius: 12px;
+  padding: 1.5rem 1.5rem 1rem;
+  margin: 1.5rem 0 2.5rem;
+  max-width: 44rem;
 }
 
 .fw-demo fieldset {
@@ -19,61 +26,188 @@
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.25rem;
 }
 
-.fw-demo label {
+.fw-demo .fw-pick {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+  border: 1px dashed var(--pst-color-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.fw-demo .fw-pick.fw-drag {
+  border-color: var(--pst-color-primary);
+  box-shadow: 0 0 0 2px var(--pst-color-primary);
+  background: var(--pst-color-surface);
+}
+
+.fw-demo .fw-drop {
+  font-weight: normal;
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-hint {
+  font-weight: normal;
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.fw-demo input[type="file"] {
+  flex: none;
+  width: 7.5rem;
+  overflow: hidden;
+  color: transparent;
+  font: inherit;
+}
+
+.fw-demo input[type="file"]::file-selector-button {
+  border: 1px solid var(--pst-color-primary);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pst-color-primary);
+  padding: 0.35rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.fw-demo input[type="file"]:disabled::file-selector-button {
+  border-color: var(--pst-color-border);
+  color: var(--pst-color-text-muted);
+  cursor: not-allowed;
+}
+
+.fw-demo .fw-name {
+  display: block;
+  font-weight: normal;
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fw-demo .fw-sample-line {
+  margin: 1rem 0 0;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-sample-line button {
+  margin-left: 0.5rem;
+}
+
+.fw-demo #fw-sample-state {
+  margin-left: 0.5rem;
+}
+
+.fw-demo .fw-run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.fw-demo .fw-grid-label {
   display: grid;
   gap: 0.25rem;
   font-weight: 600;
 }
 
-.fw-demo input[type="file"],
 .fw-demo select {
+  border-radius: 6px;
   font-weight: normal;
+  width: 15rem;
   max-width: 100%;
+}
+
+.fw-demo .fw-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.fw-demo .fw-run-hint {
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-run-hint:empty {
+  display: none;
 }
 
 .fw-demo button,
 .fw-demo .fw-button {
   display: inline-block;
   border: 1px solid var(--pst-color-primary);
-  border-radius: 0.25rem;
+  border-radius: 6px;
   background: var(--pst-color-primary);
   color: var(--pst-color-primary-text, #fff);
-  padding: 0.35rem 1rem;
+  padding: 0.4rem 1.25rem;
   font: inherit;
   cursor: pointer;
   text-decoration: none;
+  white-space: nowrap;
 }
 
-.fw-demo button[disabled] {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.fw-demo button.fw-secondary {
+.fw-demo .fw-secondary {
   background: transparent;
   color: var(--pst-color-primary);
 }
 
-.fw-demo .fw-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1rem 0 0.5rem;
+.fw-demo button[disabled] {
+  background: var(--pst-color-surface);
+  border-color: var(--pst-color-border);
+  color: var(--pst-color-text-muted);
+  cursor: not-allowed;
+}
+
+.fw-demo #fw-run {
+  min-width: 6rem;
+  font-weight: 600;
+}
+
+.fw-demo #fw-download {
+  order: -1;
+  font-weight: 600;
+}
+
+.fw-demo button:focus-visible,
+.fw-demo .fw-button:focus-visible,
+.fw-demo summary:focus-visible,
+.fw-demo input:focus-visible,
+.fw-demo select:focus-visible {
+  outline: 2px solid var(--pst-color-primary);
+  outline-offset: 2px;
 }
 
 .fw-demo .fw-small {
   font-size: 0.85em;
   color: var(--pst-color-text-muted);
-  margin: 0.25rem 0 0;
+  margin: 0.75rem 0 0;
+}
+
+.fw-demo .fw-small:empty {
+  display: none;
 }
 
 .fw-demo .fw-message {
   border-left: 4px solid var(--pst-color-info);
   padding: 0.5rem 0.75rem;
-  margin: 0.75rem 0;
+  margin: 0 0 1rem;
   background: var(--pst-color-surface);
 }
 
@@ -85,12 +219,103 @@
   border-left-color: var(--pst-color-warning);
 }
 
+.fw-demo .fw-status {
+  margin: 1.25rem 0 0;
+}
+
+.fw-demo .fw-status:has(#fw-stage:empty) {
+  display: none;
+}
+
+.fw-demo progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 6px;
+  appearance: none;
+  accent-color: var(--pst-color-primary);
+  background: var(--pst-color-border);
+  overflow: hidden;
+}
+
+.fw-demo progress::-webkit-progress-bar {
+  background: var(--pst-color-border);
+  border-radius: 6px;
+}
+
+.fw-demo progress::-webkit-progress-value {
+  background: var(--pst-color-primary);
+  border-radius: 6px;
+}
+
+.fw-demo progress::-moz-progress-bar {
+  background: var(--pst-color-primary);
+  border-radius: 6px;
+}
+
+.fw-demo .fw-statusline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-more {
+  margin-top: 0.75rem;
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-more summary {
+  cursor: pointer;
+}
+
+.fw-demo .fw-more summary code {
+  font-size: 1em;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.fw-demo .fw-logbox:has(#fw-log:empty) {
+  display: none;
+}
+
+.fw-demo .fw-log {
+  max-height: 14rem;
+  overflow: auto;
+  font-size: 0.9em;
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+}
+
+.fw-demo .fw-meta {
+  margin-top: 1.25rem;
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-meta p {
+  margin: 0;
+}
+
+.fw-demo .fw-meta p:empty {
+  display: none;
+}
+
+.fw-demo .fw-meta .fw-more {
+  margin-top: 0;
+}
+
 .fw-demo dl.fw-adapter {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 0.15rem 1rem;
-  margin: 0.5rem 0 1rem;
-  font-size: 0.9em;
+  margin: 0.5rem 0 0;
 }
 
 .fw-demo dl.fw-adapter dt {
@@ -98,26 +323,24 @@
 }
 
 .fw-demo dl.fw-adapter dd {
+  font-family: var(--pst-font-family-monospace);
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-.fw-demo .fw-status {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 1rem;
-  margin: 0.5rem 0;
-}
-
-.fw-demo progress {
-  width: min(100%, 20rem);
-}
-
-.fw-demo .fw-log {
-  max-height: 14rem;
-  overflow: auto;
-  font-size: 0.8em;
-  margin: 0.5rem 0 0;
-  white-space: pre-wrap;
+@media (max-width: 600px) {
+  .fw-demo {
+    padding: 1rem;
+  }
+  .fw-demo .fw-run-row,
+  .fw-demo .fw-grid-label {
+    display: grid;
+  }
+  .fw-demo .fw-actions {
+    flex-wrap: wrap;
+  }
+  .fw-demo #fw-run,
+  .fw-demo #fw-cancel {
+    flex: 1;
+  }
 }
