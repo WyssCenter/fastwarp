@@ -2,6 +2,7 @@
 html_theme.sidebar_secondary.remove: true
 ---
 
+{.fw-wordmark}
 # FastWarp
 
 **FastWarp registers 3D images on the GPU.** It runs the rigid, affine and {term}`SyN`
