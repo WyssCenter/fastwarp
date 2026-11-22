@@ -14,6 +14,7 @@ use wasm_bindgen::prelude::*;
 use crate::options::parse_options;
 use crate::progress::Progress;
 use crate::run::{classify_text, default_plan, run_job, DeviceLimits, Job, RunError};
+use crate::viewer::{Layer, Viewer};
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -21,6 +22,7 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 thread_local! {
     static BACKEND: RefCell<Option<Rc<WgpuBackend>>> = const { RefCell::new(None) };
     static PROGRESS: RefCell<Option<Function>> = const { RefCell::new(None) };
+    static VIEWER: RefCell<Option<Viewer>> = const { RefCell::new(None) };
 }
 
 #[wasm_bindgen]
@@ -124,6 +126,32 @@ pub fn cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// Describes the images kept for the result viewer of the last run as JSON (`dims`, `spacing`,
+/// `before`, `windows`), or nothing when there are none. The copies are freed when the next run
+/// starts.
+#[wasm_bindgen]
+pub fn view_info() -> Option<String> {
+    VIEWER.with(|cell| cell.borrow().as_ref().map(|v| v.info().to_string()))
+}
+
+/// One slice of the result viewer: `axis` 0 sagittal, 1 coronal, 2 axial; `layer` 0 fixed, 1 warped,
+/// 2 before (centre of mass only), 3 edges of the fixed image. The bytes are `width x height`
+/// grey values from the top row down; the sizes follow from `view_info`.
+#[wasm_bindgen]
+pub fn view_slice(axis: u32, index: u32, layer: u32) -> Result<Uint8Array, JsValue> {
+    let slice = VIEWER.with(|cell| {
+        let cell = cell.borrow();
+        let viewer = cell.as_ref()?;
+        viewer.slice(axis as usize, index as usize, Layer::from_code(layer)?)
+    });
+    match slice {
+        Some(s) => Ok(Uint8Array::from(s.data.as_slice())),
+        None => Err(js_error(&RunError::Invalid(
+            "there is no such slice".into(),
+        ))),
+    }
+}
+
 /// Registers `moving` onto `fixed` (NIfTI bytes, `.nii` or `.nii.gz`) and returns the zip
 /// archive of the outputs. `options_json`: `{"grid": "1mm" | "2mm"}`. `on_progress` is called
 /// with a JSON text per progress step.
@@ -140,6 +168,7 @@ pub async fn register(
         )));
     }
     CANCEL.store(false, Ordering::SeqCst);
+    VIEWER.with(|cell| cell.borrow_mut().take());
     PROGRESS.with(|cell| *cell.borrow_mut() = Some(on_progress));
     let fixed = fixed.to_vec();
     let moving = moving.to_vec();
@@ -171,9 +200,10 @@ async fn run(fixed: Vec<u8>, moving: Vec<u8>, options_json: &str) -> Result<Uint
     let out = run_job(&*backend, &*backend, job, &CANCEL, &reporter, &peak).await;
     let lost = backend.context().is_lost();
     match out {
-        Ok(zip) => {
+        Ok(finished) => {
             backend.release_idle_buffers();
-            Ok(Uint8Array::from(zip.as_slice()))
+            VIEWER.with(|cell| *cell.borrow_mut() = Some(finished.viewer));
+            Ok(Uint8Array::from(finished.archive.as_slice()))
         }
         Err(e) => {
             drop(backend);

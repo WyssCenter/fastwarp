@@ -54,6 +54,56 @@
       <span id="fw-elapsed"></span>
     </div>
   </div>
+  <section id="fw-viewer" class="fw-viewer" aria-labelledby="fw-viewer-title" data-state="ready" hidden>
+    <div class="fw-viewer-head">
+      <p id="fw-viewer-title" class="fw-viewer-title">Check the result</p>
+      <button type="button" id="fw-fullscreen" class="fw-secondary" aria-pressed="false">Full screen</button>
+    </div>
+    <div class="fw-toolbar">
+      <div id="fw-modes" class="fw-seg" role="group" aria-label="Comparison">
+        <button type="button" data-mode="blend" aria-pressed="true">Blend</button>
+        <button type="button" data-mode="flicker" class="fw-secondary" aria-pressed="false">Flicker</button>
+        <button type="button" data-mode="edges" class="fw-secondary" aria-pressed="false">Edges</button>
+      </div>
+      <div id="fw-when" class="fw-seg" role="group" aria-labelledby="fw-when-label" hidden>
+        <span id="fw-when-label" class="fw-small-inline">Your image</span>
+        <button type="button" data-when="after" aria-pressed="true">After registration</button>
+        <button type="button" data-when="before" class="fw-secondary" aria-pressed="false">Before registration</button>
+      </div>
+    </div>
+    <div class="fw-controls">
+      <label id="fw-ctl-blend" class="fw-control">
+        <span>Template</span>
+        <input type="range" id="fw-blend" min="0" max="100" value="50" aria-label="Blend between the template and your image">
+        <span>Your image</span>
+      </label>
+      <div id="fw-ctl-flicker" class="fw-control" hidden>
+        <button type="button" id="fw-flicker-play" class="fw-secondary">Pause</button>
+        <button type="button" id="fw-flicker-switch" class="fw-secondary">Switch</button>
+        <span id="fw-flicker-state" class="fw-small-inline">Showing the template</span>
+      </div>
+      <p id="fw-ctl-edges" class="fw-control fw-small-inline" hidden>Edges of the template, in yellow, over your image.</p>
+    </div>
+    <div class="fw-views">
+      <figure class="fw-view" data-axis="2">
+        <canvas role="img" width="10" height="10"></canvas>
+        <figcaption></figcaption>
+        <input type="range" min="0" max="0" value="0">
+      </figure>
+      <span class="fw-break" aria-hidden="true"></span>
+      <figure class="fw-view" data-axis="1">
+        <canvas role="img" width="10" height="10"></canvas>
+        <figcaption></figcaption>
+        <input type="range" min="0" max="0" value="0">
+      </figure>
+      <figure class="fw-view" data-axis="0">
+        <canvas role="img" width="10" height="10"></canvas>
+        <figcaption></figcaption>
+        <input type="range" min="0" max="0" value="0">
+      </figure>
+    </div>
+    <p class="fw-note">Neurological view: the left of the head is on the left of the image.</p>
+  </section>
   <details class="fw-more fw-logbox">
     <summary>Log</summary>
     <pre id="fw-log" class="fw-log" aria-live="polite"></pre>
@@ -115,6 +165,16 @@ GPUs. One image pair only: several channels, masks and other recipes need the
   compressed files) run on one core. On one laptop GPU (Intel Arc 140V) Chrome registered the
   sample in 13 s on the 2 mm grid and in 33 s on the 1 mm grid; `fastwarp register` took 2.5 s
   for the 2 mm grid on the same GPU.
+
+## Checking the result
+
+When a run has finished, the page shows the template (the fixed image) and your image (the moving image) in three views: axial, coronal and sagittal, at the true proportions of the voxels. The left of the head is on the left of the image (neurological view), and the edges of every view are marked L, R, A, P, S and I, unless the image's orientation cannot be read, in which case the views are shown in voxel order without letters. Click or tap in a view to place the cross; the other two views follow. Each view has a slider for its slice, which the arrow keys, Page Up, Page Down, Home and End move once it has the focus. The Full screen button enlarges the views to the whole screen; Esc or the button leaves it. Nothing leaves the tab: the page keeps 8-bit copies of the images on the template's grid, on a grey scale that runs from the 1st to the 99.5th percentile of the voxels inside the head, until the next run starts.
+
+- **Blend** mixes the two images; the slider runs from the template to your image.
+- **Flicker** switches between the two images once a second; Pause stops it and Switch changes the image by hand. With the system setting *reduce motion* it starts paused.
+- **Edges** draws the edges of the template in yellow over your image. The outline of the head, the ventricles and the cortex should follow the anatomy beneath.
+
+*After registration* shows your image as registered, *Before registration* as it was when the registration started, moved only by the centre-of-mass alignment, so that the effect of the registration can be seen. The views are a quick check, not a measurement: they show the images, not the quality of any landmark.
 
 ## Output files
 

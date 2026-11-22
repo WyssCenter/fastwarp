@@ -20,12 +20,15 @@ use fastwarp_reg::stages::{
     register_stages_async, visit_stage_outputs, OutputLayout, StageContent, StagePlan, StagesOutput,
 };
 use fastwarp_reg::syn::SynOptions;
-use fastwarp_reg::{Backend, Grid, RegError, Volume};
+use fastwarp_reg::{Backend, Grid, RegError, TransformChain, TransformElem, Volume};
 use serde_json::{json, Value};
 
 use crate::options::{GridChoice, Options};
 use crate::progress::{Observed, Progress, Tracker};
+use crate::viewer::{quantize, Viewer};
 use crate::zip::ZipWriter;
+
+const BEFORE_SLAB: usize = 16;
 
 pub const README: &str = include_str!("README.txt");
 
@@ -311,14 +314,22 @@ fn results_json(plan: &StagePlan, out: &StagesOutput) -> Value {
     })
 }
 
+/// What a finished run hands back: the zip archive, and the 8-bit copies for the result viewer.
+#[derive(Debug)]
+pub struct Finished {
+    pub archive: Vec<u8>,
+    pub viewer: Viewer,
+}
+
 fn zip_err(e: std::io::Error) -> RunError {
     RunError::Registration(format!("writing the zip archive: {e}"))
 }
 
 /// Registers the moving image of `job` onto its fixed image with `job.plan` and returns the zip
 /// archive: `0GenericAffine.mat`, `1Warp.nii.gz`, `1InverseWarp.nii.gz`, `Warped.nii.gz` (the
-/// moving image on the fixed image's grid), `run.json` and `README.txt`. `peak_gpu_bytes` is
-/// asked after the registration, for `run.json`.
+/// moving image on the fixed image's grid), `run.json` and `README.txt`, with the 8-bit copies of
+/// the images for the result viewer. `peak_gpu_bytes` is asked after the registration, for
+/// `run.json`.
 pub async fn run_job<B: Backend, E: LinearEngine>(
     backend: &B,
     engine: &E,
@@ -326,7 +337,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     cancel: &AtomicBool,
     report: &(dyn Fn(&Progress) + Sync),
     peak_gpu_bytes: &dyn Fn() -> Option<u64>,
-) -> Result<Vec<u8>, RunError> {
+) -> Result<Finished, RunError> {
     let total = Stopwatch::start();
     let Job {
         fixed,
@@ -372,6 +383,9 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     )
     .await
     .map_err(|e| classify(e, grid_choice))?;
+    let viewer_t = Stopwatch::start();
+    let mut viewer = Viewer::new(&fixed[0]);
+    let mut viewer_s = viewer_t.elapsed().as_secs_f64();
     drop(fixed);
     let peak = peak_gpu_bytes();
     backend.release_idle_buffers();
@@ -388,8 +402,32 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
         0.0,
     )
     .map_err(|e| classify(e, grid_choice))?;
-    drop(moving);
     let warp_native_s = t.elapsed().as_secs_f64();
+    let viewer_t = Stopwatch::start();
+    viewer.set_warped(&warped);
+    let start = TransformChain::from_queue(vec![TransformElem::Affine(out.initial)]);
+    let window = viewer.warped_window();
+    let size = fixed_grid.size();
+    let mut before_bytes = Vec::with_capacity(fixed_grid.num_voxels());
+    let mut z0 = 0;
+    while z0 < size[2] {
+        let slab = BEFORE_SLAB.min(size[2] - z0);
+        let grid = Grid::new(
+            [size[0], size[1], slab],
+            fixed_grid.spacing(),
+            fixed_grid.index_to_point([0.0, 0.0, z0 as f64]),
+            fixed_grid.direction(),
+        )
+        .map_err(|e| classify(e, grid_choice))?;
+        let part = apply_chain(&moving[0], &grid, &start, Interpolation::Linear, 0.0)
+            .map_err(|e| classify(e, grid_choice))?;
+        before_bytes.extend(quantize(part.data(), window));
+        z0 += slab;
+    }
+    viewer.set_before_bytes(&before_bytes);
+    drop(before_bytes);
+    drop(moving);
+    viewer_s += viewer_t.elapsed().as_secs_f64();
     tracker.phase("write");
     let t = Stopwatch::start();
     let mut zip = ZipWriter::new();
@@ -458,6 +496,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
             "syn": timings.syn_s,
             "warp": timings.warp_s,
             "warp_to_fixed_grid": warp_native_s,
+            "viewer": viewer_s,
             "write": write_s,
             "total": total.elapsed().as_secs_f64(),
         },
@@ -470,7 +509,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     zip.add("README.txt", README.as_bytes()).map_err(zip_err)?;
     let archive = zip.finish().map_err(zip_err)?;
     tracker.phase("done");
-    Ok(archive)
+    Ok(Finished { archive, viewer })
 }
 
 struct Counted<W> {
@@ -508,6 +547,7 @@ mod tests {
     use fastwarp_reg::stages::{register_stages, stage_output_files};
     use fastwarp_reg::CpuBackend;
 
+    use crate::viewer::Layer;
     use crate::zip::tests::read_zip;
 
     fn ready<T>(f: impl Future<Output = T>) -> T {
@@ -595,7 +635,7 @@ mod tests {
         let seen: Mutex<Vec<Progress>> = Mutex::new(Vec::new());
         let report = |p: &Progress| seen.lock().unwrap().push(p.clone());
         let cancel = AtomicBool::new(false);
-        let zip = ready(run_job(
+        let finished = ready(run_job(
             &CpuBackend,
             &CpuLinearEngine,
             job(plan.clone(), GridChoice::TwoMm),
@@ -604,6 +644,8 @@ mod tests {
             &|| Some(123),
         ))
         .unwrap();
+        let viewer = finished.viewer;
+        let zip = finished.archive;
         let entries = read_zip(&zip);
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
@@ -643,6 +685,18 @@ mod tests {
         let warped = Volume::from_nifti_bytes_f64(entries[3].data.clone()).unwrap();
         assert_eq!(warped.grid().size(), [32, 32, 32]);
         assert!(warped.data().iter().any(|v| *v > 0.5));
+
+        assert_eq!(viewer.dims(), [32, 32, 32]);
+        assert!(viewer.has_before());
+        let slice = |layer| viewer.slice(2, 16, layer).unwrap().data;
+        let (fixed, after, before) = (
+            slice(Layer::Fixed),
+            slice(Layer::Warped),
+            slice(Layer::Before),
+        );
+        assert!(fixed.iter().any(|v| *v > 100));
+        assert!(after.iter().any(|v| *v > 100));
+        assert_ne!(after, before);
 
         let run: Value = serde_json::from_slice(&entries[4].data).unwrap();
         assert_eq!(run["options"]["grid"], "2mm");
@@ -700,7 +754,8 @@ mod tests {
             &|_: &Progress| {},
             &|| None,
         ))
-        .unwrap();
+        .unwrap()
+        .archive;
         let entries = read_zip(&zip);
         let warped = Volume::from_nifti_bytes_f64(entries[3].data.clone()).unwrap();
         let run: Value = serde_json::from_slice(&entries[4].data).unwrap();
@@ -748,7 +803,7 @@ mod tests {
             &quiet,
             &|| None,
         ));
-        assert_eq!(cancelled, Err(RunError::Cancelled));
+        assert!(matches!(cancelled, Err(RunError::Cancelled)));
         let mut bad = job(small_plan(), GridChoice::TwoMm);
         bad.moving = b"not a nifti file".to_vec();
         let e = ready(run_job(

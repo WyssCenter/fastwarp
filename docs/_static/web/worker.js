@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
-import init, { cancel, gpu_info, register } from "./pkg/fastwarp_web.js";
+import init, { cancel, gpu_info, register, view_info, view_slice } from "./pkg/fastwarp_web.js";
 
 let ready = null;
 let cancelRequested = false;
@@ -35,6 +35,16 @@ self.onmessage = async ({ data }) => {
     }
     return;
   }
+  if (data.type === "slice") {
+    try {
+      await boot();
+      const bytes = view_slice(data.axis, data.index, data.layer);
+      postMessage({ type: "slice", id: data.id, data: bytes.buffer }, [bytes.buffer]);
+    } catch (err) {
+      postMessage({ type: "slice-error", id: data.id, message: String(err?.message ?? err) });
+    }
+    return;
+  }
   if (data.type === "run") cancelRequested = false;
   try {
     const wasm = await boot();
@@ -48,7 +58,11 @@ self.onmessage = async ({ data }) => {
         JSON.stringify(data.options),
         (json) => postMessage({ type: "progress", progress: JSON.parse(json) }),
       );
-      postMessage({ type: "done", zip: zip.buffer, memory: memoryBytes(wasm) }, [zip.buffer]);
+      const view = view_info();
+      postMessage(
+        { type: "done", zip: zip.buffer, memory: memoryBytes(wasm), view: view ? JSON.parse(view) : null },
+        [zip.buffer],
+      );
     }
   } catch (err) {
     postMessage({
