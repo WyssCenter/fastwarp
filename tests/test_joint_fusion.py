@@ -206,37 +206,40 @@ def test_register_atlases_writes_files_for_label_fusion(tmp_path, scene):
         g.register_atlases(target, atlases[:1], [big], tmp_path)
     if not g.gpu_available():
         pytest.skip("no usable GPU adapter")
-    out = g.register_atlases(target, atlases[:2], labels[:2], tmp_path / "reg", iso_mm=2.0)
+    from test_register import SHAPE as HEAD
+    from test_register import SPACING as MM
+    from test_register import phantom
+
+    def seg(img: tuple) -> tuple:
+        return (np.digitize(img[0], [0.15, 0.5, 0.85]).astype(np.uint32), *img[1:])
+
+    fixed = phantom()
+    moving = [phantom((2.0, -1.5, 1.0)), phantom((-1.5, 2.0, -1.0))]
+    out = g.register_atlases(fixed, moving, [seg(m) for m in moving], tmp_path / "reg", iso_mm=MM)
     assert [p.name for p in out["transforms"]] == ["atlas01_Composite.h5", "atlas02_Composite.h5"]
     assert [p.name for p in out["labels"]] == [
         "atlas01_WarpedLabels.nii.gz",
         "atlas02_WarpedLabels.nii.gz",
     ]
-    for path in [*out["labels"], *out["transforms"], *(f for fs in out["atlases"] for f in fs)]:
-        assert path.is_file() and path.stat().st_size > 0, path
-    grid = (SHAPE, SPACING, ORIGIN, DIRECTION)
-    ras = np.array(
-        [
-            [-SPACING[0], 0, 0, -ORIGIN[0]],
-            [0, -SPACING[1], 0, -ORIGIN[1]],
-            [0, 0, SPACING[2], ORIGIN[2]],
-        ]
-    )
-    warped = []
+    grid = (HEAD, (MM,) * 3, (0.0, 0.0, 0.0), np.eye(3))
+    ras = np.array([[-MM, 0, 0, 0], [0, -MM, 0, 0], [0, 0, MM, 0]])
+    warped, warped_labels = [], []
     for i, composite in enumerate(out["transforms"]):
-        expected = g.apply_transforms(atlases[i], grid, [composite])
+        expected = g.apply_transforms(moving[i], grid, [composite])
         data, datatype, srow = _read_nifti(out["atlases"][i][0])
-        assert datatype == 16 and data.shape == SHAPE
+        assert datatype == 16 and data.shape == HEAD
         np.testing.assert_allclose(srow, ras, atol=1e-5)
         np.testing.assert_array_equal(data, expected)
-        lab = g.apply_transforms(labels[i], grid, [composite], interpolation="nearestNeighbor")
+        lab = g.apply_transforms(seg(moving[i]), grid, [composite], interpolation="nearestNeighbor")
         data, datatype, srow = _read_nifti(out["labels"][i])
-        assert datatype == 8 and data.shape == SHAPE
+        assert datatype == 8 and data.shape == HEAD
         np.testing.assert_allclose(srow, ras, atol=1e-5)
         np.testing.assert_array_equal(data, lab.astype(np.int32))
-        warped.append(expected)
-    fused = g.joint_label_fusion(target, [_tuple(w) for w in warped], patch_radius=1)
-    assert fused["intensity"][0].shape == SHAPE
+        warped.append((expected, *grid[1:]))
+        warped_labels.append((data.astype(np.uint32), *grid[1:]))
+    truth = seg(fixed)[0]
+    fused = g.joint_label_fusion(fixed, warped, warped_labels, patch_radius=1, search_radius=1)
+    assert np.mean(fused["labels"] == truth) > 0.95
 
 
 def test_images_of_another_size_are_refused(scene):
