@@ -7,7 +7,11 @@ use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use fastwarp_gpu::{BackendSelect, BufferPool, GpuContext, GpuError};
+use fastwarp_gpu::parity::{check_mi_async, field, image, Case};
+use fastwarp_gpu::{BackendSelect, BufferPool, GpuContext, GpuError, WgpuBackend};
+use fastwarp_reg::backend::Backend;
+use fastwarp_reg::linalg::IDENTITY3;
+use fastwarp_reg::Grid;
 
 fn require_adapter() -> bool {
     fastwarp_gpu::device::env_var("FASTWARP_GPU_REQUIRE_ADAPTER")
@@ -131,4 +135,34 @@ fn async_timing_runs() {
     let Some(ctx) = context() else { return };
     let timing = ready(ctx.timed_async(true, |_| {})).unwrap();
     assert!(timing.wall_seconds >= 0.0);
+}
+
+#[test]
+fn backend_operations_are_ready_on_their_first_poll() {
+    let Some(ctx) = context() else { return };
+    let backend = ready(WgpuBackend::from_context_async(ctx)).unwrap();
+    let grid = Grid::new([20, 18, 16], [1.5, 1.2, 1.0], [-3.0, 2.0, 1.0], IDENTITY3).unwrap();
+    let f = ready(Backend::upload_field(&backend, &field(&grid, 2.0, 3))).unwrap();
+    assert!(ready(Backend::l2_norm(&backend, &f)).unwrap() > 0.0);
+    assert!(ready(Backend::max_scaled_norm(&backend, &f)).unwrap() > 0.0);
+    let fixed = ready(Backend::upload_image(&backend, &image(&grid, 4, 0.1))).unwrap();
+    let moving = ready(Backend::upload_image(&backend, &image(&grid, 5, 0.1))).unwrap();
+    let (value, derivative) =
+        ready(Backend::cc_value_derivative(&backend, &fixed, &moving, 2)).unwrap();
+    assert!(value.is_finite());
+    assert!(ready(Backend::l2_norm(&backend, &derivative)).unwrap() > 0.0);
+    let mi = ready(check_mi_async(&backend, &Case::selftest_mi())).unwrap();
+    assert!(mi.iter().all(|r| r.ok), "{mi:?}");
+}
+
+#[test]
+fn async_backend_creation_matches_the_blocking_one() {
+    let Some(ctx) = context() else { return };
+    let blocking = WgpuBackend::from_context(ctx).unwrap();
+    let sel = BackendSelect::from_env().unwrap_or_default();
+    let asynchronous = ready(WgpuBackend::new_async(&sel)).unwrap();
+    assert_eq!(Backend::name(&asynchronous), Backend::name(&blocking));
+    let (a, b) = (asynchronous.selftest_record(), blocking.selftest_record());
+    assert!(a.attempts >= 1 && b.attempts >= 1);
+    assert_eq!(a.lines.len(), b.lines.len());
 }

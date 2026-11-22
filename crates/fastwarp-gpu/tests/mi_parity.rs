@@ -16,6 +16,7 @@ use fastwarp_reg::pyramid::{level_virtual_grid, smooth_for_level, SigmaUnits};
 use fastwarp_reg::sampling::{metric_sample_points, SamplingSpec, SamplingStrategy, SeedSequence};
 use fastwarp_reg::transform::{AffineTransform, LinearMovingTransform, ParametricTransform};
 use fastwarp_reg::Volume;
+use pollster::block_on;
 
 fn scene(n: usize, spacing: f64, pose: &AffineTransform) -> Volume<f64> {
     let g = Grid::new([n, n, n], [spacing; 3], [0.0; 3], IDENTITY3).unwrap();
@@ -150,9 +151,9 @@ fn affine(delta: f64) -> LinearMovingTransform {
 }
 
 fn compare(t: &LinearMovingTransform, cpu: &impl LinearMetric, gpu: &impl LinearMetric) {
-    let (cv, cd) = cpu.value_and_derivative(t).unwrap();
-    let (gv, gd) = gpu.value_and_derivative(t).unwrap();
-    let value_only = gpu.value(t).unwrap();
+    let (cv, cd) = block_on(cpu.value_and_derivative(t)).unwrap();
+    let (gv, gd) = block_on(gpu.value_and_derivative(t)).unwrap();
+    let value_only = block_on(gpu.value(t)).unwrap();
     assert_eq!(value_only, gv, "value-only and value-and-derivative differ");
     let rel = (cv - gv).abs() / cv.abs().max(1e-12);
     assert!(rel < 1e-5, "value cpu {cv} gpu {gv} rel {rel}");
@@ -164,7 +165,7 @@ fn compare(t: &LinearMovingTransform, cpu: &impl LinearMetric, gpu: &impl Linear
     let drel = (num / den.max(1e-30)).sqrt();
     eprintln!("  value rel {rel:.2e}, derivative rel {drel:.2e}");
     assert!(drel < 5e-4, "derivative cpu {cd:?} gpu {gd:?} rel {drel}");
-    let (gv2, gd2) = gpu.value_and_derivative(t).unwrap();
+    let (gv2, gd2) = block_on(gpu.value_and_derivative(t)).unwrap();
     assert_eq!(gv, gv2);
     assert_eq!(gd, gd2, "GPU derivative is not deterministic");
 }
@@ -178,11 +179,13 @@ fn mi_value_and_derivative_match_the_cpu_reference() {
             "n {n} sigma {sigma} shrink {shrink}: {} samples",
             l.samples.points.len()
         );
-        let cpu = CpuLinearEngine
-            .prepare_level(l.fixed.clone(), l.moving.clone(), l.samples.clone())
-            .unwrap();
-        let gpu = be
-            .prepare_level(l.fixed.clone(), l.moving.clone(), l.samples.clone())
+        let cpu = block_on(CpuLinearEngine.prepare_level(
+            l.fixed.clone(),
+            l.moving.clone(),
+            l.samples.clone(),
+        ))
+        .unwrap();
+        let gpu = block_on(be.prepare_level(l.fixed.clone(), l.moving.clone(), l.samples.clone()))
             .unwrap();
         compare(&rigid([0.0; 6]), &cpu, &gpu);
         compare(&rigid([0.02, -0.03, 0.04, 0.5, -0.7, 0.3]), &cpu, &gpu);
@@ -208,8 +211,8 @@ fn the_histogram_value_does_not_depend_on_the_chunking_and_has_a_stable_digest()
                 let gpu = be
                     .prepare_level_with_chunk(l.moving.clone(), l.samples.clone(), chunk)
                     .unwrap();
-                let (value, derivative) = gpu.value_and_derivative(&t).unwrap();
-                assert_eq!(value.to_bits(), gpu.value(&t).unwrap().to_bits());
+                let (value, derivative) = block_on(gpu.value_and_derivative(&t)).unwrap();
+                assert_eq!(value.to_bits(), block_on(gpu.value(&t)).unwrap().to_bits());
                 values.push(value.to_bits());
                 if chunk == 2048 {
                     mix(value.to_bits());
@@ -250,20 +253,18 @@ fn masked_mi_matches_the_cpu_reference_and_is_deterministic() {
     );
     assert!(!masked.samples.points.is_empty());
     assert!(masked.samples.points.len() < plain.samples.points.len());
-    let cpu = CpuLinearEngine
-        .prepare_level(
-            masked.fixed.clone(),
-            masked.moving.clone(),
-            masked.samples.clone(),
-        )
-        .unwrap();
-    let gpu = be
-        .prepare_level(
-            masked.fixed.clone(),
-            masked.moving.clone(),
-            masked.samples.clone(),
-        )
-        .unwrap();
+    let cpu = block_on(CpuLinearEngine.prepare_level(
+        masked.fixed.clone(),
+        masked.moving.clone(),
+        masked.samples.clone(),
+    ))
+    .unwrap();
+    let gpu = block_on(be.prepare_level(
+        masked.fixed.clone(),
+        masked.moving.clone(),
+        masked.samples.clone(),
+    ))
+    .unwrap();
     compare(&rigid([0.01, -0.02, 0.03, 0.4, -0.5, 0.2]), &cpu, &gpu);
     compare(&affine(0.02), &cpu, &gpu);
 }
@@ -272,25 +273,27 @@ fn masked_mi_matches_the_cpu_reference_and_is_deterministic() {
 fn samples_outside_the_moving_image_are_dropped_like_on_the_cpu() {
     let Some(be) = backend() else { return };
     let l = level(40, 1.0, 1);
-    let cpu = CpuLinearEngine
-        .prepare_level(l.fixed.clone(), l.moving.clone(), l.samples.clone())
-        .unwrap();
-    let gpu = be
-        .prepare_level(l.fixed.clone(), l.moving.clone(), l.samples.clone())
-        .unwrap();
+    let cpu = block_on(CpuLinearEngine.prepare_level(
+        l.fixed.clone(),
+        l.moving.clone(),
+        l.samples.clone(),
+    ))
+    .unwrap();
+    let gpu =
+        block_on(be.prepare_level(l.fixed.clone(), l.moving.clone(), l.samples.clone())).unwrap();
     let t = LinearMovingTransform {
         outer: AffineTransform::from_translation([14.0, -12.0, 9.0]),
         optimised: ParametricTransform::euler3d([0.0; 6], [20.0; 3]),
     };
-    let (cv, _) = cpu.value_and_derivative(&t).unwrap();
-    let (gv, _) = gpu.value_and_derivative(&t).unwrap();
+    let (cv, _) = block_on(cpu.value_and_derivative(&t)).unwrap();
+    let (gv, _) = block_on(gpu.value_and_derivative(&t)).unwrap();
     assert!((cv - gv).abs() / cv.abs() < 5e-3, "{cv} {gv}");
     let far = LinearMovingTransform {
         outer: AffineTransform::from_translation([500.0, 0.0, 0.0]),
         optimised: ParametricTransform::euler3d([0.0; 6], [20.0; 3]),
     };
-    assert!(cpu.value(&far).is_err());
-    assert!(gpu.value(&far).is_err());
+    assert!(block_on(cpu.value(&far)).is_err());
+    assert!(block_on(gpu.value(&far)).is_err());
 }
 
 #[test]

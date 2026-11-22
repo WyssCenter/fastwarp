@@ -27,7 +27,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::device::GpuContext;
+use crate::device::{block_gpu, GpuContext};
 use crate::error::GpuResult;
 
 const SAMPLE: &str = include_str!("shaders/syn_sample.wgsl");
@@ -233,51 +233,80 @@ pub struct SynKernels {
 impl SynKernels {
     /// Compiles every SyN kernel; shader and pipeline errors are returned verbatim.
     pub fn new(ctx: &GpuContext) -> GpuResult<Self> {
+        block_gpu("SynKernels::new", Self::new_async(ctx))
+    }
+
+    /// Async [`Self::new`].
+    pub async fn new_async(ctx: &GpuContext) -> GpuResult<Self> {
         let with_sample = |body: &str| format!("{SAMPLE}\n{body}");
         Ok(SynKernels {
-            warp: ctx.compile("k_warp", &with_sample(WARP), "k_warp")?,
-            warp_pre: ctx.compile("k_warp_pre", &with_sample(WARP_PRE), "k_warp_pre")?,
-            compose: ctx.compile("k_compose", &with_sample(COMPOSE), "k_compose")?,
-            inv_residual: ctx.compile(
-                "k_inv_residual",
-                &with_sample(INV_RESIDUAL),
-                "k_inv_residual",
-            )?,
-            inv_begin: ctx.compile("k_inv_begin", INV_BEGIN, "k_inv_begin")?,
-            inv_reduce: ctx.compile("k_inv_reduce", INV_REDUCE, "k_inv_reduce")?,
-            inv_update: ctx.compile("k_inv_update", INV_UPDATE, "k_inv_update")?,
-            cc_planes: ctx.compile("k_cc_planes", CC_PLANES, "k_cc_planes")?,
-            cc_deriv: ctx.compile("k_cc_deriv", &with_sample(CC_DERIV), "k_cc_deriv")?,
-            cc_value: ctx.compile("k_cc_value", CC_VALUE, "k_cc_value")?,
-            cc_planes_masked: ctx.compile(
-                "k_cc_planes_masked",
-                CC_PLANES_MASKED,
-                "k_cc_planes_masked",
-            )?,
-            cc_stats_masked: ctx.compile(
-                "k_cc_stats_masked",
-                CC_STATS_MASKED,
-                "k_cc_stats_masked",
-            )?,
-            cc_deriv_masked: ctx.compile(
-                "k_cc_deriv_masked",
-                &with_sample(CC_DERIV_MASKED),
-                "k_cc_deriv_masked",
-            )?,
-            cc_value_masked: ctx.compile(
-                "k_cc_value_masked",
-                CC_VALUE_MASKED,
-                "k_cc_value_masked",
-            )?,
-            box_x: ctx.compile("k_box_x", BOX, "k_box_x")?,
-            box_yz: ctx.compile("k_box_yz", BOX, "k_box_yz")?,
-            gauss: ctx.compile("k_gauss_axis", GAUSS, "k_gauss_axis")?,
-            gauss_x: ctx.compile("k_gauss_x", GAUSS, "k_gauss_x")?,
-            gauss_yz: ctx.compile("k_gauss_yz", GAUSS, "k_gauss_yz")?,
-            norm_partial: ctx.compile("k_norm_partial", NORM_PARTIAL, "k_norm_partial")?,
-            reduce_scalar: ctx.compile("k_reduce_scalar", REDUCE_SCALAR, "k_reduce_scalar")?,
-            scale: ctx.compile("k_scale", SCALE, "k_scale")?,
-            axpy: ctx.compile("k_axpy_field", AXPY, "k_axpy_field")?,
+            warp: ctx
+                .compile_async("k_warp", &with_sample(WARP), "k_warp")
+                .await?,
+            warp_pre: ctx
+                .compile_async("k_warp_pre", &with_sample(WARP_PRE), "k_warp_pre")
+                .await?,
+            compose: ctx
+                .compile_async("k_compose", &with_sample(COMPOSE), "k_compose")
+                .await?,
+            inv_residual: ctx
+                .compile_async(
+                    "k_inv_residual",
+                    &with_sample(INV_RESIDUAL),
+                    "k_inv_residual",
+                )
+                .await?,
+            inv_begin: ctx
+                .compile_async("k_inv_begin", INV_BEGIN, "k_inv_begin")
+                .await?,
+            inv_reduce: ctx
+                .compile_async("k_inv_reduce", INV_REDUCE, "k_inv_reduce")
+                .await?,
+            inv_update: ctx
+                .compile_async("k_inv_update", INV_UPDATE, "k_inv_update")
+                .await?,
+            cc_planes: ctx
+                .compile_async("k_cc_planes", CC_PLANES, "k_cc_planes")
+                .await?,
+            cc_deriv: ctx
+                .compile_async("k_cc_deriv", &with_sample(CC_DERIV), "k_cc_deriv")
+                .await?,
+            cc_value: ctx
+                .compile_async("k_cc_value", CC_VALUE, "k_cc_value")
+                .await?,
+            cc_planes_masked: ctx
+                .compile_async("k_cc_planes_masked", CC_PLANES_MASKED, "k_cc_planes_masked")
+                .await?,
+            cc_stats_masked: ctx
+                .compile_async("k_cc_stats_masked", CC_STATS_MASKED, "k_cc_stats_masked")
+                .await?,
+            cc_deriv_masked: ctx
+                .compile_async(
+                    "k_cc_deriv_masked",
+                    &with_sample(CC_DERIV_MASKED),
+                    "k_cc_deriv_masked",
+                )
+                .await?,
+            cc_value_masked: ctx
+                .compile_async("k_cc_value_masked", CC_VALUE_MASKED, "k_cc_value_masked")
+                .await?,
+            box_x: ctx.compile_async("k_box_x", BOX, "k_box_x").await?,
+            box_yz: ctx.compile_async("k_box_yz", BOX, "k_box_yz").await?,
+            gauss: ctx
+                .compile_async("k_gauss_axis", GAUSS, "k_gauss_axis")
+                .await?,
+            gauss_x: ctx.compile_async("k_gauss_x", GAUSS, "k_gauss_x").await?,
+            gauss_yz: ctx.compile_async("k_gauss_yz", GAUSS, "k_gauss_yz").await?,
+            norm_partial: ctx
+                .compile_async("k_norm_partial", NORM_PARTIAL, "k_norm_partial")
+                .await?,
+            reduce_scalar: ctx
+                .compile_async("k_reduce_scalar", REDUCE_SCALAR, "k_reduce_scalar")
+                .await?,
+            scale: ctx.compile_async("k_scale", SCALE, "k_scale").await?,
+            axpy: ctx
+                .compile_async("k_axpy_field", AXPY, "k_axpy_field")
+                .await?,
         })
     }
 }

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::device::GpuContext;
+use crate::device::{block_gpu, GpuContext};
 use crate::error::GpuResult;
 
 #[cfg(feature = "dev-tools")]
@@ -132,14 +132,28 @@ impl Kernels {
 }
 
 impl GpuContext {
-    /// Compiles one WGSL entry point into a compute pipeline with an automatic layout.
+    /// Compiles one WGSL entry point into a compute pipeline with an automatic layout; an error on
+    /// wasm32 (use [`Self::compile_async`]).
     pub fn compile(
         &self,
         label: &str,
         source: &str,
         entry: &str,
     ) -> GpuResult<wgpu::ComputePipeline> {
-        self.scoped(label, 0, || {
+        block_gpu(
+            "GpuContext::compile",
+            self.compile_async(label, source, entry),
+        )
+    }
+
+    /// Async [`Self::compile`]: the error scopes of the compilation are awaited.
+    pub async fn compile_async(
+        &self,
+        label: &str,
+        source: &str,
+        entry: &str,
+    ) -> GpuResult<wgpu::ComputePipeline> {
+        self.scoped_async(label, 0, || {
             let module = self
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -159,6 +173,7 @@ impl GpuContext {
                     cache: None,
                 })
         })
+        .await
     }
 
     /// Binds `buffers` to bindings `0..` of group 0 of `pipeline`; each binds its whole buffer.

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Mutex;
+
 use crate::device::{block_gpu, GpuContext};
 use crate::error::{GpuError, GpuResult};
 
@@ -63,30 +65,18 @@ impl BufferPool {
         label: &str,
         size: u64,
     ) -> GpuResult<wgpu::Buffer> {
-        let size = size.max(4).next_multiple_of(4);
-        if let Some(pos) = self.free.iter().position(|b| b.size() == size) {
-            return Ok(self.free.swap_remove(pos));
-        }
-        let create = || {
-            ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size,
-                usage: STORAGE_USAGE,
-                mapped_at_creation: false,
-            })
-        };
-        let buffer = match ctx.scoped_async(label, size, create).await {
-            Err(GpuError::OutOfMemory { .. }) if !self.free.is_empty() => {
-                self.release_idle();
-                ctx.sync_async().await?;
-                ctx.scoped_async(label, size, create).await?
-            }
-            other => other?,
-        };
+        acquire_from(self, ctx, label, size).await
+    }
+
+    fn take_free(&mut self, size: u64) -> Option<wgpu::Buffer> {
+        let pos = self.free.iter().position(|b| b.size() == size)?;
+        Some(self.free.swap_remove(pos))
+    }
+
+    fn note_allocation(&mut self, size: u64) {
         self.allocated_bytes += size;
         self.peak_bytes = self.peak_bytes.max(self.allocated_bytes);
         self.allocations += 1;
-        Ok(buffer)
     }
 
     /// Returns `buffer` to the pool.
@@ -118,4 +108,50 @@ impl BufferPool {
         self.allocated_bytes -= freed;
         freed
     }
+}
+
+pub(crate) trait PoolAccess {
+    fn with<R>(&mut self, f: impl FnOnce(&mut BufferPool) -> R) -> R;
+}
+
+impl PoolAccess for &mut BufferPool {
+    fn with<R>(&mut self, f: impl FnOnce(&mut BufferPool) -> R) -> R {
+        f(self)
+    }
+}
+
+impl PoolAccess for &Mutex<BufferPool> {
+    fn with<R>(&mut self, f: impl FnOnce(&mut BufferPool) -> R) -> R {
+        f(&mut self.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
+pub(crate) async fn acquire_from(
+    mut pool: impl PoolAccess,
+    ctx: &GpuContext,
+    label: &str,
+    size: u64,
+) -> GpuResult<wgpu::Buffer> {
+    let size = size.max(4).next_multiple_of(4);
+    if let Some(buffer) = pool.with(|p| p.take_free(size)) {
+        return Ok(buffer);
+    }
+    let create = || {
+        ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: STORAGE_USAGE,
+            mapped_at_creation: false,
+        })
+    };
+    let buffer = match ctx.scoped_async(label, size, create).await {
+        Err(GpuError::OutOfMemory { .. }) if pool.with(|p| !p.free.is_empty()) => {
+            pool.with(BufferPool::release_idle);
+            ctx.sync_async().await?;
+            ctx.scoped_async(label, size, create).await?
+        }
+        other => other?,
+    };
+    pool.with(|p| p.note_allocation(size));
+    Ok(buffer)
 }

@@ -574,19 +574,6 @@ pub async fn run_syn_cached_async<B: Backend>(
     })
 }
 
-pub(crate) fn run_syn_pair_cached<B: Backend>(
-    backend: &B,
-    recipe: &SynRecipe,
-    channels: &[SynChannel],
-    initial: &AffineTransform,
-    options: &SynOptions<'_>,
-    cache: Option<&mut SmoothCache>,
-) -> Result<(CompositePair, Vec<SynLevelTrace>)> {
-    block_ready(run_syn_pair_cached_async(
-        backend, recipe, channels, initial, options, cache,
-    ))
-}
-
 pub(crate) async fn run_syn_pair_cached_async<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
@@ -614,19 +601,6 @@ pub(crate) async fn run_syn_pair_cached_async<B: Backend>(
 
 /// One SyN stage of a stage list from `start`, its fields collapsed with the earlier ones and
 /// kept in `f64` for the next stage.
-pub(crate) fn run_syn_stage_cached<B: Backend>(
-    backend: &B,
-    recipe: &SynRecipe,
-    channels: &[SynChannel],
-    start: SynStart<'_>,
-    options: &SynOptions<'_>,
-    cache: Option<&mut SmoothCache>,
-) -> Result<SynFields> {
-    block_ready(run_syn_stage_cached_async(
-        backend, recipe, channels, start, options, cache,
-    ))
-}
-
 pub(crate) async fn run_syn_stage_cached_async<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
@@ -1043,14 +1017,14 @@ mod tests {
         let e = run_syn(&YieldingCpu, &recipe, &channels, &initial, &options).unwrap_err();
         assert!(not_ready(&e), "{e}");
 
-        let stage = run_syn_stage_cached(
+        let stage = block_ready(run_syn_stage_cached_async(
             &b,
             &recipe,
             &channels,
             SynStart::affine(&initial),
             &options,
             None,
-        )
+        ))
         .unwrap();
         let prior = PriorWarp {
             warp: stage.warp,

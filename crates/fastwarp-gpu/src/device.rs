@@ -242,12 +242,12 @@ pub fn enumerate(instance: &wgpu::Instance, backends: wgpu::Backends) -> Vec<wgp
 
 /// Lists the adapters of `instance` for `backends`. On wasm32 the browser cannot list adapters,
 /// so the one adapter it grants is requested instead (the software one when `force_software` is
-/// set).
+/// set); a refused request is an error with the browser's reason.
 pub async fn enumerate_async(
     instance: &wgpu::Instance,
     backends: wgpu::Backends,
     force_software: bool,
-) -> Vec<wgpu::Adapter> {
+) -> GpuResult<Vec<wgpu::Adapter>> {
     if WEB {
         let options = wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -256,11 +256,13 @@ pub async fn enumerate_async(
             ..Default::default()
         };
         return match instance.request_adapter(&options).await {
-            Ok(adapter) => vec![adapter],
-            Err(_) => Vec::new(),
+            Ok(adapter) => Ok(vec![adapter]),
+            Err(e) => Err(GpuError::NoAdapter(format!(
+                "the browser refused the adapter request: {e}"
+            ))),
         };
     }
-    instance.enumerate_adapters(backends).await
+    Ok(instance.enumerate_adapters(backends).await)
 }
 
 fn type_rank(t: wgpu::DeviceType) -> u32 {
@@ -281,11 +283,11 @@ fn pick(adapters: Vec<wgpu::Adapter>, sel: &BackendSelect) -> Option<wgpu::Adapt
     let mut best: Option<(u32, wgpu::Adapter)> = None;
     for a in adapters {
         let info = a.get_info();
-        let software = info.device_type == wgpu::DeviceType::Cpu;
+        let software = info.device_type == wgpu::DeviceType::Cpu || (WEB && sel.force_software);
         if sel.force_software && !software {
             continue;
         }
-        if software && !sel.allow_software {
+        if software && !(sel.allow_software || (WEB && sel.force_software)) {
             continue;
         }
         if let Some(n) = &needle {
@@ -454,7 +456,17 @@ impl GpuContext {
         let mut failures = Vec::new();
         for backends in sel.backend.candidates() {
             let instance = new_instance(backends);
-            let adapters = enumerate_async(&instance, backends, sel.force_software).await;
+            let adapters = match enumerate_async(&instance, backends, sel.force_software).await {
+                Ok(adapters) => adapters,
+                Err(e) => {
+                    let why = match e {
+                        GpuError::NoAdapter(why) => why,
+                        other => other.to_string(),
+                    };
+                    tried.push(format!("{backends:?}: {why}"));
+                    continue;
+                }
+            };
             let count = adapters.len();
             match pick(adapters, sel) {
                 Some(adapter) => {

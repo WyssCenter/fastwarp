@@ -42,11 +42,12 @@ use std::sync::atomic::AtomicBool;
 use crate::apply::{apply_chain, Interpolation};
 use crate::backend::Backend;
 use crate::error::{invalid, RegError, Result};
+use crate::exec::block_ready;
 use crate::grid::Grid;
 use crate::init::{initial_transform, InitFeature};
 use crate::linalg::IDENTITY3;
 use crate::linear::{
-    run_linear_stage_cached, with_center, LinearEngine, LinearKind, LinearRecipe,
+    run_linear_stage_cached_async, with_center, LinearEngine, LinearKind, LinearRecipe,
     LinearStageResult, SmoothCache,
 };
 use crate::recipe::SynRecipe;
@@ -54,7 +55,7 @@ use crate::register::{
     check_winsorize, prepare_channels_with, LinearPlan, PreparedChannels, RegisterTimings,
     WINSORIZE_LOWER, WINSORIZE_UPPER,
 };
-use crate::syn::{run_syn_stage_cached, PriorWarp, SynLevelTrace, SynOptions, SynStart};
+use crate::syn::{run_syn_stage_cached_async, PriorWarp, SynLevelTrace, SynOptions, SynStart};
 use crate::transform::ants_io::{
     with_suffix, AFFINE_SUFFIX, COMPOSITE_SUFFIX, INVERSE_COMPOSITE_SUFFIX, INVERSE_WARP_SUFFIX,
     WARP_SUFFIX,
@@ -174,6 +175,22 @@ pub fn run_linear_stages<E: LinearEngine>(
     cache: &mut SmoothCache,
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<LinearStageResult>, AffineTransform)> {
+    block_ready(run_linear_stages_async(
+        engine, initial, stages, fixed, moving, cache, cancel,
+    ))
+}
+
+/// [`run_linear_stages`] as a future, for an engine that waits for its device.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_linear_stages_async<E: LinearEngine>(
+    engine: &E,
+    initial: AffineTransform,
+    stages: &[LinearRecipe],
+    fixed: &Volume<f64>,
+    moving: &Volume<f64>,
+    cache: &mut SmoothCache,
+    cancel: Option<&AtomicBool>,
+) -> Result<(Vec<LinearStageResult>, AffineTransform)> {
     let mut current = initial;
     let mut center = initial.center;
     let mut results = Vec::with_capacity(stages.len());
@@ -184,8 +201,10 @@ pub fn run_linear_stages<E: LinearEngine>(
                 ParametricTransform::affine(&AffineTransform::new(IDENTITY3, [0.0; 3], center))
             }
         };
-        let stage =
-            run_linear_stage_cached(engine, recipe, fixed, moving, current, start, cache, cancel)?;
+        let stage = run_linear_stage_cached_async(
+            engine, recipe, fixed, moving, current, start, cache, cancel,
+        )
+        .await?;
         current = AffineTransform::compose(&current, &stage.affine);
         center = stage.affine.center;
         results.push(stage);
@@ -246,6 +265,22 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
     iso_mm: Option<f64>,
     options: &SynOptions<'_>,
 ) -> Result<StagesOutput> {
+    block_ready(register_stages_async(
+        backend, engine, plan, fixed, moving, iso_mm, options,
+    ))
+}
+
+/// [`register_stages`] as a future, for a backend and an engine that wait for their device.
+#[allow(clippy::too_many_arguments)]
+pub async fn register_stages_async<B: Backend, E: LinearEngine>(
+    backend: &B,
+    engine: &E,
+    plan: &StagePlan,
+    fixed: &[Volume<f64>],
+    moving: &[Volume<f64>],
+    iso_mm: Option<f64>,
+    options: &SynOptions<'_>,
+) -> Result<StagesOutput> {
     plan.validate()?;
     if plan
         .syn
@@ -278,7 +313,7 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
         InitialTransform::Affine(a) => a,
     };
     let mut cache = SmoothCache::default();
-    let (linear, total) = run_linear_stages(
+    let (linear, total) = run_linear_stages_async(
         engine,
         initial,
         &plan.linear,
@@ -286,7 +321,8 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
         &channels[0].moving,
         &mut cache,
         options.cancel,
-    )?;
+    )
+    .await?;
     timings.linear_s = t.elapsed().as_secs_f64();
     drop(fixed_raw);
     let moving_first = moving_raw
@@ -304,8 +340,15 @@ pub fn register_stages<B: Backend, E: LinearEngine>(
             affine: &total,
             prior: prior.as_ref(),
         };
-        let out =
-            run_syn_stage_cached(backend, recipe, &channels, start, options, Some(&mut cache))?;
+        let out = run_syn_stage_cached_async(
+            backend,
+            recipe,
+            &channels,
+            start,
+            options,
+            Some(&mut cache),
+        )
+        .await?;
         prior = Some(PriorWarp {
             warp: out.warp,
             inverse_warp: out.inverse_warp,
@@ -1130,5 +1173,69 @@ mod tests {
             winsorize: None,
         };
         assert!(singular.validate().is_err());
+    }
+
+    #[test]
+    fn register_stages_async_on_a_backend_and_engine_that_wait_equals_register_stages() {
+        use crate::exec::testing::{drive, linear_bits, YieldingCpu, YieldingLinear};
+        let (fx, mv) = pair();
+        let linear = LinearPlan {
+            rigid: small(LinearRecipe::cohort_rigid()),
+            affine: small(LinearRecipe::cohort_affine()),
+        };
+        let plan = StagePlan::cohort(&linear, &small_syn());
+        let options = SynOptions::default();
+        let plain = register_stages(
+            &CpuBackend,
+            &CpuLinearEngine,
+            &plan,
+            &fx,
+            &mv,
+            Some(2.0),
+            &options,
+        )
+        .unwrap();
+        let (waited, pending) = drive(register_stages_async(
+            &YieldingCpu,
+            &YieldingLinear,
+            &plan,
+            &fx,
+            &mv,
+            Some(2.0),
+            &options,
+        ));
+        assert!(pending > 0);
+        let waited = waited.unwrap();
+        let bits = |v: &dyn std::fmt::Debug| format!("{v:?}");
+        assert_eq!(bits(&plain.pair), bits(&waited.pair));
+        assert_eq!(bits(&plain.warped), bits(&waited.warped));
+        assert_eq!(bits(&plain.grid), bits(&waited.grid));
+        assert_eq!(bits(&plain.initial), bits(&waited.initial));
+        assert_eq!(bits(&plain.total), bits(&waited.total));
+        assert_eq!(bits(&plain.syn_levels), bits(&waited.syn_levels));
+        assert_eq!(plain.linear.len(), waited.linear.len());
+        for (a, b) in plain.linear.iter().zip(&waited.linear) {
+            assert_eq!(linear_bits(a), linear_bits(b));
+        }
+        let e = register_stages(
+            &CpuBackend,
+            &YieldingLinear,
+            &plan,
+            &fx,
+            &mv,
+            Some(2.0),
+            &options,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                e,
+                RegError::Invalid {
+                    what: "backend",
+                    ..
+                }
+            ),
+            "{e}"
+        );
     }
 }

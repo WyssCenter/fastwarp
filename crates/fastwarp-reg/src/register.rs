@@ -19,13 +19,11 @@ use crate::error::{invalid, Result};
 use crate::exec::block_ready;
 use crate::grid::Grid;
 use crate::linear::{
-    run_linear_chain_cached, LinearChainResult, LinearEngine, LinearRecipe, SmoothCache,
+    run_linear_chain_cached_async, LinearChainResult, LinearEngine, LinearRecipe, SmoothCache,
 };
 use crate::preprocess::preprocess_volume;
 use crate::recipe::SynRecipe;
-use crate::syn::{
-    run_syn_pair_cached, run_syn_pair_cached_async, SynChannel, SynLevelTrace, SynOptions,
-};
+use crate::syn::{run_syn_pair_cached_async, SynChannel, SynLevelTrace, SynOptions};
 use crate::transform::ants_io::{with_suffix, AFFINE_SUFFIX};
 use crate::transform::itk_mat::write_mat_file;
 use crate::transform::{write_composite_pair, AffineTransform, CompositePair, TransformElem};
@@ -329,6 +327,23 @@ pub fn register_full<B: Backend, E: LinearEngine>(
     iso_mm: Option<f64>,
     options: &SynOptions<'_>,
 ) -> Result<RegisterOutput> {
+    block_ready(register_full_async(
+        backend, engine, plan, recipe, fixed, moving, iso_mm, options,
+    ))
+}
+
+/// [`register_full`] as a future, for a backend and an engine that wait for their device.
+#[allow(clippy::too_many_arguments)]
+pub async fn register_full_async<B: Backend, E: LinearEngine>(
+    backend: &B,
+    engine: &E,
+    plan: &LinearPlan,
+    recipe: &SynRecipe,
+    fixed: &[Volume<f64>],
+    moving: &[Volume<f64>],
+    iso_mm: Option<f64>,
+    options: &SynOptions<'_>,
+) -> Result<RegisterOutput> {
     let mut timings = RegisterTimings::default();
     let PreparedChannels {
         channels,
@@ -337,7 +352,7 @@ pub fn register_full<B: Backend, E: LinearEngine>(
     } = prepare_channels_full(fixed, moving, iso_mm, &mut timings)?;
     let t = Stopwatch::start();
     let mut cache = SmoothCache::default();
-    let chain = run_linear_chain_cached(
+    let chain = run_linear_chain_cached_async(
         engine,
         &plan.rigid,
         &plan.affine,
@@ -347,7 +362,8 @@ pub fn register_full<B: Backend, E: LinearEngine>(
         &channels[0].moving,
         &mut cache,
         options.cancel,
-    )?;
+    )
+    .await?;
     timings.linear_s = t.elapsed().as_secs_f64();
     drop(fixed_raw);
     let moving_first = moving_raw
@@ -355,14 +371,15 @@ pub fn register_full<B: Backend, E: LinearEngine>(
         .next()
         .ok_or_else(|| invalid("register", "no moving channel"))?;
     let t = Stopwatch::start();
-    let syn = run_syn_pair_cached(
+    let syn = run_syn_pair_cached_async(
         backend,
         recipe,
         &channels,
         &chain.total,
         options,
         Some(&mut cache),
-    );
+    )
+    .await;
     drop(cache);
     let (pair, levels) = syn?;
     timings.syn_s = t.elapsed().as_secs_f64();
@@ -408,7 +425,7 @@ mod tests {
     use super::*;
     use crate::cpu::CpuBackend;
     use crate::error::RegError;
-    use crate::exec::testing::{drive, YieldingCpu};
+    use crate::exec::testing::{drive, linear_bits, YieldingCpu, YieldingLinear};
     use crate::linalg::IDENTITY3;
     use crate::syn::{run_syn, run_syn_cached};
 
@@ -579,7 +596,7 @@ mod tests {
 
     #[test]
     fn the_syn_stage_reuses_the_linear_stage_smoothing_without_changing_a_bit() {
-        use crate::linear::{CpuLinearEngine, LinearRecipe};
+        use crate::linear::{run_linear_chain_cached, CpuLinearEngine, LinearRecipe};
         let fixed = blob_volume(24, 2.0, 0.0);
         let moving = blob_volume(24, 2.0, 4.0);
         let sigmas = vec![2.0, 1.0, 0.0];
@@ -781,5 +798,98 @@ mod tests {
             ),
             "{e}"
         );
+    }
+
+    #[test]
+    fn register_full_async_on_a_backend_and_engine_that_wait_equals_register_full() {
+        use crate::linear::{CpuLinearEngine, LinearRecipe};
+        let small = |r: LinearRecipe| LinearRecipe {
+            iterations: vec![10, 6],
+            shrink_factors: vec![2, 1],
+            smoothing_sigmas: vec![1.0, 0.0],
+            ..r
+        };
+        let plan = LinearPlan {
+            rigid: small(LinearRecipe::cohort_rigid()),
+            affine: small(LinearRecipe::cohort_affine()),
+        };
+        let recipe = SynRecipe {
+            iterations: vec![4, 3],
+            shrink_factors: vec![2, 1],
+            smoothing_sigmas: vec![1.0, 0.0],
+            ..SynRecipe::cohort()
+        };
+        let fx = [blob_volume(16, 2.0, 0.0)];
+        let mv = [blob_volume(16, 2.0, 3.0)];
+        let options = SynOptions::default();
+        let plain = register_full(
+            &CpuBackend,
+            &CpuLinearEngine,
+            &plan,
+            &recipe,
+            &fx,
+            &mv,
+            Some(2.0),
+            &options,
+        )
+        .unwrap();
+        let (waited, pending) = drive(register_full_async(
+            &YieldingCpu,
+            &YieldingLinear,
+            &plan,
+            &recipe,
+            &fx,
+            &mv,
+            Some(2.0),
+            &options,
+        ));
+        assert!(pending > 0);
+        let waited = waited.unwrap();
+        let bits = |v: &dyn std::fmt::Debug| format!("{v:?}");
+        assert_eq!(bits(&plain.pair), bits(&waited.pair));
+        assert_eq!(bits(&plain.warped), bits(&waited.warped));
+        assert_eq!(bits(&plain.grid), bits(&waited.grid));
+        assert_eq!(bits(&plain.levels), bits(&waited.levels));
+        let (a, b) = (plain.linear.unwrap(), waited.linear.unwrap());
+        assert_eq!(bits(&a.initial), bits(&b.initial));
+        assert_eq!(bits(&a.total), bits(&b.total));
+        assert_eq!(linear_bits(&a.rigid), linear_bits(&b.rigid));
+        assert_eq!(linear_bits(&a.affine), linear_bits(&b.affine));
+        assert!(a.rigid.levels.iter().all(|l| l.cg.iterations > 0));
+        for e in [
+            register_full(
+                &YieldingCpu,
+                &YieldingLinear,
+                &plan,
+                &recipe,
+                &fx,
+                &mv,
+                Some(2.0),
+                &options,
+            )
+            .unwrap_err(),
+            register_full(
+                &CpuBackend,
+                &YieldingLinear,
+                &plan,
+                &recipe,
+                &fx,
+                &mv,
+                Some(2.0),
+                &options,
+            )
+            .unwrap_err(),
+        ] {
+            assert!(
+                matches!(
+                    e,
+                    RegError::Invalid {
+                        what: "backend",
+                        ..
+                    }
+                ),
+                "{e}"
+            );
+        }
     }
 }

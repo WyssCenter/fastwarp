@@ -21,9 +21,9 @@ pub(crate) fn block_ready<T>(future: impl Future<Output = Result<T>>) -> Result<
         Poll::Pending => Err(invalid(
             "backend",
             "the backend's operation did not complete when first polled; the synchronous entry points \
-             need a backend whose futures are ready at once (use run_syn_async, run_syn_from_async, \
-             run_syn_cached_async or register_async; register_full and register_stages \
-             have no async form yet)",
+             need a backend whose futures are ready at once (use the async forms: run_syn_async, \
+             run_syn_from_async, run_syn_cached_async, register_async, register_full_async or \
+             stages::register_stages_async)",
         )),
     }
 }
@@ -39,7 +39,11 @@ pub(crate) mod testing {
     use crate::error::Result;
     use crate::field_ops::{InvertParams, InvertStats, VectorField};
     use crate::grid::Grid;
-    use crate::transform::AffineTransform;
+    use crate::linear::{
+        CpuLevel, CpuLinearEngine, LinearEngine, LinearStageResult, PreparedSamples,
+    };
+    use crate::optimizer::LinearMetric;
+    use crate::transform::{AffineTransform, LinearMovingTransform};
     use crate::volume::Volume;
 
     struct YieldOnce(bool);
@@ -194,6 +198,76 @@ pub(crate) mod testing {
             yield_once().await;
             Backend::resample_field(&CpuBackend, field, grid).await
         }
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub(crate) struct YieldingLinear;
+
+    pub(crate) struct YieldingLevel<'a>(CpuLevel<'a>);
+
+    impl LinearMetric for YieldingLevel<'_> {
+        async fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
+            yield_once().await;
+            self.0.value(t).await
+        }
+
+        async fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
+            yield_once().await;
+            self.0.value_and_derivative(t).await
+        }
+    }
+
+    impl LinearEngine for YieldingLinear {
+        type Level<'a> = YieldingLevel<'a>;
+
+        fn name(&self) -> String {
+            "cpu-f64 (yielding)".to_string()
+        }
+
+        async fn prepare_level<'a>(
+            &'a self,
+            fixed: Volume<f64>,
+            moving: Volume<f64>,
+            samples: PreparedSamples,
+        ) -> Result<YieldingLevel<'a>> {
+            yield_once().await;
+            let level =
+                LinearEngine::prepare_level(&CpuLinearEngine, fixed, moving, samples).await?;
+            Ok(YieldingLevel(level))
+        }
+
+        async fn prepare_level_borrowed<'a>(
+            &'a self,
+            fixed: &'a Volume<f64>,
+            moving: &'a Volume<f64>,
+            samples: PreparedSamples,
+        ) -> Result<YieldingLevel<'a>> {
+            yield_once().await;
+            let level =
+                LinearEngine::prepare_level_borrowed(&CpuLinearEngine, fixed, moving, samples)
+                    .await?;
+            Ok(YieldingLevel(level))
+        }
+    }
+
+    pub(crate) fn linear_bits(stage: &LinearStageResult) -> String {
+        let levels: Vec<String> = stage
+            .levels
+            .iter()
+            .map(|l| {
+                format!(
+                    "{} {:?} {:?} {} {:?} {:?} {:?}",
+                    l.level,
+                    l.shrink_factors,
+                    l.grid_size,
+                    l.samples,
+                    l.cg,
+                    l.parameters,
+                    l.skipped
+                )
+            })
+            .collect();
+        format!("{:?} {:?} {levels:?}", stage.transform, stage.affine)
     }
 
     pub(crate) fn drive<T>(future: impl Future<Output = T>) -> (T, usize) {

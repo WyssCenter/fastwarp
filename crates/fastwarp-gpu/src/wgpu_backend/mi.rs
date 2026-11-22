@@ -38,6 +38,8 @@
 //! `sum_k B3'(arg_k) w[f, m_k] * (grad M . dT/dtheta_p)` to every parameter `p`, reduced per
 //! workgroup by a fixed tree and summed on the host in workgroup order.
 
+use std::sync::Mutex;
+
 use fastwarp_reg::error::Result as RegResult;
 use fastwarp_reg::grid::Grid;
 use fastwarp_reg::linalg::{mat3_mul, mat3_mul_vec, Mat3, Vec3};
@@ -48,7 +50,7 @@ use fastwarp_reg::transform::{AffineTransform, LinearMovingTransform};
 use fastwarp_reg::volume::Volume;
 use fastwarp_reg::Backend;
 
-use super::{bad, gerr, index_from_offset, GpuImage, PoolBuf, WgpuBackend};
+use super::{bad, block_reg, gerr, index_from_offset, GpuImage, PoolBuf, WgpuBackend};
 use crate::device::GpuContext;
 use crate::error::GpuResult;
 
@@ -99,13 +101,21 @@ pub(super) struct MiKernels {
 }
 
 impl MiKernels {
-    pub(super) fn new(ctx: &GpuContext) -> GpuResult<Self> {
+    pub(super) async fn new(ctx: &GpuContext) -> GpuResult<Self> {
         let with_common = |body: &str| format!("{COMMON}\n{body}");
         Ok(Self {
-            hist: ctx.compile("k_mi_hist", &with_common(HIST), "k_mi_hist")?,
-            deriv: ctx.compile("k_mi_deriv", &with_common(DERIV), "k_mi_deriv")?,
-            merge: ctx.compile("k_mi_merge_stripe", MERGE, "k_mi_merge_stripe")?,
-            merge_final: ctx.compile("k_mi_merge_final", MERGE_FINAL, "k_mi_merge_final")?,
+            hist: ctx
+                .compile_async("k_mi_hist", &with_common(HIST), "k_mi_hist")
+                .await?,
+            deriv: ctx
+                .compile_async("k_mi_deriv", &with_common(DERIV), "k_mi_deriv")
+                .await?,
+            merge: ctx
+                .compile_async("k_mi_merge_stripe", MERGE, "k_mi_merge_stripe")
+                .await?,
+            merge_final: ctx
+                .compile_async("k_mi_merge_final", MERGE_FINAL, "k_mi_merge_final")
+                .await?,
         })
     }
 }
@@ -119,11 +129,11 @@ pub struct GpuMiLevel<'a> {
     partials: PoolBuf,
     stripe_sums: PoolBuf,
     merged: PoolBuf,
-    staging: wgpu::Buffer,
+    staging: Mutex<Option<wgpu::Buffer>>,
     ratio: PoolBuf,
     gk: PoolBuf,
     dpart: PoolBuf,
-    deriv_staging: wgpu::Buffer,
+    deriv_staging: Mutex<Option<wgpu::Buffer>>,
     count: usize,
     groups: u32,
     per_stripe: u32,
@@ -138,6 +148,10 @@ fn sub(a: Vec3, b: Vec3) -> Vec3 {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
+fn put_staging(slot: &Mutex<Option<wgpu::Buffer>>, buffer: wgpu::Buffer) {
+    *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(buffer);
+}
+
 fn deriv_bytes(groups: u32) -> u64 {
     u64::from(groups) * MAX_PARAMS as u64 * 4
 }
@@ -147,7 +161,7 @@ fn v4(v: Vec3, w: f64) -> [f32; 4] {
 }
 
 impl<'a> GpuMiLevel<'a> {
-    fn new(
+    async fn new(
         backend: &'a WgpuBackend,
         moving: &Volume<f64>,
         samples: &PreparedSamples,
@@ -185,32 +199,47 @@ impl<'a> GpuMiLevel<'a> {
                 ]
             })
             .collect();
-        let sample_buf = backend.acquire("mi samples", (count * 16) as u64)?;
+        let sample_buf = backend.acquire("mi samples", (count * 16) as u64).await?;
         backend
             .ctx
             .queue
             .write_buffer(sample_buf.buffer(), 0, bytemuck::cast_slice(&records));
-        let moving_img = backend.upload_image(moving)?;
+        let moving_img = backend.upload_image(moving).await?;
         let grid = *moving.grid();
         Ok(Self {
             backend,
             samples: sample_buf,
             moving: moving_img,
-            partials: backend.acquire("mi partials", u64::from(groups) * STRIDE as u64 * 4)?,
+            partials: backend
+                .acquire("mi partials", u64::from(groups) * STRIDE as u64 * 4)
+                .await?,
             stripe_sums: backend
-                .acquire("mi stripe sums", u64::from(stripes) * STRIDE as u64 * 8)?,
-            merged: backend.acquire("mi merged", (STRIDE * 8) as u64)?,
-            staging: backend
-                .ctx
-                .staging_buffer((STRIDE * 8) as u64)
-                .map_err(gerr)?,
-            ratio: backend.acquire("mi ratio", (BINS * BINS * 4) as u64)?,
-            gk: backend.acquire("mi jacobian", (MAX_PARAMS * 3 * 16) as u64)?,
-            dpart: backend.acquire("mi derivative partials", deriv_bytes(groups))?,
-            deriv_staging: backend
-                .ctx
-                .staging_buffer(deriv_bytes(groups))
-                .map_err(gerr)?,
+                .acquire("mi stripe sums", u64::from(stripes) * STRIDE as u64 * 8)
+                .await?,
+            merged: backend.acquire("mi merged", (STRIDE * 8) as u64).await?,
+            staging: Mutex::new(Some(
+                backend
+                    .ctx
+                    .staging_buffer_async((STRIDE * 8) as u64)
+                    .await
+                    .map_err(gerr)?,
+            )),
+            ratio: backend
+                .acquire("mi ratio", (BINS * BINS * 4) as u64)
+                .await?,
+            gk: backend
+                .acquire("mi jacobian", (MAX_PARAMS * 3 * 16) as u64)
+                .await?,
+            dpart: backend
+                .acquire("mi derivative partials", deriv_bytes(groups))
+                .await?,
+            deriv_staging: Mutex::new(Some(
+                backend
+                    .ctx
+                    .staging_buffer_async(deriv_bytes(groups))
+                    .await
+                    .map_err(gerr)?,
+            )),
             count,
             groups,
             per_stripe,
@@ -261,7 +290,7 @@ impl<'a> GpuMiLevel<'a> {
         }
     }
 
-    fn histogram(&self, u: &MiU) -> RegResult<(Vec<f64>, Vec<f64>, usize)> {
+    async fn histogram(&self, u: &MiU) -> RegResult<(Vec<f64>, Vec<f64>, usize)> {
         let be = self.backend;
         let k = &be.mi_kernels;
         let merge = MergeU {
@@ -271,45 +300,54 @@ impl<'a> GpuMiLevel<'a> {
             pad: 0,
         };
         let bytes = (STRIDE * 8) as u64;
-        be.run_encoder("mi_hist", |enc| {
-            {
-                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("mi_hist"),
-                    timestamp_writes: None,
-                });
-                be.launch(
-                    &mut pass,
-                    &k.hist,
-                    &[
-                        self.samples.buffer(),
-                        self.moving.buf.buffer(),
-                        self.partials.buffer(),
-                    ],
-                    u,
-                    [self.groups, 1, 1],
-                )?;
-                be.launch(
-                    &mut pass,
-                    &k.merge,
-                    &[self.partials.buffer(), self.stripe_sums.buffer()],
-                    &merge,
-                    [self.stripes, 1, 1],
-                )?;
-                be.launch(
-                    &mut pass,
-                    &k.merge_final,
-                    &[self.stripe_sums.buffer(), self.merged.buffer()],
-                    &merge,
-                    [1, 1, 1],
-                )?;
-            }
-            enc.copy_buffer_to_buffer(self.merged.buffer(), 0, &self.staging, 0, bytes);
-            Ok(())
-        })?;
-        be.scalar_readbacks
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let raw: Vec<u32> =
-            bytemuck::pod_collect_to_vec(&be.ctx.read_staging(&self.staging, bytes).map_err(gerr)?);
+        let staging = self.take_staging(&self.staging, bytes).await?;
+        let read = async {
+            be.run_encoder("mi_hist", |enc| {
+                {
+                    let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("mi_hist"),
+                        timestamp_writes: None,
+                    });
+                    be.launch(
+                        &mut pass,
+                        &k.hist,
+                        &[
+                            self.samples.buffer(),
+                            self.moving.buf.buffer(),
+                            self.partials.buffer(),
+                        ],
+                        u,
+                        [self.groups, 1, 1],
+                    )?;
+                    be.launch(
+                        &mut pass,
+                        &k.merge,
+                        &[self.partials.buffer(), self.stripe_sums.buffer()],
+                        &merge,
+                        [self.stripes, 1, 1],
+                    )?;
+                    be.launch(
+                        &mut pass,
+                        &k.merge_final,
+                        &[self.stripe_sums.buffer(), self.merged.buffer()],
+                        &merge,
+                        [1, 1, 1],
+                    )?;
+                }
+                enc.copy_buffer_to_buffer(self.merged.buffer(), 0, &staging, 0, bytes);
+                Ok(())
+            })
+            .await?;
+            be.scalar_readbacks
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            be.ctx
+                .read_staging_async(&staging, bytes)
+                .await
+                .map_err(gerr)
+        }
+        .await;
+        put_staging(&self.staging, staging);
+        let raw: Vec<u32> = bytemuck::pod_collect_to_vec(&read?);
         let cell = |i: usize| -> u64 { u64::from(raw[2 * i]) | (u64::from(raw[2 * i + 1]) << 32) };
         let joint: Vec<f64> = (0..BINS * BINS)
             .map(|i| cell(i) as f64 / FIXED_POINT)
@@ -317,6 +355,23 @@ impl<'a> GpuMiLevel<'a> {
         let marginal: Vec<f64> = (0..BINS).map(|i| cell(BINS * BINS + i) as f64).collect();
         let valid = (0..BINS).map(|i| cell(BINS * BINS + i)).sum::<u64>() as usize;
         Ok((joint, marginal, valid))
+    }
+
+    async fn take_staging(
+        &self,
+        slot: &Mutex<Option<wgpu::Buffer>>,
+        len: u64,
+    ) -> RegResult<wgpu::Buffer> {
+        let taken = slot.lock().unwrap_or_else(|p| p.into_inner()).take();
+        match taken {
+            Some(buffer) => Ok(buffer),
+            None => self
+                .backend
+                .ctx
+                .staging_buffer_async(len)
+                .await
+                .map_err(gerr),
+        }
     }
 
     fn jacobian_rows(&self, t: &LinearMovingTransform) -> Vec<[f32; 4]> {
@@ -341,9 +396,9 @@ impl<'a> GpuMiLevel<'a> {
 }
 
 impl LinearMetric for GpuMiLevel<'_> {
-    fn value(&self, t: &LinearMovingTransform) -> RegResult<f64> {
+    async fn value(&self, t: &LinearMovingTransform) -> RegResult<f64> {
         let u = self.uniform(t, t.optimised.number_of_parameters());
-        let (joint, marginal, valid) = self.histogram(&u)?;
+        let (joint, marginal, valid) = self.histogram(&u).await?;
         Ok(finish_histogram(
             BINS,
             self.binning.moving_bin_size,
@@ -355,13 +410,13 @@ impl LinearMetric for GpuMiLevel<'_> {
         .value)
     }
 
-    fn value_and_derivative(&self, t: &LinearMovingTransform) -> RegResult<(f64, Vec<f64>)> {
+    async fn value_and_derivative(&self, t: &LinearMovingTransform) -> RegResult<(f64, Vec<f64>)> {
         let params = t.optimised.number_of_parameters();
         if params > MAX_PARAMS {
             return Err(bad("more than twelve parameters"));
         }
         let u = self.uniform(t, params);
-        let (joint, marginal, valid) = self.histogram(&u)?;
+        let (joint, marginal, valid) = self.histogram(&u).await?;
         let fin = finish_histogram(
             BINS,
             self.binning.moving_bin_size,
@@ -394,19 +449,18 @@ impl LinearMetric for GpuMiLevel<'_> {
                 &u,
                 [self.groups, 1, 1],
             )
-        })?;
+        })
+        .await?;
         be.scalar_readbacks
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let parts: Vec<f32> = bytemuck::pod_collect_to_vec(
-            &be.ctx
-                .read_bytes_staged(
-                    self.dpart.buffer(),
-                    0,
-                    deriv_bytes(self.groups),
-                    &self.deriv_staging,
-                )
-                .map_err(gerr)?,
-        );
+        let deriv_len = deriv_bytes(self.groups);
+        let staging = self.take_staging(&self.deriv_staging, deriv_len).await?;
+        let read = be
+            .ctx
+            .read_bytes_staged_async(self.dpart.buffer(), 0, deriv_len, &staging)
+            .await;
+        put_staging(&self.deriv_staging, staging);
+        let parts: Vec<f32> = bytemuck::pod_collect_to_vec(&read.map_err(gerr)?);
         let mut derivative = vec![0.0f64; params];
         for g in 0..self.groups as usize {
             for (p, d) in derivative.iter_mut().enumerate() {
@@ -427,22 +481,22 @@ impl LinearEngine for WgpuBackend {
         format!("{} Mattes MI", Backend::name(self))
     }
 
-    fn prepare_level<'a>(
+    async fn prepare_level<'a>(
         &'a self,
         _fixed: Volume<f64>,
         moving: Volume<f64>,
         samples: PreparedSamples,
     ) -> RegResult<GpuMiLevel<'a>> {
-        GpuMiLevel::new(self, &moving, &samples, CHUNK)
+        GpuMiLevel::new(self, &moving, &samples, CHUNK).await
     }
 
-    fn prepare_level_borrowed<'a>(
+    async fn prepare_level_borrowed<'a>(
         &'a self,
         _fixed: &'a Volume<f64>,
         moving: &'a Volume<f64>,
         samples: PreparedSamples,
     ) -> RegResult<GpuMiLevel<'a>> {
-        GpuMiLevel::new(self, moving, &samples, CHUNK)
+        GpuMiLevel::new(self, moving, &samples, CHUNK).await
     }
 }
 
@@ -455,6 +509,19 @@ impl WgpuBackend {
         samples: PreparedSamples,
         chunk: u32,
     ) -> RegResult<GpuMiLevel<'_>> {
-        GpuMiLevel::new(self, &moving, &samples, chunk)
+        block_reg(
+            "WgpuBackend::prepare_level_with_chunk",
+            self.prepare_level_with_chunk_async(moving, samples, chunk),
+        )
+    }
+
+    /// Async [`Self::prepare_level_with_chunk`].
+    pub async fn prepare_level_with_chunk_async(
+        &self,
+        moving: Volume<f64>,
+        samples: PreparedSamples,
+        chunk: u32,
+    ) -> RegResult<GpuMiLevel<'_>> {
+        GpuMiLevel::new(self, &moving, &samples, chunk).await
     }
 }

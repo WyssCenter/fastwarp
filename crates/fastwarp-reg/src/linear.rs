@@ -37,13 +37,14 @@ use std::sync::atomic::AtomicBool;
 use rayon::prelude::*;
 
 use crate::error::{check_cancel, invalid, Result};
+use crate::exec::block_ready;
 use crate::grid::Grid;
 use crate::init::{initial_transform, InitFeature};
 use crate::interp::linear_at_point;
 use crate::linalg::{mat3_mul_vec, vec3_add, vec3_sub, Vec3};
 use crate::mask::MaskVolume;
 use crate::metric::mi::{fixed_sample_range, MattesMi, MiBinning, MiInputs};
-use crate::optimizer::{corner_points, optimise_level, CgSettings, CgTrace, LinearMetric};
+use crate::optimizer::{corner_points, optimise_level_async, CgSettings, CgTrace, LinearMetric};
 use crate::pyramid::{
     level_virtual_grid, shrink_factors_per_dimension, smooth_for_level, SigmaUnits,
 };
@@ -279,6 +280,11 @@ pub fn prepare_samples(
 
 /// Evaluates the metric of a level. Implemented by the CPU reference ([`CpuLinearEngine`]) and by
 /// the GPU backend.
+///
+/// Preparing a level is `async` like the metric itself ([`LinearMetric`]), so that an engine can
+/// wait for its device without blocking; on a native engine the futures are ready when first
+/// polled.
+#[allow(async_fn_in_trait)]
 pub trait LinearEngine: Sync {
     /// The metric of one prepared level.
     type Level<'a>: LinearMetric
@@ -289,20 +295,21 @@ pub trait LinearEngine: Sync {
     fn name(&self) -> String;
 
     /// Builds the metric of a level from its smoothed images and prepared samples.
-    fn prepare_level<'a>(
+    async fn prepare_level<'a>(
         &'a self,
         fixed: Volume<f64>,
         moving: Volume<f64>,
         samples: PreparedSamples,
     ) -> Result<Self::Level<'a>>;
 
-    fn prepare_level_borrowed<'a>(
+    async fn prepare_level_borrowed<'a>(
         &'a self,
         fixed: &'a Volume<f64>,
         moving: &'a Volume<f64>,
         samples: PreparedSamples,
     ) -> Result<Self::Level<'a>> {
         self.prepare_level(fixed.clone(), moving.clone(), samples)
+            .await
     }
 }
 
@@ -319,11 +326,11 @@ pub struct CpuLevel<'a> {
 }
 
 impl LinearMetric for CpuLevel<'_> {
-    fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
+    async fn value(&self, t: &LinearMovingTransform) -> Result<f64> {
         Ok(self.evaluate(t, false)?.0)
     }
 
-    fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
+    async fn value_and_derivative(&self, t: &LinearMovingTransform) -> Result<(f64, Vec<f64>)> {
         self.evaluate(t, true)
     }
 }
@@ -353,7 +360,7 @@ impl LinearEngine for CpuLinearEngine {
         "cpu-f64".to_string()
     }
 
-    fn prepare_level<'a>(
+    async fn prepare_level<'a>(
         &'a self,
         fixed: Volume<f64>,
         moving: Volume<f64>,
@@ -367,7 +374,7 @@ impl LinearEngine for CpuLinearEngine {
         })
     }
 
-    fn prepare_level_borrowed<'a>(
+    async fn prepare_level_borrowed<'a>(
         &'a self,
         fixed: &'a Volume<f64>,
         moving: &'a Volume<f64>,
@@ -642,6 +649,23 @@ pub fn run_linear_stage_cached<E: LinearEngine>(
     cache: &mut SmoothCache,
     cancel: Option<&AtomicBool>,
 ) -> Result<LinearStageResult> {
+    block_ready(run_linear_stage_cached_async(
+        engine, recipe, fixed, moving, outer, start, cache, cancel,
+    ))
+}
+
+/// [`run_linear_stage_cached`] as a future, for an engine that waits for its device.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_linear_stage_cached_async<E: LinearEngine>(
+    engine: &E,
+    recipe: &LinearRecipe,
+    fixed: &Volume<f64>,
+    moving: &Volume<f64>,
+    outer: AffineTransform,
+    start: ParametricTransform,
+    cache: &mut SmoothCache,
+    cancel: Option<&AtomicBool>,
+) -> Result<LinearStageResult> {
     recipe.validate()?;
     let expected = match recipe.kind {
         LinearKind::Rigid => 6,
@@ -710,7 +734,9 @@ pub fn run_linear_stage_cached<E: LinearEngine>(
             continue;
         };
         let sample_count = prepared.points.len();
-        let metric = engine.prepare_level_borrowed(&fixed_s, &moving_s, prepared)?;
+        let metric = engine
+            .prepare_level_borrowed(&fixed_s, &moving_s, prepared)
+            .await?;
         let corners = corner_points(&grid);
         let settings = CgSettings::ants(
             recipe.gradient_step,
@@ -718,7 +744,8 @@ pub fn run_linear_stage_cached<E: LinearEngine>(
             recipe.convergence_threshold,
             recipe.convergence_window,
         );
-        let (next, cg) = optimise_level(&metric, &corners, current, &settings, cancel)?;
+        let (next, cg) =
+            optimise_level_async(&metric, &corners, current, &settings, cancel).await?;
         current = next;
         levels.push(LinearLevelTrace {
             level,
@@ -832,6 +859,24 @@ pub fn run_linear_chain_cached<E: LinearEngine>(
     cache: &mut SmoothCache,
     cancel: Option<&AtomicBool>,
 ) -> Result<LinearChainResult> {
+    block_ready(run_linear_chain_cached_async(
+        engine, rigid, affine, fixed_raw, moving_raw, fixed, moving, cache, cancel,
+    ))
+}
+
+/// [`run_linear_chain_cached`] as a future, for an engine that waits for its device.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_linear_chain_cached_async<E: LinearEngine>(
+    engine: &E,
+    rigid: &LinearRecipe,
+    affine: &LinearRecipe,
+    fixed_raw: &Volume<f64>,
+    moving_raw: &Volume<f64>,
+    fixed: &Volume<f64>,
+    moving: &Volume<f64>,
+    cache: &mut SmoothCache,
+    cancel: Option<&AtomicBool>,
+) -> Result<LinearChainResult> {
     if rigid.kind != LinearKind::Rigid || affine.kind != LinearKind::Affine {
         return Err(invalid(
             "linear chain",
@@ -839,7 +884,7 @@ pub fn run_linear_chain_cached<E: LinearEngine>(
         ));
     }
     let initial = initial_transform(fixed_raw, moving_raw, InitFeature::CentreOfMass)?;
-    let rigid_result = run_linear_stage_cached(
+    let rigid_result = run_linear_stage_cached_async(
         engine,
         rigid,
         fixed,
@@ -848,14 +893,15 @@ pub fn run_linear_chain_cached<E: LinearEngine>(
         ParametricTransform::euler3d([0.0; 6], initial.center),
         cache,
         cancel,
-    )?;
+    )
+    .await?;
     let after_rigid = AffineTransform::compose(&initial, &rigid_result.affine);
     let start_affine = ParametricTransform::affine(&AffineTransform::new(
         crate::linalg::IDENTITY3,
         [0.0; 3],
         rigid_result.affine.center,
     ));
-    let affine_result = run_linear_stage_cached(
+    let affine_result = run_linear_stage_cached_async(
         engine,
         affine,
         fixed,
@@ -864,7 +910,8 @@ pub fn run_linear_chain_cached<E: LinearEngine>(
         start_affine,
         cache,
         cancel,
-    )?;
+    )
+    .await?;
     let collapsed = AffineTransform::compose(&after_rigid, &affine_result.affine);
     let total = with_center(&collapsed, affine_result.affine.center);
     Ok(LinearChainResult {
@@ -946,10 +993,25 @@ pub fn run_rigid_registration_from_cancellable<E: LinearEngine>(
     initial: AffineTransform,
     cancel: Option<&AtomicBool>,
 ) -> Result<RigidRegistrationResult> {
+    block_ready(run_rigid_registration_from_cancellable_async(
+        engine, recipe, fixed, moving, initial, cancel,
+    ))
+}
+
+/// [`run_rigid_registration_from_cancellable`] as a future, for an engine that waits for its
+/// device.
+pub async fn run_rigid_registration_from_cancellable_async<E: LinearEngine>(
+    engine: &E,
+    recipe: &LinearRecipe,
+    fixed: &Volume<f64>,
+    moving: &Volume<f64>,
+    initial: AffineTransform,
+    cancel: Option<&AtomicBool>,
+) -> Result<RigidRegistrationResult> {
     if recipe.kind != LinearKind::Rigid {
         return Err(invalid("rigid registration", "expected a rigid recipe"));
     }
-    let rigid = run_linear_stage_cached(
+    let rigid = run_linear_stage_cached_async(
         engine,
         recipe,
         fixed,
@@ -958,7 +1020,8 @@ pub fn run_rigid_registration_from_cancellable<E: LinearEngine>(
         ParametricTransform::euler3d([0.0; 6], initial.center),
         &mut SmoothCache::default(),
         cancel,
-    )?;
+    )
+    .await?;
     let collapsed = AffineTransform::compose(&initial, &rigid.affine);
     let total = with_center(&collapsed, rigid.affine.center);
     Ok(RigidRegistrationResult {
