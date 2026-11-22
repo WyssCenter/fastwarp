@@ -39,6 +39,7 @@
 //! threads.
 
 mod patch;
+mod search;
 mod solve;
 #[cfg(test)]
 mod tests;
@@ -49,7 +50,9 @@ use std::sync::atomic::AtomicBool;
 use rayon::prelude::*;
 
 use crate::error::{check_cancel, invalid, Result};
+use crate::exec::block_ready;
 
+pub use search::{cpu_search, CpuSearch, PatchSearch, SearchBlock};
 pub use solve::{nonnegative_least_squares, solve_weights};
 
 use patch::{search_offsets, Dims, Patch};
@@ -74,6 +77,17 @@ pub enum SearchRadius {
     Image(Vec<u32>),
 }
 
+/// Where the patch search runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum JlfDevice {
+    /// Everything on the CPU (the default).
+    #[default]
+    Cpu,
+    /// The patch search on the GPU in `f32`, the rest on the CPU in `f64` (`fastwarp_gpu::jlf`).
+    Hybrid,
+}
+
 /// The parameters of a fusion: start from [`JlfOptions::default`] and set the fields.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -95,6 +109,8 @@ pub struct JlfOptions {
     pub posteriors: bool,
     /// Return the atlas voting weight images, divided the same way.
     pub voting_weights: bool,
+    /// Where the patch search runs; [`joint_fusion`] runs [`JlfDevice::Cpu`] only.
+    pub device: JlfDevice,
 }
 
 impl Default for JlfOptions {
@@ -108,6 +124,7 @@ impl Default for JlfOptions {
             nonnegative: false,
             posteriors: false,
             voting_weights: false,
+            device: JlfDevice::Cpu,
         }
     }
 }
@@ -322,76 +339,58 @@ struct Fusion<'a> {
     opts: &'a JlfOptions,
     dims: Dims,
     patch: Patch,
-    lists: BTreeMap<u32, Vec<[isize; 3]>>,
-    box_list: Vec<[isize; 3]>,
+    lists: Vec<Vec<[isize; 3]>>,
+    list_of_radius: BTreeMap<u32, u32>,
 }
 
 impl Fusion<'_> {
-    fn offsets_at(&self, voxel: usize) -> Option<&[[isize; 3]]> {
-        match &self.opts.search {
-            SearchRadius::Box(_) => Some(&self.box_list),
-            SearchRadius::Image(r) => {
-                if r[voxel] == 0 {
-                    None
-                } else {
-                    self.lists.get(&r[voxel]).map(Vec::as_slice)
-                }
-            }
-        }
-    }
-
-    fn centre(&self, voxel: usize) -> Option<Centre> {
+    fn list_at(&self, voxel: usize) -> Option<u32> {
         if self.input.mask.as_ref().is_some_and(|m| m[voxel] == 0) {
             return None;
         }
-        let offsets = self.offsets_at(voxel).filter(|o| !o.is_empty())?;
+        let list = match &self.opts.search {
+            SearchRadius::Box(_) => 0,
+            SearchRadius::Image(r) => *self.list_of_radius.get(&r[voxel])?,
+        };
+        (!self.lists[list as usize].is_empty()).then_some(list)
+    }
+
+    fn used(&self) -> usize {
+        let m = self.input.atlases[0].len();
+        if self.input.target.len() == m {
+            m
+        } else {
+            1
+        }
+    }
+
+    fn search_patch(&self, voxel: usize) -> Vec<f32> {
+        let normalize = self.opts.metric == PatchMetric::PearsonCorrelation;
+        self.patch.vectorize_list(
+            &self.input.target,
+            &self.dims,
+            self.dims.ijk(voxel),
+            normalize,
+        )
+    }
+
+    fn centre(&self, voxel: usize, list: &[[isize; 3]], best: &[u32]) -> Centre {
         let at = self.dims.ijk(voxel);
         let input = self.input;
         let p = self.patch.len();
         let t = input.target.len();
         let m = input.atlases[0].len();
         let n = input.atlases.len();
-        let same = t == m;
+        let used = self.used();
         let normalized = self
             .patch
             .vectorize_list(&input.target, &self.dims, at, true);
-        let raw = match self.opts.metric {
-            PatchMetric::MeanSquares => {
-                self.patch
-                    .vectorize_list(&input.target, &self.dims, at, false)
-            }
-            PatchMetric::PearsonCorrelation => Vec::new(),
-        };
-        let y = match self.opts.metric {
-            PatchMetric::MeanSquares => &raw,
-            PatchMetric::PearsonCorrelation => &normalized,
-        };
-        let used = if same { m } else { 1 };
         let width = p * t;
         let mut diffs = vec![0.0f64; n * width];
         let mut original = vec![0.0f64; n * p * m];
         let mut best_offsets = Vec::with_capacity(n);
         for (i, atlas) in input.atlases.iter().enumerate() {
-            let mut best = f64::MAX;
-            let mut best_j = 0;
-            for (j, off) in offsets.iter().enumerate() {
-                let s = [at[0] + off[0], at[1] + off[1], at[2] + off[2]];
-                if !self.dims.inside(s) {
-                    continue;
-                }
-                let sim = f64::from(self.patch.similarity(
-                    &atlas[..used],
-                    &self.dims,
-                    s,
-                    y,
-                    self.opts.metric,
-                ));
-                if sim < best {
-                    best = sim;
-                    best_j = j;
-                }
-            }
-            let off = offsets[best_j];
+            let off = list[best[i] as usize];
             let s = [at[0] + off[0], at[1] + off[1], at[2] + off[2]];
             let a = self
                 .patch
@@ -418,12 +417,12 @@ impl Fusion<'_> {
             }
             *e = sum;
         }
-        Some(Centre {
+        Centre {
             at,
             offsets: best_offsets,
             weights,
             estimate,
-        })
+        }
     }
 }
 
@@ -488,27 +487,65 @@ impl Fusion<'_> {
     }
 }
 
-/// Fuses the atlases onto the target as `antsJointFusion` does. `cancel` is checked between
-/// blocks of voxels.
+/// Fuses the atlases onto the target as `antsJointFusion` does, on the CPU. `cancel` is checked
+/// between blocks of voxels. [`JlfDevice::Hybrid`] is refused here: `fastwarp_gpu::jlf` runs it.
 pub fn joint_fusion(
     input: &JlfInput,
     opts: &JlfOptions,
     cancel: Option<&AtomicBool>,
 ) -> Result<JlfOutput> {
+    if opts.device != JlfDevice::Cpu {
+        return Err(invalid(
+            "joint fusion",
+            "the hybrid search runs on a GPU: use fastwarp_gpu::jlf::joint_fusion",
+        ));
+    }
+    block_ready(joint_fusion_with(input, opts, &mut CpuSearch, cancel))
+}
+
+/// [`joint_fusion`] with the patch search done by `search` (whatever [`JlfOptions::device`]
+/// says): the centres of each block are handed to it in raster order, and the weights, votes and
+/// intensities are computed on the CPU from the offsets it returns.
+pub async fn joint_fusion_with<S: PatchSearch>(
+    input: &JlfInput,
+    opts: &JlfOptions,
+    search: &mut S,
+    cancel: Option<&AtomicBool>,
+) -> Result<JlfOutput> {
+    search.begin();
+    let guard = Finish(search);
+    fuse(input, opts, &mut *guard.0, cancel).await
+}
+
+struct Finish<'a, S: PatchSearch>(&'a mut S);
+
+impl<S: PatchSearch> Drop for Finish<'_, S> {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
+async fn fuse<S: PatchSearch>(
+    input: &JlfInput,
+    opts: &JlfOptions,
+    search: &mut S,
+    cancel: Option<&AtomicBool>,
+) -> Result<JlfOutput> {
     let n = check(input, opts)?;
     let dims = Dims::new(input.size);
     let patch = Patch::new(opts.patch_radius, &dims);
-    let mut lists = BTreeMap::new();
-    let box_list = match &opts.search {
-        SearchRadius::Box(r) => search_offsets(*r, input.spacing),
+    let mut list_of_radius = BTreeMap::new();
+    let lists = match &opts.search {
+        SearchRadius::Box(r) => vec![search_offsets(*r, input.spacing)],
         SearchRadius::Image(radii) => {
+            let mut lists = Vec::new();
             for &r in radii {
-                if r > 0 && !lists.contains_key(&r) {
-                    let r_usize = r as usize;
-                    lists.insert(r, search_offsets([r_usize; 3], input.spacing));
+                if r > 0 && !list_of_radius.contains_key(&r) {
+                    list_of_radius.insert(r, lists.len() as u32);
+                    lists.push(search_offsets([r as usize; 3], input.spacing));
                 }
             }
-            Vec::new()
+            lists
         }
     };
     let fusion = Fusion {
@@ -517,7 +554,7 @@ pub fn joint_fusion(
         dims,
         patch,
         lists,
-        box_list,
+        list_of_radius,
     };
     let set = label_set(input);
     let atlases = input.atlases.len();
@@ -533,16 +570,57 @@ pub fn joint_fusion(
             Vec::new()
         },
     };
+    let used = fusion.used();
+    let width = fusion.patch.len() * used;
+    let block_voxels = search.block_voxels(input.size, width).max(1);
     let mut start = 0;
     while start < n {
         check_cancel(cancel)?;
-        let end = (start + CHUNK).min(n);
-        let centres: Vec<Option<Centre>> = (start..end)
+        let end = start.saturating_add(block_voxels).min(n);
+        let (centres, list_of): (Vec<usize>, Vec<u32>) = (start..end)
             .into_par_iter()
-            .map(|v| fusion.centre(v))
+            .filter_map(|v| fusion.list_at(v).map(|l| (v, l)))
+            .unzip();
+        let patches: Vec<f32> = centres
+            .par_iter()
+            .flat_map_iter(|&v| fusion.search_patch(v))
             .collect();
-        for c in centres.iter().flatten() {
-            fusion.add(c, &mut acc, &set);
+        let block = SearchBlock {
+            size: input.size,
+            centres: &centres,
+            list_of: &list_of,
+            lists: &fusion.lists,
+            patch_radius: opts.patch_radius,
+            patches: &patches,
+            atlases: &input.atlases,
+            modalities: used,
+            metric: opts.metric,
+        };
+        let best = search.search(&block).await?;
+        drop(patches);
+        if best.len() != centres.len() * atlases
+            || best.chunks(atlases.max(1)).zip(&list_of).any(|(b, l)| {
+                b.iter()
+                    .any(|j| *j as usize >= fusion.lists[*l as usize].len())
+            })
+        {
+            return Err(invalid(
+                "joint fusion",
+                "the patch search returned offsets that do not fit its block",
+            ));
+        }
+        for part in (0..centres.len()).collect::<Vec<_>>().chunks(CHUNK) {
+            check_cancel(cancel)?;
+            let done: Vec<Centre> = part
+                .par_iter()
+                .map(|&c| {
+                    let list = &fusion.lists[list_of[c] as usize];
+                    fusion.centre(centres[c], list, &best[c * atlases..(c + 1) * atlases])
+                })
+                .collect();
+            for c in &done {
+                fusion.add(c, &mut acc, &set);
+            }
         }
         start = end;
     }

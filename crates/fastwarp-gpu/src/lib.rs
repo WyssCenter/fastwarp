@@ -12,6 +12,7 @@ pub mod error;
 #[cfg(feature = "dev-tools")]
 pub mod gates;
 pub mod gpu_n4;
+pub mod jlf;
 pub mod kernels;
 pub mod n4_kernels;
 mod oneshot;

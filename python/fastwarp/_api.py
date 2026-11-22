@@ -856,12 +856,15 @@ def joint_label_fusion(
     return_posteriors: bool = False,
     return_weights: bool = False,
     cancel: CancelToken | None = None,
+    mode: str = "cpu",
+    adapter: str | None = None,
 ) -> dict[str, Any]:
     """Fuse atlas labels and intensities onto a target image, as ``antsJointFusion`` does.
 
     Joint label fusion (Wang et al. 2013) weights the atlases at each voxel by how well their
     patches match the target's, taking into account that atlases make correlated errors. It runs
-    the same code as ``fastwarp ants-joint-fusion`` on the CPU, in parallel, and needs no GPU.
+    the same code as ``fastwarp ants-joint-fusion`` on the CPU, in parallel, and needs no GPU;
+    with ``mode="hybrid"`` the patch search, most of the work, runs on the GPU.
     The atlases must already be registered to the target and resampled onto its grid (labels
     with ``"nearestNeighbor"``). Images are matched by voxel index, as in ANTs.
 
@@ -900,6 +903,13 @@ def joint_label_fusion(
         Also return each atlas's voting weight.
     cancel : CancelToken, optional
         Stops the fusion between blocks of voxels.
+    mode : {"cpu", "hybrid"}, default "cpu"
+        ``"hybrid"`` runs the patch search on the GPU in ``float32`` and the rest on the CPU. The
+        search then picks the same patches as on the CPU except where two candidates score
+        within ``float32`` rounding of each other (see the guide), so a few labels can differ.
+    adapter : str, optional
+        With ``mode="hybrid"``: use the GPU whose name contains this text (overrides
+        ``FASTWARP_GPU_ADAPTER``). Refused with ``mode="cpu"``.
 
     Returns
     -------
@@ -918,7 +928,13 @@ def joint_label_fusion(
         The fusion failed.
     RegistrationCancelled
         ``cancel`` was set.
+    GpuUnavailableError
+        ``mode="hybrid"`` and no usable GPU.
     """
+    if mode not in ("cpu", "hybrid"):
+        raise ValueError("mode must be 'cpu' or 'hybrid'")
+    if adapter is not None and mode != "hybrid":
+        raise ValueError("adapter applies to mode='hybrid' only")
     targets = _modalities(target)
     atlas_sets = [_modalities(a) for a in atlases]
     if len(atlas_sets) < 2:
@@ -968,7 +984,9 @@ def joint_label_fusion(
         outputs.append(_JLF_WEIGHTS)
     argv += ["-o", "[" + ",".join(outputs) + "]"]
     keep = [o for o in outputs if o]
-    out = _ants_joint_fusion(argv, images=images, keep=keep, cancel=cancel)
+    out = _ants_joint_fusion(
+        argv, images=images, keep=keep, cancel=cancel, mode=mode, adapter=adapter
+    )
     _warn_skipped(out)
     kept = out["kept"]
     reference = targets[0]

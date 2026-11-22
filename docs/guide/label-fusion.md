@@ -73,6 +73,32 @@ such as those of the Allen atlas stay exact. `alpha` and `beta` are rounded to `
 with the number of atlases, the number of search positions (343 for radius 3) and the patch
 size; a mask that covers only the structures of interest saves most of it.
 
+## The patch search on the GPU
+
+The search for the best-matching atlas patch is almost all of the work: for every voxel, atlas
+and search position, one patch comparison. With `mode="hybrid"`,
+{func}`~fastwarp.joint_label_fusion` runs it on the GPU (`adapter` picks one by name) and keeps
+the rest on the CPU in `float64`: the weights, the votes and the intensities.
+
+```python
+out = fastwarp.joint_label_fusion(target, atlases, labels, mask=mask, mode="hybrid")
+```
+
+The GPU computes the same `float32` patch scores in the same order, but a GPU may round a
+division less exactly and may fuse a multiplication with an addition, so two search positions
+whose scores lie within `float32` rounding of each other can be ranked the other way. On an
+Intel Arc 140V, for a brain-sized volume at 1 mm (182 x 218 x 182 voxels, 2.2 million in the
+mask) with 5 atlases, `patch_radius=2` and `search_radius=3`, 0.025 % of the (voxel, atlas)
+pairs picked another position than on the CPU, every one within 1.2e-4 (relative) of the best
+score; the search took 27 s instead of 268 s on 8 CPU threads, the whole fusion about 43 s
+instead of 285 s. Small test volumes with smooth textures, where near-ties are more common, show
+up to 1 %. Atlas voxels that are not finite count as on the CPU (a Pearson score of 0, a mean
+squares score that never wins). `mode="cpu"` (the default) gives the results of `antsJointFusion`; the hybrid
+mode is for when time matters more than those last near-ties. The atlases are held on the GPU in
+z slabs of at most 256 MiB with a halo of the search and patch radius, so memory stays bounded.
+The command line `fastwarp ants-joint-fusion` takes the `antsJointFusion` arguments only and
+always runs on the CPU.
+
 ## Matching ANTs
 
 The results equal those of `antsJointFusion` run on one thread (`ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1`)

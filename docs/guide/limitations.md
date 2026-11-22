@@ -63,7 +63,10 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
 - **ANTsPy only in part.** [`fastwarp.ants`](ants.md) runs ANTsPy's registration and
   resampling calls within these limits and refuses the rest; ANTsPy's default
   `type_of_transform="SyN"` needs Mattes mutual information in SyN and is refused.
-- **Label fusion on the CPU only.** {func}`~fastwarp.joint_label_fusion` runs on the CPU; for
-  many atlases and large search windows it takes minutes, so restrict it with a mask.
+- **Label fusion mostly on the CPU.** {func}`~fastwarp.joint_label_fusion` runs on the CPU; with
+  `mode="hybrid"` only its patch search runs on the GPU, which can rank near-tied patches
+  differently ([Label fusion](label-fusion.md#the-patch-search-on-the-gpu)). For many atlases and
+  large search windows it takes minutes, so restrict it with a mask. `fastwarp ants-joint-fusion`
+  always runs on the CPU.
 - **No point transforms.** To move points, use `antsApplyTransformsToPoints` or
   `ants.apply_transforms_to_points` with the [right file](outputs.md).

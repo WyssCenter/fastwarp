@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: the patch search of joint label fusion on the GPU: `fastwarp.joint_label_fusion(...,
+  mode="hybrid", adapter=...)` runs the search (a WGSL kernel, `jlf_search.wgsl`, in `f32`, over
+  z slabs with a halo) on the GPU and the weights, votes and intensities on the CPU in `f64`. About
+  10 times faster on a 1 mm brain with 5 atlases on an integrated GPU; near-tied patches can be
+  ranked differently than on the CPU (0.025 % of the voxel-atlas pairs there). The default stays
+  `mode="cpu"`. In Rust: `JlfOptions::device` (`JlfDevice::Cpu` / `Hybrid`), the `PatchSearch`
+  trait with `CpuSearch` and `joint_fusion_with` in `fastwarp_reg::jlf`, and
+  `fastwarp_gpu::jlf::{joint_fusion, joint_fusion_async, GpuJlfSearch}`.
 - New: joint label fusion as ANTs' `antsJointFusion` (ANTs 2.6.5) computes it, on the CPU and in
   parallel, with results equal to `antsJointFusion` on one thread except where search scores tie:
   `fastwarp.joint_label_fusion`

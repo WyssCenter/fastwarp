@@ -152,6 +152,22 @@ def test_labels_outside_uint32_or_not_whole_are_refused(scene, bad):
         g.joint_label_fusion(target, atlases, [_tuple(wrong), *labels[1:]])
 
 
+def test_the_hybrid_search_matches_the_cpu_search(scene):
+    target, atlases, labels = scene
+    with pytest.raises(ValueError, match="mode must be"):
+        g.joint_label_fusion(target, atlases, labels, mode="gpu")
+    with pytest.raises(ValueError, match="adapter applies"):
+        g.joint_label_fusion(target, atlases, labels, adapter="Arc")
+    if not g.gpu_available():
+        pytest.skip("no usable GPU adapter")
+    cpu = g.joint_label_fusion(target, atlases, labels, patch_radius=1, search_radius=1)
+    gpu = g.joint_label_fusion(
+        target, atlases, labels, patch_radius=1, search_radius=1, mode="hybrid"
+    )
+    assert gpu["label_set"] == cpu["label_set"]
+    assert np.count_nonzero(gpu["labels"] != cpu["labels"]) <= cpu["labels"].size // 100
+
+
 def test_images_of_another_size_are_refused(scene):
     target, atlases, _ = scene
     small = _tuple(np.zeros((4, 4, 4), np.float32))
