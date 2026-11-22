@@ -17,7 +17,9 @@
   integrated GPU: 40 s instead of 245 s on the CPU (51 to 68 s hybrid); with 20 atlases 243 s
   instead of 1065 s (305 to 330 s hybrid); the same labels as the hybrid mode; in the tests, with the default `alpha`, 99 % of the GPU
   weights within 1e-4 of the CPU's. More than 32 atlases run as hybrid. The default stays `mode="cpu"`. In Rust:
-  `JlfDevice::Gpu` and `fastwarp_gpu::jlf::joint_fusion_gpu_with` (with the search's budgets).
+  `JlfDevice::Gpu` and `fastwarp_gpu::jlf::joint_fusion_gpu_with` (with the search's budgets);
+  `GpuJlfSearch::stats` also gives the seconds spent in the search, weights and gather kernels, so
+  `GpuJlfStats` no longer implements `Eq` (its timing fields are `f64`).
 - New: `fastwarp.register_atlases(target, atlases, labels, out_dir)` registers each atlas to the
   target with `register_syn` and writes its images and labels on the target's grid
   (`atlasNN_Warped.nii.gz`, `atlasNN_WarpedLabels.nii.gz`), ready for `joint_label_fusion`.
