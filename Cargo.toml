@@ -10,6 +10,7 @@ members = [
     "crates/fastwarp-gpu",
     "crates/fastwarp-cli",
     "crates/fastwarp-py",
+    "crates/fastwarp-web",
 ]
 
 [workspace.package]

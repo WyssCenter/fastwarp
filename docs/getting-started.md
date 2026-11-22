@@ -1,7 +1,8 @@
 # Getting started
 
 Three steps: install the wheel, check that FastWarp finds a GPU, and run a first registration,
-from Python or from the command line.
+from Python or from the command line. To see a registration without installing anything,
+[try FastWarp in your browser](browser.md).
 
 ::::{tab-set}
 :sync-group: installer
@@ -100,5 +101,6 @@ No GPU found, too little GPU memory, timeouts, and differences from ANTs.
 
 installation
 quickstart
+browser
 troubleshooting
 ```

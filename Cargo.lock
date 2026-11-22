@@ -414,6 +414,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastwarp-web"
+version = "0.2.0"
+dependencies = [
+ "crc32fast",
+ "fastwarp-core",
+ "fastwarp-gpu",
+ "fastwarp-reg",
+ "js-sys",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"

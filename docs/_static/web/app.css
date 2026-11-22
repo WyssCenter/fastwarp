@@ -1,0 +1,123 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.fw-demo [hidden] {
+  display: none !important;
+}
+
+.fw-demo {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+}
+
+.fw-demo fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.fw-demo label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+.fw-demo input[type="file"],
+.fw-demo select {
+  font-weight: normal;
+  max-width: 100%;
+}
+
+.fw-demo button,
+.fw-demo .fw-button {
+  display: inline-block;
+  border: 1px solid var(--pst-color-primary);
+  border-radius: 0.25rem;
+  background: var(--pst-color-primary);
+  color: var(--pst-color-primary-text, #fff);
+  padding: 0.35rem 1rem;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.fw-demo button[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fw-demo button.fw-secondary {
+  background: transparent;
+  color: var(--pst-color-primary);
+}
+
+.fw-demo .fw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0 0.5rem;
+}
+
+.fw-demo .fw-small {
+  font-size: 0.85em;
+  color: var(--pst-color-text-muted);
+  margin: 0.25rem 0 0;
+}
+
+.fw-demo .fw-message {
+  border-left: 4px solid var(--pst-color-info);
+  padding: 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+  background: var(--pst-color-surface);
+}
+
+.fw-demo .fw-message[data-kind="error"] {
+  border-left-color: var(--pst-color-danger);
+}
+
+.fw-demo .fw-message[data-kind="warning"] {
+  border-left-color: var(--pst-color-warning);
+}
+
+.fw-demo dl.fw-adapter {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 1rem;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9em;
+}
+
+.fw-demo dl.fw-adapter dt {
+  font-weight: 600;
+}
+
+.fw-demo dl.fw-adapter dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.fw-demo .fw-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0.5rem 0;
+}
+
+.fw-demo progress {
+  width: min(100%, 20rem);
+}
+
+.fw-demo .fw-log {
+  max-height: 14rem;
+  overflow: auto;
+  font-size: 0.8em;
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+}

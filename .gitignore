@@ -5,5 +5,7 @@ __pycache__/
 *.egg-info/
 .venv/
 docs/_build/
+docs/_static/web/pkg/
+docs/_static/web/sample/
 *.pyd
 *.pdb

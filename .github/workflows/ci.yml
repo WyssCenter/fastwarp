@@ -50,7 +50,7 @@ jobs:
         with:
           shared-key: wasm32
       - name: Clippy engine crates for wasm32
-        run: cargo clippy --locked --target wasm32-unknown-unknown -p fastwarp-core -p fastwarp-matfile -p fastwarp-niftiio -p fastwarp-reg -p fastwarp-gpu --all-targets -- -D warnings
+        run: cargo clippy --locked --target wasm32-unknown-unknown -p fastwarp-core -p fastwarp-matfile -p fastwarp-niftiio -p fastwarp-reg -p fastwarp-gpu -p fastwarp-web --all-targets -- -D warnings
 
   rust:
     name: Rust tests

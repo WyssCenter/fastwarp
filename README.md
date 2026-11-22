@@ -19,6 +19,9 @@ or run neuroimaging pipelines, for example to normalize brain MRI onto a templat
 - Runs on Vulkan (Linux, Windows), Metal (macOS) and DirectX 12 (Windows) through
   [wgpu](https://wgpu.rs). Before a normalization starts, it checks that a GPU is present and
   has enough memory, so a pipeline can fall back to ANTs.
+- Also runs in a web browser through WebGPU:
+  [try it](https://fastwarp.readthedocs.io/latest/browser.html) on your own GPU, without
+  installing anything or uploading images.
 
 FastWarp is the registration engine of [Wyss DBS Localizer](https://github.com/WyssCenter/dbs-localizer), a tool for localizing deep brain stimulation electrodes, and also works on its own.
 
