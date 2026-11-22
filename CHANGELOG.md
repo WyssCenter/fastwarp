@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- New: a result viewer on the page *Try FastWarp in your browser*. After a run it shows the template
+  and your image in three linked views (axial, coronal, sagittal, at the voxel
+  proportions, left on the left; click or tap to place the cross, sliders and arrow keys for the
+  slice, a full-screen button) and compares them as a blend, a flicker (paused with the system
+  setting *reduce motion*) or as the edges of the template in yellow over the registered one, with a
+  switch to the moving image before the registration. The crate `fastwarp-web` keeps 8-bit copies
+  of the images for it until the next run and exposes `view_info` and `view_slice` to the worker.
 - New: joint label fusion almost entirely on the GPU: `fastwarp.joint_label_fusion(...,
   mode="gpu")` adds to the GPU search the joint error matrix and an `f32` Cholesky solve per voxel
   (`jlf_weights.wgsl`; voxels whose solve is not reliable, and all with `nonnegative`, get the CPU

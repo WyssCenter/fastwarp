@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
 // SPDX-License-Identifier: Apache-2.0
 
+import { createViewer } from "./viewer.js";
+
 const el = (id) => document.getElementById(id);
 const here = new URL("./", import.meta.url);
 const params = new URLSearchParams(location.search);
@@ -47,6 +49,28 @@ const state = {
   sample: false,
   done: false,
 };
+
+const sliceRequests = new Map();
+let sliceCounter = 0;
+
+function fetchSlice(axis, index, layer) {
+  return new Promise((resolve, reject) => {
+    if (!state.worker) {
+      reject(new Error("no worker"));
+      return;
+    }
+    const id = ++sliceCounter;
+    sliceRequests.set(id, { resolve, reject });
+    state.worker.postMessage({ type: "slice", id, axis, index, layer });
+  });
+}
+
+function dropSliceRequests() {
+  for (const { reject } of sliceRequests.values()) reject(new Error("the worker was replaced"));
+  sliceRequests.clear();
+}
+
+const viewer = createViewer({ root: document.getElementById("fw-viewer"), fetchSlice });
 
 function log(line) {
   const box = el("fw-log");
@@ -228,7 +252,7 @@ function finish() {
   updateButtons();
 }
 
-function onDone(zip, memory) {
+function onDone(zip, memory, view) {
   const elapsed = (performance.now() - state.started) / 1000;
   finish();
   state.restarts = 0;
@@ -265,6 +289,7 @@ function onDone(zip, memory) {
   link.hidden = false;
   message("");
   log(`Done: ${bytes(zip.byteLength)} zip with ${entries.length} files.`);
+  if (view) viewer.show(view);
   result("ok", {
     zip_bytes: zip.byteLength,
     elapsed_s: elapsed,
@@ -275,6 +300,7 @@ function onDone(zip, memory) {
     wasm_memory_bytes: memory ?? null,
     adapter: state.adapterLabel ?? null,
     affine_parameters: run?.results?.affine_parameters ?? null,
+    viewer: view ? { dims: view.dims, spacing: view.spacing, before: view.before } : null,
   });
 }
 
@@ -309,6 +335,8 @@ function onError(name, text, phase) {
 
 function startWorker(requestInfo = true) {
   state.worker?.terminate();
+  dropSliceRequests();
+  viewer.hide();
   const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
   worker.onmessage = ({ data }) => {
     if (data.type === "info") {
@@ -321,7 +349,15 @@ function startWorker(requestInfo = true) {
     } else if (data.type === "progress") {
       onProgress(data.progress);
     } else if (data.type === "done") {
-      onDone(data.zip, data.memory);
+      onDone(data.zip, data.memory, data.view);
+    } else if (data.type === "slice") {
+      const pending = sliceRequests.get(data.id);
+      sliceRequests.delete(data.id);
+      pending?.resolve(new Uint8Array(data.data));
+    } else if (data.type === "slice-error") {
+      const pending = sliceRequests.get(data.id);
+      sliceRequests.delete(data.id);
+      pending?.reject(new Error(data.message));
     } else if (data.type === "error") {
       if (!state.ready && !state.running) {
         state.gpu = "failed";
@@ -359,6 +395,7 @@ async function run() {
   const { fixed, moving } = state.inputs;
   if (!fixed || !moving) return;
   el("fw-download").hidden = true;
+  viewer.hide();
   el("fw-progress").hidden = false;
   state.done = false;
   el("fw-log").textContent = "";
