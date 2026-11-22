@@ -109,15 +109,42 @@ struct WeighU {
 }
 
 /// Counters of a [`GpuJlfSearch`]: atlas slabs uploaded for the search, z slabs of the vote
-/// gather, voxels whose votes were redone on the CPU (more than 16 labels), and dispatches of the
-/// workgroup-per-voxel weights kernel (11 atlases or more).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// gather, voxels whose votes were redone on the CPU (more than 16 labels), dispatches of the
+/// workgroup-per-voxel weights kernel (11 atlases or more) and the time in each kernel.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub struct GpuJlfStats {
     pub slab_uploads: u64,
     pub gather_slabs: u64,
     pub vote_redos: u64,
     pub tiled_weight_dispatches: u64,
+    /// Seconds in the search dispatches, each measured on the host until the device is idle: the
+    /// uniform and bind group setup of every dispatch included, the atlas slab and target patch
+    /// uploads and the readback of the offsets excluded. Only slabs that completed count; 0 on
+    /// wasm32-unknown-unknown.
+    pub search_seconds: f64,
+    /// Seconds in the weights dispatches of the GPU mode, measured as the search seconds; the
+    /// readback of the weights (`wout`) excluded. Only slabs that completed count; 0 on
+    /// wasm32-unknown-unknown.
+    pub weight_seconds: f64,
+    /// Seconds in the gather dispatches of the GPU mode, measured as the search seconds; the
+    /// readback of the gathered votes excluded. Only slabs that completed count; 0 on
+    /// wasm32-unknown-unknown.
+    pub gather_seconds: f64,
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn stamp() -> Option<std::time::Instant> {
+    Some(std::time::Instant::now())
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn stamp() -> Option<std::time::Instant> {
+    None
+}
+
+fn seconds(since: Option<std::time::Instant>) -> f64 {
+    since.map_or(0.0, |s| s.elapsed().as_secs_f64())
 }
 
 /// What the device weights need besides the search block: the z-scored target patches of every
@@ -180,6 +207,7 @@ pub struct GpuJlfSearch {
     gathers: u64,
     vote_redos: u64,
     tiled_dispatches: u64,
+    times: [f64; 3],
     weigh: Option<(bool, wgpu::ComputePipeline)>,
     gather_budget: u64,
 }
@@ -210,6 +238,7 @@ impl GpuJlfSearch {
             gathers: 0,
             vote_redos: 0,
             tiled_dispatches: 0,
+            times: [0.0; 3],
             weigh: None,
             gather_budget: GATHER_OUT_BYTES.min(binding),
             pipeline,
@@ -250,6 +279,9 @@ impl GpuJlfSearch {
             gather_slabs: self.gathers,
             vote_redos: self.vote_redos,
             tiled_weight_dispatches: self.tiled_dispatches,
+            search_seconds: self.times[0],
+            weight_seconds: self.times[1],
+            gather_seconds: self.times[2],
         }
     }
 
@@ -475,15 +507,23 @@ impl GpuJlfSearch {
             let out_buf = self
                 .storage("jlf best offsets", &vec![UNSET; items as usize])
                 .await?;
+            let search_start = stamp();
+            let slab = self
+                .slab
+                .as_ref()
+                .ok_or_else(|| GpuError::Internal("jlf atlas slab missing".into()))?;
+            let buffers = [
+                &slab.buffer,
+                &target_buf,
+                &centre_buf,
+                &offsets_buf,
+                &patch_buf,
+                &out_buf,
+            ];
             let mut base = 0u32;
             while base < items {
                 let run = items_per_dispatch.min(items - base);
-                let groups = run.div_ceil(WG);
-                let (gx, gy) = if groups <= self.max_groups {
-                    (groups, 1)
-                } else {
-                    (self.max_groups, groups.div_ceil(self.max_groups))
-                };
+                let (gx, gy) = self.groups(run);
                 let uniform = SearchU {
                     dims: [nx as u32, ny as u32, nz as u32, base + run],
                     slab: [
@@ -502,20 +542,15 @@ impl GpuJlfSearch {
                 };
                 self.dispatch(
                     &self.pipeline,
-                    &[
-                        &slab.buffer,
-                        &target_buf,
-                        &centre_buf,
-                        &offsets_buf,
-                        &patch_buf,
-                        &out_buf,
-                    ],
+                    &buffers,
                     bytemuck::bytes_of(&uniform),
                     [gx, gy],
                 )
                 .await?;
                 base += run;
             }
+            let search_s = seconds(search_start);
+            let mut weight_s = 0.0;
             let mut tiled_runs = 0u64;
             if let (Some(args), Some((tiled, pipeline))) = (weigh, self.weigh.as_ref()) {
                 let normalized = &args.normalized[first * width..last * width];
@@ -529,6 +564,7 @@ impl GpuJlfSearch {
                 let per_dispatch =
                     (WORK_PER_DISPATCH / per_centre.max(1)).clamp(u64::from(WG), 1 << 22) as u32;
                 let total = count as u32;
+                let weight_start = stamp();
                 let mut base = 0u32;
                 while base < total {
                     let run = per_dispatch.min(total - base);
@@ -569,6 +605,7 @@ impl GpuJlfSearch {
                     .await?;
                     base += run;
                 }
+                weight_s = seconds(weight_start);
                 weights.extend(
                     self.ctx
                         .read_f32_async(&wout, count * (atlases + 1))
@@ -588,6 +625,8 @@ impl GpuJlfSearch {
             }
             best.extend(got);
             self.tiled_dispatches += tiled_runs;
+            self.times[0] += search_s;
+            self.times[1] += weight_s;
             first = last;
         }
         Ok((best, weights))
@@ -939,6 +978,7 @@ impl GpuJlfSearch {
             let per_voxel = (p * n * (modalities + 1)) as u64;
             let per_dispatch =
                 (WORK_PER_DISPATCH / per_voxel.max(1)).clamp(u64::from(WG), 1 << 22) as usize;
+            let gather_start = stamp();
             let mut first = 0usize;
             while first < voxels {
                 let run = per_dispatch.min(voxels - first);
@@ -967,6 +1007,7 @@ impl GpuJlfSearch {
                 .await?;
                 first += run;
             }
+            self.times[2] += seconds(gather_start);
             let rec = self.ctx.read_u32_async(&out_buf, out_len).await?;
             for t in 0..voxels {
                 let v = a * plane + t;
