@@ -104,6 +104,7 @@ pub struct InvResidualU {
     pub dims: [u32; 4],
     pub l: [[f32; 4]; 3],
     pub sp: [f32; 4],
+    pub groups: [u32; 4],
 }
 
 /// Uniform of `k_inv_begin`.

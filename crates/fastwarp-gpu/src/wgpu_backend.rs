@@ -2130,7 +2130,12 @@ impl WgpuBackend {
                         part.buffer(),
                         state.buffer(),
                     ],
-                    &InvResidualU { dims, l, sp },
+                    &InvResidualU {
+                        dims,
+                        l,
+                        sp,
+                        groups: [g3[0], g3[1], g3[2], 0],
+                    },
                 )?;
                 let reduce = self.prepare(
                     &self.kernels.inv_reduce,
