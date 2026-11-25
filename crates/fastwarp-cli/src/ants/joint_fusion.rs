@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fastwarp_gpu::{BackendSelect, GpuContext};
+use rayon::prelude::*;
 use fastwarp_reg::jlf::{joint_fusion, JlfDevice, JlfInput, JlfOptions, PatchMetric, SearchRadius};
 use fastwarp_reg::{Grid, RegError, Volume};
 
@@ -599,7 +600,7 @@ impl Loader<'_> {
         Ok(self
             .volume(path, role, false)?
             .data()
-            .iter()
+            .par_iter()
             .map(|v| *v as f32)
             .collect())
     }
@@ -607,7 +608,7 @@ impl Loader<'_> {
     fn labels(&mut self, path: &Path, role: &str, whole: bool) -> Result<Vec<u32>, CliError> {
         self.volume(path, role, true)?
             .data()
-            .iter()
+            .par_iter()
             .map(|v| {
                 as_label(*v, whole).ok_or_else(|| {
                     let kind = if whole {

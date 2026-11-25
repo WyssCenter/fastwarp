@@ -945,7 +945,7 @@ impl GpuJlfSearch {
         let dp = b[0] * (b[1] + 2 * pr[1] as u64) * (b[2] + 2 * pr[2] as u64);
         let dq = b[0] * b[1] * (b[2] + 2 * pr[2] as u64);
         let total = block.lists[0].len() as u64;
-        let limit = self.binding.min(1 << 30) / 4;
+        let limit = self.binding.min(256 << 20) / 4;
         let jn = (limit / dp.max(1)).clamp(1, total);
         let ncent = eligible.len();
         let n = block.patch_len() as f32;
@@ -955,11 +955,11 @@ impl GpuJlfSearch {
             .sum::<f64>()
             / ncent as f64) as f32;
         let ecent = self.storage("jlf box centres", eligible).await?;
-        let cstat = self.storage("jlf box stats", &vec![[0f32; 2]; ncent]).await?;
-        let bx = self.storage("jlf box sums", &vec![0f32; (2 * ds) as usize]).await?;
-        let px = self.storage("jlf box px", &vec![0f32; (jn * dp) as usize]).await?;
-        let pxy = self.storage("jlf box pxy", &vec![0f32; (jn * dq) as usize]).await?;
-        let state = self.storage("jlf box state", &vec![[0u32; 4]; ncent]).await?;
+        let cstat = self.scratch("jlf box stats", ncent as u64 * 8).await?;
+        let bx = self.scratch("jlf box sums", 2 * ds * 4).await?;
+        let px = self.scratch("jlf box px", jn * dp * 4).await?;
+        let pxy = self.scratch("jlf box pxy", jn * dq * 4).await?;
+        let state = self.scratch("jlf box state", ncent as u64 * 16).await?;
         let buffers = [
             &slab.buffer,
             tbuf,
