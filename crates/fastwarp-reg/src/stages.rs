@@ -445,29 +445,7 @@ pub fn write_stage_outputs(
 /// Writes `content` to a temporary file next to `path` and renames it to `path` when it is
 /// complete; the temporary file is removed when writing fails.
 fn write_complete(path: &Path, content: StageContent<'_>) -> Result<()> {
-    let io = |source| RegError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = path.with_file_name(format!(".{name}.{}.{n}.part", std::process::id()));
-    let result = std::fs::File::create(&tmp)
-        .map_err(io)
-        .and_then(|file| {
-            content
-                .write_to(path, std::io::BufWriter::with_capacity(1 << 20, file))
-                .map(drop)
-        })
-        .and_then(|()| std::fs::rename(&tmp, path).map_err(io));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    crate::fs_write::write_complete(path, |out| content.write_to(path, out).map(drop))
 }
 
 /// One file of [`write_stage_outputs`], to be serialised into a writer.

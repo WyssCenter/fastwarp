@@ -34,6 +34,7 @@ pub mod cpu;
 pub mod error;
 mod exec;
 pub mod field_ops;
+mod fs_write;
 pub mod grid;
 pub mod init;
 pub mod interp;
