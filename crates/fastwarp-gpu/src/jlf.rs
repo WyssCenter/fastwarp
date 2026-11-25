@@ -478,7 +478,6 @@ impl GpuJlfSearch {
         self.run = 1;
         self.wrun = 1;
         self.grun = 1;
-        self.rate = [0.0; 3];
         let atlases = block.atlases.len();
         let centres = block.centres.len();
         let mut best = Vec::with_capacity(centres * atlases);
