@@ -4,6 +4,11 @@
 
 - New: `fastwarp.release_idle_gpus()` frees the GPU devices that a process keeps between
   registrations.
+- Changed: images handed over from Python as `float32` are converted on all cores, so
+  `joint_label_fusion` (and `register_syn`) start sooner, and `joint_label_fusion` no longer
+  copies its results when they already have the returned type. Same results to the bit; on an
+  RTX PRO 6000 with `mode="gpu"`, deep7t with 9 atlases 3.0 s to 1.8 s, a 1 mm brain with 5
+  atlases 3.5 s to 3.2 s and with 20 atlases 8.9 s to 8.1 s.
 - Changed: the field inversion of the SyN stage, which usually converges after one of its 20
   steps, no longer runs the remaining steps on the GPU for large grids: the GPU itself sets the
   size of their dispatches to zero once the inversion has converged. Registration is 3 to 6 %

@@ -22,6 +22,7 @@ use fastwarp_reg::transform::{
     read_transform_file, AffineTransform, DisplacementField, TransformChain, TransformElem,
 };
 use fastwarp_reg::{Grid, Volume};
+use rayon::prelude::*;
 use serde_json::json;
 
 use super::{
@@ -65,6 +66,10 @@ pub enum MemoryImage {
     Volume(Volume<f64>),
     /// Only a grid, for a reference image.
     Grid(Grid),
+}
+
+pub fn widen_f32(values: &[f32]) -> Vec<f64> {
+    values.par_iter().map(|&v| f64::from(v)).collect()
 }
 
 /// An output image of an ANTs call kept in memory instead of written: the name the arguments

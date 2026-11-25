@@ -1000,7 +1000,7 @@ def joint_label_fusion(
 
     def image(key: str, dtype: Any = np.float32) -> Any:
         data, size, *_ = kept[key]
-        arr = np.asarray(data).reshape(tuple(size), order="F").astype(dtype)
+        arr = np.asarray(data).reshape(tuple(size), order="F").astype(dtype, copy=False)
         if hasattr(reference, "new_image_like"):
             return reference.new_image_like(arr)
         return arr

@@ -33,7 +33,7 @@ pub use registration::{
     SynStageSpec,
 };
 pub use run::{
-    run_apply_plan, run_registration, Images, KeptData, KeptImage, MemoryImage,
+    run_apply_plan, run_registration, widen_f32, Images, KeptData, KeptImage, MemoryImage,
     RegistrationOutcome, RunOptions,
 };
 
