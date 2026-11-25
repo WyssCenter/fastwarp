@@ -119,7 +119,8 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
     let grid = Grid::new(*size, *spacing, *origin, *direction)
         .map_err(|e| PyValueError::new_err(format!("bad image geometry: {e}")))?;
     let values: Vec<f64> = if let Ok(a) = data.extract::<PyReadonlyArray1<'_, f32>>() {
-        widen_f32(a.as_slice().map_err(|_| contiguous_err())?)
+        let s = a.as_slice().map_err(|_| contiguous_err())?;
+        data.py().detach(|| widen_f32(s))
     } else if let Ok(a) = data.extract::<PyReadonlyArray1<'_, f64>>() {
         a.as_slice().map_err(|_| contiguous_err())?.to_vec()
     } else {
