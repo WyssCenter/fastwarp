@@ -54,6 +54,47 @@ use crate::error::{GpuError, GpuResult};
 use crate::wgpu_backend::block_reg;
 
 const SRC: &str = include_str!("shaders/jlf_search.wgsl");
+const VARIANT_SRC: [&str; 5] = [
+    include_str!("shaders/jlf_search_k1.wgsl"),
+    include_str!("shaders/jlf_search_k2.wgsl"),
+    include_str!("shaders/jlf_search_k4.wgsl"),
+    include_str!("shaders/jlf_search_t32.wgsl"),
+    include_str!("shaders/jlf_search_t64.wgsl"),
+];
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Variant {
+    kernel: usize,
+    dynamic: bool,
+}
+
+impl Variant {
+    fn from_env() -> Self {
+        let mut v = Variant::default();
+        if let Ok(s) = std::env::var("FASTWARP_JLF_VARIANT") {
+            for tok in s.split(',') {
+                match tok.trim() {
+                    "k1" => v.kernel = 1,
+                    "k2" => v.kernel = 2,
+                    "k4" => v.kernel = 3,
+                    "t32" => v.kernel = 4,
+                    "t64" => v.kernel = 5,
+                    "dyn" => v.dynamic = true,
+                    _ => {}
+                }
+            }
+        }
+        v
+    }
+
+    fn wg(&self) -> u32 {
+        if self.kernel == 4 {
+            32
+        } else {
+            WG
+        }
+    }
+}
 const WEIGH_SRC: &str = include_str!("shaders/jlf_weights.wgsl");
 const WEIGH_TILED_SRC: &str = include_str!("shaders/jlf_weights_tiled.wgsl");
 const TILED_FROM: usize = 11;
@@ -76,6 +117,7 @@ struct SearchU {
     slab: [u32; 4],
     patch: [u32; 4],
     pad: [u32; 4],
+    ext: [i32; 4],
 }
 
 #[derive(PartialEq, Eq)]
@@ -211,6 +253,8 @@ pub struct GpuJlfSearch {
     times: [f64; 3],
     weigh: Option<(bool, wgpu::ComputePipeline)>,
     gather_budget: u64,
+    variant: Variant,
+    run: u32,
 }
 
 impl GpuJlfSearch {
@@ -221,9 +265,17 @@ impl GpuJlfSearch {
 
     /// Async [`Self::new`].
     pub async fn new_async(ctx: Arc<GpuContext>) -> GpuResult<Self> {
+        let variant = Variant::from_env();
+        let src = if variant.kernel == 0 {
+            SRC
+        } else {
+            VARIANT_SRC[variant.kernel - 1]
+        };
+        let sp = prof::span("g.compile_search");
         let pipeline = ctx
-            .compile_async("k_jlf_search", SRC, "k_jlf_search")
+            .compile_async("k_jlf_search", src, "k_jlf_search")
             .await?;
+        drop(sp);
         let limits = ctx.device.limits();
         let binding = limits
             .max_storage_buffer_binding_size
@@ -242,6 +294,8 @@ impl GpuJlfSearch {
             times: [0.0; 3],
             weigh: None,
             gather_budget: GATHER_OUT_BYTES.min(binding),
+            variant,
+            run: 0,
             pipeline,
             ctx,
         })
@@ -446,8 +500,26 @@ impl GpuJlfSearch {
             .collect();
         let patch_buf = self.storage("jlf patch offsets", &patch).await?;
         let per_item = (longest * width as u64).max(1);
+        let vwg = self.variant.wg();
         let items_per_dispatch =
-            (WORK_PER_DISPATCH / per_item).clamp(u64::from(WG), 1 << 24) as u32;
+            (WORK_PER_DISPATCH / per_item).clamp(u64::from(WG), 1 << 24) as u32 / vwg * vwg;
+        if self.run == 0 {
+            self.run = items_per_dispatch;
+        }
+        let ext = {
+            let mut e = [0i32; 4];
+            for d in 0..3 {
+                e[d] = (block
+                    .lists
+                    .iter()
+                    .flatten()
+                    .map(|o| o[d].unsigned_abs())
+                    .max()
+                    .unwrap_or(0)
+                    + block.patch_radius[d]) as i32;
+            }
+            e
+        };
         let max_count = [
             self.binding / (atlases as u64 * 4),
             self.binding / 16,
@@ -505,6 +577,12 @@ impl GpuJlfSearch {
                 .checked_mul(atlases)
                 .and_then(|n| u32::try_from(n).ok())
                 .ok_or_else(|| too_large("the offsets of one block"))?;
+            let pcount = if self.variant.kernel == 0 {
+                count
+            } else {
+                count.next_multiple_of(vwg as usize)
+            };
+            let pitems = (pcount * atlases) as u32;
             let centre_buf = self.storage("jlf centres", &recs).await?;
             let patch_values = &block.patches[first * width..last * width];
             let target_buf = self.storage("jlf target patches", patch_values).await?;
@@ -526,10 +604,17 @@ impl GpuJlfSearch {
                 &out_buf,
             ];
             let mut base = 0u32;
-            while base < items {
-                let run = items_per_dispatch.min(items - base);
-                let (gx, gy) = self.groups(run);
+            while base < pitems {
+                let want = if self.variant.dynamic {
+                    self.run
+                } else {
+                    items_per_dispatch
+                };
+                let run = want.min(pitems - base);
+                let (gx, gy) = self.groups_of(run, vwg);
+                let started = std::time::Instant::now();
                 let uniform = SearchU {
+                    ext,
                     dims: [nx as u32, ny as u32, nz as u32, base + run],
                     slab: [
                         zlo as u32,
@@ -540,10 +625,10 @@ impl GpuJlfSearch {
                     patch: [
                         p as u32,
                         u32::from(block.metric == PatchMetric::MeanSquares),
-                        gx * WG,
+                        gx * vwg,
                         base,
                     ],
-                    pad: [0; 4],
+                    pad: [count as u32, pcount as u32, 0, 0],
                 };
                 self.dispatch(
                     &self.pipeline,
@@ -552,6 +637,14 @@ impl GpuJlfSearch {
                     [gx, gy],
                 )
                 .await?;
+                let dt = started.elapsed().as_secs_f64();
+                if self.variant.dynamic && run == want {
+                    if dt < 0.05 && self.run < (1 << 24) {
+                        self.run *= 2;
+                    } else if dt > 0.25 && self.run > 64 * vwg {
+                        self.run = self.run / 2 / vwg * vwg;
+                    }
+                }
                 base += run;
             }
             let search_s = seconds(search_start);
@@ -645,7 +738,11 @@ impl GpuJlfSearch {
     }
 
     fn groups(&self, items: u32) -> (u32, u32) {
-        let groups = items.div_ceil(WG);
+        self.groups_of(items, WG)
+    }
+
+    fn groups_of(&self, items: u32, wg: u32) -> (u32, u32) {
+        let groups = items.div_ceil(wg);
         if groups <= self.max_groups {
             (groups, 1)
         } else {
