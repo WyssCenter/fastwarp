@@ -177,7 +177,66 @@ pub struct CapacityCaps {
     pub memory_budget: u64,
 }
 
+pub fn host_available_bytes() -> Option<u64> {
+    host_available()
+}
+
+#[cfg(target_os = "linux")]
+fn host_available() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = text.lines().find(|l| l.starts_with("MemAvailable:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    kib.checked_mul(1024)
+}
+
+#[cfg(windows)]
+fn host_available() -> Option<u64> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut status = MemoryStatusEx {
+        length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        memory_load: 0,
+        total_phys: 0,
+        avail_phys: 0,
+        total_page_file: 0,
+        avail_page_file: 0,
+        total_virtual: 0,
+        avail_virtual: 0,
+        avail_extended_virtual: 0,
+    };
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+    (ok != 0).then_some(status.avail_phys)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn host_available() -> Option<u64> {
+    None
+}
+
 impl CapacityCaps {
+    pub fn budget_is_guess(ctx: &GpuContext) -> bool {
+        let env = crate::device::env_var(MEMORY_BUDGET_ENV);
+        let set = env
+            .as_deref()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .is_some();
+        !set && ctx.memory.is_none()
+    }
+
     pub fn from_context(ctx: &GpuContext) -> Self {
         let shares = matches!(ctx.info.device_type.as_str(), "IntegratedGpu" | "Cpu");
         Self::build(&ctx.caps, ctx.memory, shares)

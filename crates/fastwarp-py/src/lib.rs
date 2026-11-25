@@ -285,7 +285,8 @@ fn fits_gpu(
 }
 
 #[pyfunction]
-#[pyo3(signature = (dims, channels, max, adapter=None, moving_dims=None, recipe=None))]
+#[pyo3(signature = (dims, channels, max, adapter=None, moving_dims=None, recipe=None, native_voxels=0))]
+#[allow(clippy::too_many_arguments)]
 fn registrations_at_once(
     py: Python<'_>,
     dims: [usize; 3],
@@ -294,6 +295,7 @@ fn registrations_at_once(
     adapter: Option<String>,
     moving_dims: Option<[usize; 3]>,
     recipe: Option<Bound<'_, PyDict>>,
+    native_voxels: u64,
 ) -> PyResult<usize> {
     if channels == 0 {
         return Err(PyValueError::new_err("channels must be at least 1"));
@@ -301,7 +303,16 @@ fn registrations_at_once(
     let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
     let masks = engine::MaskDims::default();
     py.detach(move || {
-        engine::registrations_at_once(dims, moving_dims, channels, adapter, &recipe, &masks, max)
+        engine::registrations_at_once(
+            dims,
+            moving_dims,
+            channels,
+            adapter,
+            &recipe,
+            &masks,
+            native_voxels,
+            max,
+        )
     })
     .map_err(py_err)
 }

@@ -1047,6 +1047,11 @@ def _atlases_at_once(
         return 1
     grids = [iso_grid_dims(_first(a), iso_mm) for a in atlases]
     moving = max(grids, key=lambda d: d[0] * d[1] * d[2])
+
+    def voxels(img: Any) -> int:
+        return math.prod(img.shape if not isinstance(img, tuple) else np.shape(img[0]))
+
+    native = voxels(target) + max(voxels(_first(a)) for a in atlases)
     n = _registrations_at_once(
         iso_grid_dims(target, iso_mm),
         1,
@@ -1054,6 +1059,7 @@ def _atlases_at_once(
         adapter,
         moving,
         _recipe_arg(recipe),
+        native,
     )
     return max(n, 1)
 
@@ -1076,10 +1082,11 @@ def register_atlases(
     ``recipe`` is given) on the GPU; its images are then resampled onto the target's grid with
     linear interpolation and its label image with nearest neighbour, as :func:`apply_transforms`
     does. Up to four atlases are registered and resampled at the same time, as many as fit the
-    GPU's memory; the files are the same as when they run one after the other. Atlas ``i`` (from
-    1) writes ``atlasNN_Composite.h5`` (and the other files of :func:`register_syn`),
-    ``atlasNN_Warped.nii.gz`` (one file per modality after the first: ``atlasNN_Warped2.nii.gz``,
-    ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
+    GPU's memory and the computer's free memory (one at a time on an integrated GPU, or when the
+    GPU reports no memory size); the files are the same as when they run one after the other.
+    Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
+    :func:`register_syn`), ``atlasNN_Warped.nii.gz`` (one file per modality after the first:
+    ``atlasNN_Warped2.nii.gz``, ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
 
     Parameters
     ----------

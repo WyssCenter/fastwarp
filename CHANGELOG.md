@@ -15,7 +15,8 @@
   faster on an RTX PRO 6000 (more on GPUs where these steps weigh more), with the same files to the
   bit.
 - Changed: `fastwarp.register_atlases` registers and resamples up to four atlases at the same
-  time on one GPU, as many as fit its memory, with the same files to the bit. On an RTX PRO 6000,
+  time on one GPU, as many as fit its memory and the computer's free memory (one at a time on an
+  integrated GPU or when the GPU reports no memory size), with the same files to the bit. On an RTX PRO 6000,
   deep7t with 9 atlases: 27.8 s to 12.5 s for the call, 31.9 s to 16.6 s for the whole Python
   process.
 - Changed: joint label fusion on a dedicated GPU is 2.5 to 3.6 times faster with the same labels,
