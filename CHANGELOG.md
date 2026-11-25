@@ -4,6 +4,11 @@
 
 - New: `fastwarp.release_idle_gpus()` frees the GPU devices that a process keeps between
   registrations.
+- Changed: the field inversion of the SyN stage, which usually converges after one of its 20
+  steps, no longer runs the remaining steps on the GPU for large grids: the GPU itself sets the
+  size of their dispatches to zero once the inversion has converged. Registration is 3 to 6 %
+  faster on an RTX PRO 6000 (more on GPUs where these steps weigh more), with the same files to the
+  bit.
 - Changed: `fastwarp.register_atlases` registers and resamples up to four atlases at the same
   time on one GPU, as many as fit its memory, with the same files to the bit. On an RTX PRO 6000,
   deep7t with 9 atlases: 27.8 s to 12.5 s for the call, 31.9 s to 16.6 s for the whole Python
