@@ -302,6 +302,12 @@ pub trait LinearEngine: Sync {
         samples: PreparedSamples,
     ) -> Result<Self::Level<'a>>;
 
+    /// Whether every future of this engine is ready when first polled (a native device or the
+    /// CPU), so that a stage may wait for it while a thread of its own prepares the next level.
+    fn completes_at_once(&self) -> bool {
+        false
+    }
+
     async fn prepare_level_borrowed<'a>(
         &'a self,
         fixed: &'a Volume<f64>,
@@ -358,6 +364,10 @@ impl LinearEngine for CpuLinearEngine {
 
     fn name(&self) -> String {
         "cpu-f64".to_string()
+    }
+
+    fn completes_at_once(&self) -> bool {
+        true
     }
 
     async fn prepare_level<'a>(
@@ -593,6 +603,19 @@ impl SmoothCache {
         self.samples.clear();
     }
 
+    fn has_smoothed(&self, pair: PairId, sigma: f64, units: SigmaUnits) -> bool {
+        let voxels = units == SigmaUnits::Voxels;
+        self.owner == Some(pair)
+            && self
+                .entries
+                .iter()
+                .any(|(k, v, _, _)| *k == sigma.to_bits() && *v == voxels)
+    }
+
+    fn has_samples(&self, key: &SampleKey) -> bool {
+        self.samples.iter().any(|(k, _)| k == key)
+    }
+
     fn take_samples(&mut self, key: &SampleKey) -> Option<PreparedSamples> {
         let at = self.samples.iter().position(|(k, _)| k == key)?;
         Some(self.samples.swap_remove(at).1)
@@ -681,6 +704,104 @@ pub fn run_linear_stage_cached<E: LinearEngine>(
     ))
 }
 
+/// What a thread prepares for the next level of a linear stage while the current one runs: the
+/// smoothed pair when the cache does not hold it, and the prepared samples (no fixed mask) when
+/// the cache does not hold them and their images are at hand.
+struct Prefetch {
+    grid: Grid,
+    sigma: f64,
+    smooth: bool,
+    samples: Option<SampleKey>,
+}
+
+/// The output of [`Prefetch::run`]; a part that failed is left out and computed again by the
+/// level itself, so errors appear where they always did.
+struct Prefetched {
+    sigma: f64,
+    smoothed: Option<(Volume<f64>, Volume<f64>)>,
+    samples: Option<(SampleKey, PreparedSamples)>,
+}
+
+impl Prefetch {
+    fn run(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        recipe: &LinearRecipe,
+        spec: SamplingSpec,
+    ) -> Prefetched {
+        let units = recipe.sigma_units;
+        let smoothed = if self.smooth {
+            match rayon::join(
+                || smooth_for_level(fixed, self.sigma, units),
+                || smooth_for_level(moving, self.sigma, units),
+            ) {
+                (Ok(f), Ok(m)) => Some((f, m)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let samples = self.samples.and_then(|key| {
+            let (f, m) = match &smoothed {
+                Some((f, m)) => (f, m),
+                None if self.sigma <= 0.0 => (fixed, moving),
+                None => return None,
+            };
+            let raw =
+                metric_sample_points(&self.grid, spec, &mut SeedSequence::new(key.seed), None);
+            if degenerate_level(f, &raw).is_some() {
+                return None;
+            }
+            let p = prepare_samples(f, m, &raw, recipe.bins).ok()?;
+            (!p.points.is_empty()).then_some((key, p))
+        });
+        Prefetched {
+            sigma: self.sigma,
+            smoothed,
+            samples,
+        }
+    }
+}
+
+/// The [`Prefetch`] of level `next`, or `None` when the cache already holds everything.
+fn next_level_prefetch(
+    cache: &SmoothCache,
+    fixed: &Volume<f64>,
+    moving: &Volume<f64>,
+    recipe: &LinearRecipe,
+    fixed_grid: &Grid,
+    next: usize,
+    seeds: &SeedSequence,
+) -> Option<Prefetch> {
+    let factors = shrink_factors_per_dimension(recipe.shrink_factors[next], fixed_grid.spacing());
+    let grid = level_virtual_grid(fixed_grid, factors).ok()?;
+    let sigma = recipe.smoothing_sigmas[next];
+    let pair = PairId::of(fixed, moving);
+    let smooth = sigma > 0.0
+        && sigma.to_bits() != recipe.smoothing_sigmas[next - 1].to_bits()
+        && !cache.has_smoothed(pair, sigma, recipe.sigma_units);
+    let samples = recipe
+        .mask
+        .is_none()
+        .then(|| SampleKey {
+            pair,
+            sigma: sigma.to_bits(),
+            voxels: recipe.sigma_units == SigmaUnits::Voxels,
+            grid,
+            seed: seeds.peek().wrapping_add(1),
+            percentage: recipe.sampling_percentage.to_bits(),
+            bins: recipe.bins,
+        })
+        .filter(|k| !cache.has_samples(k) && (sigma <= 0.0 || smooth));
+    (smooth || samples.is_some()).then_some(Prefetch {
+        grid,
+        sigma,
+        smooth,
+        samples,
+    })
+}
+
 /// [`run_linear_stage_cached`] as a future, for an engine that waits for its device.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_linear_stage_cached_async<E: LinearEngine>(
@@ -732,6 +853,13 @@ pub async fn run_linear_stage_cached_async<E: LinearEngine>(
             percentage: spec.percentage.to_bits(),
             bins: recipe.bins,
         });
+        let prefetch = (cfg!(not(target_arch = "wasm32"))
+            && rayon::current_thread_index().is_none()
+            && engine.completes_at_once()
+            && recipe.cache_smoothed_images
+            && level + 1 < recipe.levels())
+        .then(|| next_level_prefetch(cache, fixed, moving, recipe, &fixed_grid, level + 1, &seeds))
+        .flatten();
         let reused = sample_key.as_ref().and_then(|k| cache.take_samples(k));
         let (fixed_s, moving_s) = cache.get(
             fixed,
@@ -785,9 +913,6 @@ pub async fn run_linear_stage_cached_async<E: LinearEngine>(
             continue;
         };
         let sample_count = prepared.points.len();
-        let metric = engine
-            .prepare_level_borrowed(&fixed_s, &moving_s, prepared)
-            .await?;
         let corners = corner_points(&grid);
         let settings = CgSettings::ants(
             recipe.gradient_step,
@@ -795,8 +920,27 @@ pub async fn run_linear_stage_cached_async<E: LinearEngine>(
             recipe.convergence_threshold,
             recipe.convergence_window,
         );
-        let (next, cg) =
-            optimise_level_async(&metric, &corners, current, &settings, cancel).await?;
+        let run = async {
+            let metric = engine
+                .prepare_level_borrowed(&fixed_s, &moving_s, prepared)
+                .await?;
+            optimise_level_async(&metric, &corners, current, &settings, cancel).await
+        };
+        let (outcome, fetched) = match &prefetch {
+            Some(p) => std::thread::scope(|s| {
+                match std::thread::Builder::new()
+                    .spawn_scoped(s, || p.run(fixed, moving, recipe, spec))
+                {
+                    Ok(job) => {
+                        let outcome = block_ready(run);
+                        (outcome, job.join().ok())
+                    }
+                    Err(_) => (block_ready(run), None),
+                }
+            }),
+            None => (run.await, None),
+        };
+        let (next, cg) = outcome?;
         current = next;
         levels.push(LinearLevelTrace {
             level,
@@ -808,10 +952,20 @@ pub async fn run_linear_stage_cached_async<E: LinearEngine>(
             parameters: current.optimised.parameters(),
             skipped: None,
         });
-        drop(metric);
         drop((fixed_s, moving_s));
         if let Some(entry) = store {
             cache.samples.push(entry);
+        }
+        if let Some(fetched) = fetched.filter(|_| cache.owner == Some(PairId::of(fixed, moving))) {
+            if let Some((f, m)) = fetched.smoothed.filter(|_| {
+                !cache.has_smoothed(PairId::of(fixed, moving), fetched.sigma, recipe.sigma_units)
+            }) {
+                let voxels = recipe.sigma_units == SigmaUnits::Voxels;
+                cache.entries.push((fetched.sigma.to_bits(), voxels, f, m));
+            }
+            if let Some(entry) = fetched.samples {
+                cache.samples.push(entry);
+            }
         }
     }
     if !levels.is_empty() && levels.iter().all(|l| l.skipped.is_some()) {

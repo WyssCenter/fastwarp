@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Changed: while a level of a linear stage runs on the GPU, a second thread smooths the images
+  and draws the sample points of the next level (same results to the bit).
 - Changed: the composite `.h5` files are written without building the whole file in memory
   first (the same bytes).
 - Changed: a process keeps the GPU device of a finished registration (its idle buffers freed; one

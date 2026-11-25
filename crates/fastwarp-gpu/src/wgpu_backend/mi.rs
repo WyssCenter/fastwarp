@@ -481,6 +481,10 @@ impl LinearEngine for WgpuBackend {
         format!("{} Mattes MI", Backend::name(self))
     }
 
+    fn completes_at_once(&self) -> bool {
+        !crate::device::WEB
+    }
+
     async fn prepare_level<'a>(
         &'a self,
         _fixed: Volume<f64>,
