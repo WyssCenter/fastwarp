@@ -542,6 +542,23 @@ impl WgpuBackend {
             .peak_bytes()
     }
 
+    /// Sets the counters of [`Self::stats`] back to zero.
+    pub fn reset_stats(&self) {
+        for c in [
+            &self.scalar_readbacks,
+            &self.field_downloads,
+            &self.uploads,
+            &self.submits,
+        ] {
+            c.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Turns profiling off and drops the profile collected so far.
+    pub fn reset_profile(&self) {
+        *self.profile.lock().unwrap_or_else(|p| p.into_inner()) = Profile::default();
+    }
+
     /// Starts [`Self::peak_allocated_bytes`] again from the bytes the pool owns now.
     pub fn reset_peak_allocated_bytes(&self) {
         self.pool

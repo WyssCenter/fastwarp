@@ -140,7 +140,7 @@ struct GpuCheckout {
 
 impl GpuCheckout {
     fn finish(self) {
-        if self.gpu.context().is_lost() {
+        if self.gpu.context().is_lost() || self.gpu.context().check_errors().is_err() {
             return;
         }
         self.gpu.release_idle();
@@ -196,6 +196,8 @@ fn checkout_gpu(adapter: Option<String>) -> Result<GpuCheckout, Failure> {
     let gpu = match idle {
         Some(g) => {
             g.reset_peak_allocated_bytes();
+            g.reset_stats();
+            g.reset_profile();
             g
         }
         None => open_gpu(adapter)?,

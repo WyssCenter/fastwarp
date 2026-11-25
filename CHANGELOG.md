@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: `fastwarp.release_idle_gpus()` frees the GPU devices that a process keeps between
+  registrations.
 - Changed: joint label fusion on a dedicated GPU is 2.5 to 3.6 times faster with the same labels,
   offsets and intensities to the bit. The patch search kernel handles 64 neighbouring voxels of
   one atlas per workgroup and two candidate offsets per thread, the size of each dispatch follows
