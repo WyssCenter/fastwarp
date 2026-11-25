@@ -542,6 +542,14 @@ impl WgpuBackend {
             .peak_bytes()
     }
 
+    /// Starts [`Self::peak_allocated_bytes`] again from the bytes the pool owns now.
+    pub fn reset_peak_allocated_bytes(&self) {
+        self.pool
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .reset_peak();
+    }
+
     /// Frees every idle pooled buffer and the cached Gaussian taps, returning the bytes freed.
     /// Buffers still held by live images and fields are untouched and return to the pool when
     /// dropped.

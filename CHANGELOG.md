@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Changed: a process keeps the GPU device of a finished registration (its idle buffers freed; one
+  per adapter and `FASTWARP_GPU_*` / `WGPU_*` settings, four at most) and reuses it for the next
+  registration with the same settings, which saves the device creation, the kernel compilation and
+  the known-answer check (about 0.2 s). `fastwarp bench` still times every run with a new device. With the two
+  changes above, a 1 mm brain pair on an RTX PRO 6000 takes 2.1 to 3.5 s instead of 2.8 to 5.0 s
+  (1.3 to 1.4 times faster), with the same files to the bit.
 - Changed: the end of a registration is faster: the displacement fields are converted on several
   threads and the transform files are written in parallel. The files are the same to the bit.
 - Changed: the linear stages prepare their sample points faster: at each level the affine stage
