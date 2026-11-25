@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Changed: the end of a registration is faster: the displacement fields are converted on several
+  threads and the transform files are written in parallel. The files are the same to the bit.
 - Changed: the linear stages prepare their sample points faster: at each level the affine stage
   reuses the points of the rigid stage (same seed, level grid and images, no fixed mask) and the
   jittered points are computed on all cores. The results are the same to the bit.

@@ -114,10 +114,14 @@ impl VectorField {
 
     /// Rounds to an `f32` displacement field (the on-disk precision of ANTs `--float 1`).
     pub fn to_displacement_field(&self) -> Result<DisplacementField> {
-        let mut out = Vec::with_capacity(self.data.len() * 3);
-        for v in &self.data {
-            out.extend([v[0] as f32, v[1] as f32, v[2] as f32]);
-        }
+        let mut out = vec![0.0f32; self.data.len() * 3];
+        out.par_chunks_mut(3)
+            .zip(self.data.par_iter())
+            .for_each(|(o, v)| {
+                o[0] = v[0] as f32;
+                o[1] = v[1] as f32;
+                o[2] = v[2] as f32;
+            });
         DisplacementField::new(self.grid, out)
     }
 

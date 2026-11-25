@@ -39,6 +39,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
+use rayon::prelude::*;
+
 use crate::apply::{apply_chain, Interpolation};
 use crate::backend::Backend;
 use crate::error::{invalid, RegError, Result};
@@ -417,25 +419,31 @@ fn field_at(chain: &TransformChain, index: usize) -> Result<&DisplacementField> 
 
 /// Writes the transforms of `out` under `prefix` in `layout` (ANTs naming, the prefix taken as
 /// text) and, with `write_warped`, `<prefix>_Warped.nii.gz`; returns the paths written, in the
-/// order composites, `0GenericAffine.mat`, warp, inverse warp, warped image.
+/// order composites, `0GenericAffine.mat`, warp, inverse warp, warped image. The files are
+/// written in parallel: when one fails, the others are still written and one of the errors is
+/// returned.
 pub fn write_stage_outputs(
     prefix: &Path,
     out: &StagesOutput,
     layout: OutputLayout,
     write_warped: bool,
 ) -> Result<Vec<PathBuf>> {
-    let mut written = Vec::new();
+    let mut files = Vec::new();
     visit_stage_outputs(prefix, out, layout, write_warped, |path, content| {
-        let io = |source| RegError::Io {
-            path: path.clone(),
-            source,
-        };
-        let file = std::fs::File::create(&path).map_err(io)?;
-        content.write_to(&path, std::io::BufWriter::with_capacity(1 << 20, file))?;
-        written.push(path);
+        files.push((path, content));
         Ok(())
     })?;
-    Ok(written)
+    files
+        .into_par_iter()
+        .map(|(path, content)| {
+            let file = std::fs::File::create(&path).map_err(|source| RegError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            content.write_to(&path, std::io::BufWriter::with_capacity(1 << 20, file))?;
+            Ok(path)
+        })
+        .collect()
 }
 
 /// One file of [`write_stage_outputs`], to be serialised into a writer.

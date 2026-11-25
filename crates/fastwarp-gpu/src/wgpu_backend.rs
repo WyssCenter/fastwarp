@@ -1623,6 +1623,47 @@ impl Backend for WgpuBackend {
     async fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
         let n = field.grid.num_voxels();
         self.field_downloads.fetch_add(1, Ordering::Relaxed);
+        if !WEB {
+            let mut vectors: Vec<Vec3> = vec![[0.0; 3]; n];
+            let out = &mut vectors;
+            self.ctx
+                .read_bytes_with_async(field.buf.buffer(), (3 * n * 4) as u64, move |bytes| {
+                    let owned: Vec<f32>;
+                    let data: &[f32] = match bytemuck::try_cast_slice(bytes) {
+                        Ok(d) => d,
+                        Err(_) => {
+                            owned = bytemuck::pod_collect_to_vec(bytes);
+                            &owned
+                        }
+                    };
+                    let threads = std::env::var("RAYON_NUM_THREADS")
+                        .ok()
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .filter(|n| *n > 0)
+                        .unwrap_or_else(|| {
+                            std::thread::available_parallelism().map_or(1, |p| p.get())
+                        })
+                        .min(16);
+                    let chunk = n.div_ceil(threads).max(1);
+                    std::thread::scope(|s| {
+                        for (c, part) in out.chunks_mut(chunk).enumerate() {
+                            s.spawn(move || {
+                                for (k, v) in part.iter_mut().enumerate() {
+                                    let i = c * chunk + k;
+                                    *v = [
+                                        f64::from(data[i]),
+                                        f64::from(data[n + i]),
+                                        f64::from(data[2 * n + i]),
+                                    ];
+                                }
+                            });
+                        }
+                    });
+                })
+                .await
+                .map_err(gerr)?;
+            return VectorField::from_vec(field.grid, vectors);
+        }
         let data = self
             .ctx
             .read_f32_async(field.buf.buffer(), 3 * n)
