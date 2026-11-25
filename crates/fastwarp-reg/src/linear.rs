@@ -574,6 +574,8 @@ pub struct SmoothCache {
     owner: Option<PairId>,
     entries: Vec<(u64, bool, Volume<f64>, Volume<f64>)>,
     samples: Vec<(SampleKey, PreparedSamples)>,
+    planned: Vec<SampleKey>,
+    plan_active: bool,
 }
 
 /// What the prepared samples of a level without a fixed mask depend on: the smoothed pair, the
@@ -595,12 +597,16 @@ impl SmoothCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.samples.clear();
+        self.planned.clear();
+        self.plan_active = false;
         self.owner = None;
     }
 
     /// Drops the sample sets kept for the next linear stage.
     pub fn clear_samples(&mut self) {
         self.samples.clear();
+        self.planned.clear();
+        self.plan_active = false;
     }
 
     fn has_smoothed(&self, pair: PairId, sigma: f64, units: SigmaUnits) -> bool {
@@ -614,6 +620,60 @@ impl SmoothCache {
 
     fn has_samples(&self, key: &SampleKey) -> bool {
         self.samples.iter().any(|(k, _)| k == key)
+    }
+
+    /// Records the sample sets that the linear `stages`, run in this order on `fixed` /
+    /// `moving`, will draw, so that a stage keeps a copy of a level's samples only when a later
+    /// stage draws the same set. Without a plan every stage keeps its samples, as a caller that
+    /// runs stages one by one (a linear session) may still run a later one.
+    pub fn plan_samples<'r>(
+        &mut self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        stages: impl IntoIterator<Item = &'r LinearRecipe>,
+    ) {
+        let pair = PairId::of(fixed, moving);
+        let fixed_grid = *fixed.grid();
+        self.planned.clear();
+        self.samples.clear();
+        self.plan_active = true;
+        for recipe in stages {
+            if recipe.mask.is_some() || !recipe.cache_smoothed_images {
+                continue;
+            }
+            let mut seeds = SeedSequence::new(recipe.seed);
+            for level in 0..recipe.levels() {
+                let seed = seeds.next_seed();
+                let factors = shrink_factors_per_dimension(
+                    recipe.shrink_factors[level],
+                    fixed_grid.spacing(),
+                );
+                let Ok(grid) = level_virtual_grid(&fixed_grid, factors) else {
+                    continue;
+                };
+                self.planned.push(SampleKey {
+                    pair,
+                    sigma: recipe.smoothing_sigmas[level].to_bits(),
+                    voxels: recipe.sigma_units == SigmaUnits::Voxels,
+                    grid,
+                    seed,
+                    percentage: recipe.sampling_percentage.to_bits(),
+                    bins: recipe.bins,
+                });
+            }
+        }
+    }
+
+    /// Removes one planned use of `key` and tells whether a later stage still plans one (always
+    /// `true` without a plan).
+    fn consume_planned(&mut self, key: &SampleKey) -> bool {
+        if !self.plan_active {
+            return true;
+        }
+        if let Some(at) = self.planned.iter().position(|k| k == key) {
+            self.planned.remove(at);
+        }
+        self.planned.contains(key)
     }
 
     fn take_samples(&mut self, key: &SampleKey) -> Option<PreparedSamples> {
@@ -860,6 +920,9 @@ pub async fn run_linear_stage_cached_async<E: LinearEngine>(
             && level + 1 < recipe.levels())
         .then(|| next_level_prefetch(cache, fixed, moving, recipe, &fixed_grid, level + 1, &seeds))
         .flatten();
+        let wanted = sample_key
+            .as_ref()
+            .is_some_and(|k| cache.consume_planned(k));
         let reused = sample_key.as_ref().and_then(|k| cache.take_samples(k));
         let (fixed_s, moving_s) = cache.get(
             fixed,
@@ -896,7 +959,7 @@ pub async fn run_linear_stage_cached_async<E: LinearEngine>(
             _ => skip,
         };
         let store = match (&sample_key, &prepared, &skip) {
-            (Some(k), Some(p), None) => Some((*k, p.clone())),
+            (Some(k), Some(p), None) if wanted => Some((*k, p.clone())),
             _ => None,
         };
         let Some(prepared) = prepared.filter(|_| skip.is_none()) else {
@@ -1094,6 +1157,7 @@ pub async fn run_linear_chain_cached_async<E: LinearEngine>(
         ));
     }
     let initial = initial_transform(fixed_raw, moving_raw, InitFeature::CentreOfMass)?;
+    cache.plan_samples(fixed, moving, [rigid, affine]);
     let rigid_result = run_linear_stage_cached_async(
         engine,
         rigid,
@@ -1625,5 +1689,38 @@ mod tests {
             .get(&a, &other, 1.5, SigmaUnits::Voxels, true)
             .unwrap();
         assert!(cache.take(&a, &b, 1.5, SigmaUnits::Voxels).is_none());
+    }
+
+    #[test]
+    fn a_stage_keeps_samples_only_for_a_later_stage_that_draws_them() {
+        let fixed = volume(16, 1.0, &AffineTransform::identity());
+        let moving = volume(16, 1.0, &AffineTransform::identity());
+        let rigid = chain_recipe(LinearKind::Rigid);
+        let affine = chain_recipe(LinearKind::Affine);
+        let mut cache = SmoothCache::default();
+        cache.plan_samples(&fixed, &moving, [&rigid, &affine]);
+        let keys = cache.planned.clone();
+        let n = rigid.levels();
+        assert_eq!(keys.len(), 2 * n);
+        for k in &keys[..n] {
+            assert!(cache.consume_planned(k));
+        }
+        for k in &keys[n..] {
+            assert!(!cache.consume_planned(k));
+        }
+        assert!(cache.planned.is_empty());
+    }
+
+    #[test]
+    fn without_a_plan_every_stage_keeps_its_samples() {
+        let fixed = volume(16, 1.0, &AffineTransform::identity());
+        let moving = volume(16, 1.0, &AffineTransform::identity());
+        let rigid = chain_recipe(LinearKind::Rigid);
+        let mut cache = SmoothCache::default();
+        cache.plan_samples(&fixed, &moving, [&rigid]);
+        let key = cache.planned[0];
+        cache.clear_samples();
+        assert!(cache.consume_planned(&key));
+        assert!(cache.consume_planned(&key));
     }
 }

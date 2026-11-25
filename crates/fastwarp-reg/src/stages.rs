@@ -196,6 +196,7 @@ pub async fn run_linear_stages_async<E: LinearEngine>(
     let mut current = initial;
     let mut center = initial.center;
     let mut results = Vec::with_capacity(stages.len());
+    cache.plan_samples(fixed, moving, stages);
     for recipe in stages {
         let start = match recipe.kind {
             LinearKind::Rigid => ParametricTransform::euler3d([0.0; 6], center),
