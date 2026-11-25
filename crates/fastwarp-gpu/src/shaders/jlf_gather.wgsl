@@ -88,9 +88,9 @@ fn k_jlf_gather(@builtin(global_invocation_id) gid: vec3<u32>) {
   let p = u.b.y;
   let rsize = u.b.w;
   let apl = u.c.z;
-  let base = (t - u.e.y) * rsize;
+  let base = t * rsize;
   var count = 0u;
-  let inmask = maskbuf[t - u.e.y] != 0u;
+  let inmask = maskbuf[t] != 0u;
   for (var mo = 0u; mo < modalities; mo = mo + 1u) {
     var acc = 0.0;
     if (inmask) {

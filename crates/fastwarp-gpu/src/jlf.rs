@@ -42,7 +42,6 @@ use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
-use fastwarp_reg::jlf::prof;
 use fastwarp_reg::jlf::{
     float_almost_equal, joint_fusion_with, Accumulators, FusionParts, JlfDevice, JlfInput,
     JlfOptions, JlfOutput, PatchMetric, PatchSearch, SearchBlock,
@@ -54,78 +53,7 @@ use crate::error::{GpuError, GpuResult};
 use crate::wgpu_backend::block_reg;
 
 const SRC: &str = include_str!("shaders/jlf_search.wgsl");
-const VARIANT_SRC: [&str; 11] = [
-    include_str!("shaders/jlf_search_k1.wgsl"),
-    include_str!("shaders/jlf_search_k2.wgsl"),
-    include_str!("shaders/jlf_search_k4.wgsl"),
-    include_str!("shaders/jlf_search_t32.wgsl"),
-    include_str!("shaders/jlf_search_t64.wgsl"),
-    include_str!("shaders/jlf_search_ck2.wgsl"),
-    include_str!("shaders/jlf_search_ck4.wgsl"),
-    include_str!("shaders/jlf_search_ck8.wgsl"),
-    include_str!("shaders/jlf_search_gk1.wgsl"),
-    include_str!("shaders/jlf_search_gk2.wgsl"),
-    include_str!("shaders/jlf_search_gk4.wgsl"),
-];
-
-#[derive(Clone, Copy, Debug)]
-struct Variant {
-    kernel: usize,
-    dynamic: bool,
-    legacy: bool,
-    boxsum: bool,
-}
-
-impl Variant {
-    fn from_env() -> Self {
-        let mut v = Variant {
-            kernel: 10,
-            dynamic: true,
-            legacy: false,
-            boxsum: false,
-        };
-        if let Ok(s) = std::env::var("FASTWARP_JLF_VARIANT") {
-            for tok in s.split(',') {
-                match tok.trim() {
-                    "orig" => v.kernel = 0,
-                    "fixed" => v.dynamic = false,
-                    "k1" => v.kernel = 1,
-                    "k2" => v.kernel = 2,
-                    "k4" => v.kernel = 3,
-                    "t32" => v.kernel = 4,
-                    "t64" => v.kernel = 5,
-                    "ck2" => v.kernel = 6,
-                    "ck4" => v.kernel = 7,
-                    "ck8" => v.kernel = 8,
-                    "gk1" => v.kernel = 9,
-                    "gk2" => v.kernel = 10,
-                    "gk4" => v.kernel = 11,
-                    "dyn" => v.dynamic = true,
-                    "legacy" => {
-                        v.kernel = 0;
-                        v.dynamic = false;
-                        v.legacy = true;
-                    }
-                    "box" => v.boxsum = true,
-                    _ => {}
-                }
-            }
-        }
-        v
-    }
-
-    fn transposed(&self) -> bool {
-        self.kernel >= 9
-    }
-
-    fn wg(&self) -> u32 {
-        if self.kernel == 4 {
-            32
-        } else {
-            WG
-        }
-    }
-}
+const TRANSPOSE_SRC: &str = include_str!("shaders/jlf_transpose.wgsl");
 const WEIGH_SRC: &str = include_str!("shaders/jlf_weights.wgsl");
 const WEIGH_TILED_SRC: &str = include_str!("shaders/jlf_weights_tiled.wgsl");
 const TILED_FROM: usize = 11;
@@ -148,7 +76,6 @@ struct SearchU {
     slab: [u32; 4],
     patch: [u32; 4],
     pad: [u32; 4],
-    ext: [i32; 4],
 }
 
 #[derive(PartialEq, Eq)]
@@ -252,56 +179,6 @@ struct AtlasSlab {
     zlo: usize,
     planes: usize,
     buffer: wgpu::Buffer,
-    target: Option<wgpu::Buffer>,
-    finite: bool,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct BoxU {
-    dims: [u32; 4],
-    slab: [u32; 4],
-    org: [i32; 4],
-    ext: [u32; 4],
-    pr: [i32; 4],
-    sr: [i32; 4],
-    jb: [u32; 4],
-    sh: [f32; 4],
-}
-
-const BOX_SRC: &str = include_str!("shaders/jlf_box.wgsl");
-
-struct BoxDims {
-    lo: [i32; 3],
-    b: [u64; 3],
-    ds: u64,
-    dp: u64,
-    dq: u64,
-}
-
-fn box_dims(block: &SearchBlock<'_>, eligible: &[[u32; 2]], ext: [i32; 4]) -> BoxDims {
-    let [nx, ny, _] = block.size;
-    let plane = nx * ny;
-    let pr = block.patch_radius.map(|r| r as u64);
-    let sr = [0, 1, 2].map(|d| (ext[d] as u64).saturating_sub(pr[d]));
-    let mut lo = [i32::MAX; 3];
-    let mut hi = [i32::MIN; 3];
-    for e in eligible {
-        let v = e[0] as usize;
-        let q = [(v % nx) as i32, ((v / nx) % ny) as i32, (v / plane) as i32];
-        for d in 0..3 {
-            lo[d] = lo[d].min(q[d]);
-            hi[d] = hi[d].max(q[d]);
-        }
-    }
-    let b = [0, 1, 2].map(|d| (hi[d] - lo[d] + 1).max(0) as u64);
-    BoxDims {
-        lo,
-        b,
-        ds: (b[0] + 2 * sr[0]) * (b[1] + 2 * sr[1]) * (b[2] + 2 * sr[2]),
-        dp: b[0] * (b[1] + 2 * pr[1]) * (b[2] + 2 * pr[2]),
-        dq: b[0] * b[1] * (b[2] + 2 * pr[2]),
-    }
 }
 
 fn gerr(e: GpuError) -> RegError {
@@ -334,12 +211,10 @@ pub struct GpuJlfSearch {
     times: [f64; 3],
     weigh: Option<(bool, wgpu::ComputePipeline)>,
     gather_budget: u64,
-    variant: Variant,
     run: u32,
     wrun: u32,
     grun: u32,
-    boxpipe: Option<wgpu::ComputePipeline>,
-    transpose: Option<wgpu::ComputePipeline>,
+    transpose: wgpu::ComputePipeline,
 }
 
 const MAX_SCALE: u32 = 64;
@@ -366,34 +241,12 @@ impl GpuJlfSearch {
 
     /// Async [`Self::new`].
     pub async fn new_async(ctx: Arc<GpuContext>) -> GpuResult<Self> {
-        let variant = Variant::from_env();
-        let src = if variant.kernel == 0 {
-            SRC
-        } else {
-            VARIANT_SRC[variant.kernel - 1]
-        };
-        let sp = prof::span("g.compile_search");
         let pipeline = ctx
-            .compile_async("k_jlf_search", src, "k_jlf_search")
+            .compile_async("k_jlf_search", SRC, "k_jlf_search")
             .await?;
-        let transpose = if variant.transposed() {
-            Some(
-                ctx.compile_async(
-                    "k_jlf_transpose",
-                    include_str!("shaders/jlf_transpose.wgsl"),
-                    "k_jlf_transpose",
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
-        let boxpipe = if variant.boxsum {
-            Some(ctx.compile_async("k_jlf_box", BOX_SRC, "k_jlf_box").await?)
-        } else {
-            None
-        };
-        drop(sp);
+        let transpose = ctx
+            .compile_async("k_jlf_transpose", TRANSPOSE_SRC, "k_jlf_transpose")
+            .await?;
         let limits = ctx.device.limits();
         let binding = limits
             .max_storage_buffer_binding_size
@@ -412,11 +265,9 @@ impl GpuJlfSearch {
             times: [0.0; 3],
             weigh: None,
             gather_budget: GATHER_OUT_BYTES.min(binding),
-            variant,
             run: 1,
             wrun: 1,
             grun: 1,
-            boxpipe,
             transpose,
             pipeline,
             ctx,
@@ -532,21 +383,12 @@ impl GpuJlfSearch {
             }
         }
         let buffer = self.storage("jlf atlas slab", &data).await?;
-        let (target, finite) = if self.boxpipe.is_some() && !block.target.is_empty() {
-            let t = &block.target[0][lo * plane..(lo + planes) * plane];
-            let finite = data.iter().all(|v| v.is_finite()) && t.iter().all(|v| v.is_finite());
-            (Some(self.storage("jlf target slab", t).await?), finite)
-        } else {
-            (None, false)
-        };
         self.uploads += 1;
         self.slab = Some(AtlasSlab {
             key,
             zlo: lo,
             planes,
             buffer,
-            target,
-            finite,
         });
         Ok(())
     }
@@ -648,23 +490,8 @@ impl GpuJlfSearch {
             .collect();
         let patch_buf = self.storage("jlf patch offsets", &patch).await?;
         let per_item = (longest * width as u64).max(1);
-        let vwg = self.variant.wg();
         let items_per_dispatch =
-            (WORK_PER_DISPATCH / per_item).clamp(u64::from(WG), 1 << 24) as u32 / vwg * vwg;
-        let ext = {
-            let mut e = [0i32; 4];
-            for d in 0..3 {
-                e[d] = (block
-                    .lists
-                    .iter()
-                    .flatten()
-                    .map(|o| o[d].unsigned_abs())
-                    .max()
-                    .unwrap_or(0)
-                    + block.patch_radius[d]) as i32;
-            }
-            e
-        };
+            (WORK_PER_DISPATCH / per_item).clamp(u64::from(WG), 1 << 24) as u32 / WG * WG;
         let max_count = [
             self.binding / (atlases as u64 * 4),
             self.binding / 16,
@@ -676,8 +503,8 @@ impl GpuJlfSearch {
         .min()
         .unwrap_or(1)
         .max(1) as usize;
-        let max_count = if self.variant.kernel != 0 && max_count >= vwg as usize {
-            max_count / vwg as usize * vwg as usize
+        let max_count = if max_count >= WG as usize {
+            max_count / WG as usize * WG as usize
         } else {
             max_count
         };
@@ -702,10 +529,7 @@ impl GpuJlfSearch {
             let z1 = block.centres[last - 1] / plane;
             let lo = z0.saturating_sub(reach);
             let hi = (z1 + reach + 1).min(nz);
-            let sp = prof::span("s.slab");
             self.ensure_slab(block, lo, hi, budget_planes).await?;
-            drop(sp);
-            let sp = prof::span("s.upload");
             let slab = self
                 .slab
                 .as_ref()
@@ -727,67 +551,26 @@ impl GpuJlfSearch {
                 .checked_mul(atlases)
                 .and_then(|n| u32::try_from(n).ok())
                 .ok_or_else(|| too_large("the offsets of one block"))?;
-            let pcount = if self.variant.kernel == 0 {
-                count
-            } else {
-                count.next_multiple_of(vwg as usize)
-            };
+            let pcount = count.next_multiple_of(WG as usize);
             let pitems = (pcount * atlases) as u32;
             let centre_buf = self.storage("jlf centres", &recs).await?;
-            let boxed = self.boxpipe.is_some()
-                && block.metric == PatchMetric::PearsonCorrelation
-                && block.lists.len() == 1
-                && block.modalities == 1
-                && self.slab.as_ref().is_some_and(|s| s.finite);
-            let mut eligible: Vec<[u32; 2]> = Vec::new();
-            let search_buf = if boxed {
-                let mut srecs = recs.clone();
-                for (k, r) in srecs.iter_mut().enumerate() {
-                    let v = r[0] as usize;
-                    let q = [v % nx, (v / nx) % ny, v / plane];
-                    let interior = (0..3).all(|d| {
-                        q[d] >= ext[d] as usize && q[d] + (ext[d] as usize) < block.size[d]
-                    });
-                    let c = first + k;
-                    if interior
-                        && block.patches[c * width..(c + 1) * width]
-                            .iter()
-                            .all(|x| x.is_finite())
-                    {
-                        r[2] = 0;
-                        eligible.push([v as u32, k as u32]);
-                    }
-                }
-                let d = box_dims(block, &eligible, ext);
-                if eligible.is_empty() || d.dp * 4 > self.binding || d.ds * 8 > self.binding {
-                    eligible.clear();
-                    None
-                } else {
-                    Some(self.storage("jlf search centres", &srecs).await?)
-                }
-            } else {
-                None
-            };
             let patch_values = &block.patches[first * width..last * width];
             let plain_buf = self.storage("jlf target patches", patch_values).await?;
-            let target_buf = match self.transpose.as_ref() {
-                Some(tp) => {
-                    let total = (pcount * width) as u32;
-                    let tr = self
-                        .scratch("jlf transposed target patches", u64::from(total) * 4)
-                        .await?;
-                    let (gx, gy) = self.groups(total);
-                    let uniform = [count as u32, width as u32, total, gx * WG];
-                    self.dispatch(
-                        tp,
-                        &[&plain_buf, &tr],
-                        bytemuck::bytes_of(&uniform),
-                        [gx, gy],
-                    )
+            let target_buf = {
+                let total = (pcount * width) as u32;
+                let tr = self
+                    .scratch("jlf transposed target patches", u64::from(total) * 4)
                     .await?;
-                    tr
-                }
-                None => plain_buf.clone(),
+                let (gx, gy) = self.groups(total);
+                let uniform = [count as u32, width as u32, total, gx * WG];
+                self.dispatch(
+                    &self.transpose,
+                    &[&plain_buf, &tr],
+                    bytemuck::bytes_of(&uniform),
+                    [gx, gy],
+                )
+                .await?;
+                tr
             };
             let shared = weigh.is_some_and(|a| {
                 std::ptr::eq(&a.normalized[first * width..last * width], patch_values)
@@ -796,7 +579,6 @@ impl GpuJlfSearch {
             let out_buf = self
                 .storage("jlf best offsets", &vec![UNSET; items as usize])
                 .await?;
-            drop(sp);
             let search_start = stamp();
             let slab = self
                 .slab
@@ -805,23 +587,18 @@ impl GpuJlfSearch {
             let buffers = [
                 &slab.buffer,
                 &target_buf,
-                search_buf.as_ref().unwrap_or(&centre_buf),
+                &centre_buf,
                 &offsets_buf,
                 &patch_buf,
                 &out_buf,
             ];
             let mut base = 0u32;
             while base < pitems {
-                let want = if self.variant.dynamic {
-                    scaled(u64::from(items_per_dispatch), self.run, u64::from(vwg)) as u32
-                } else {
-                    items_per_dispatch
-                };
+                let want = scaled(u64::from(items_per_dispatch), self.run, u64::from(WG)) as u32;
                 let run = want.min(pitems - base);
-                let (gx, gy) = self.groups_of(run, vwg);
+                let (gx, gy) = self.groups(run);
                 let started = stamp();
                 let uniform = SearchU {
-                    ext,
                     dims: [nx as u32, ny as u32, nz as u32, base + run],
                     slab: [
                         zlo as u32,
@@ -832,7 +609,7 @@ impl GpuJlfSearch {
                     patch: [
                         p as u32,
                         u32::from(block.metric == PatchMetric::MeanSquares),
-                        gx * vwg,
+                        gx * WG,
                         base,
                     ],
                     pad: [count as u32, pcount as u32, 0, 0],
@@ -844,23 +621,12 @@ impl GpuJlfSearch {
                     [gx, gy],
                 )
                 .await?;
-                if let (true, Some(s)) = (self.variant.dynamic, started) {
+                if let Some(s) = started {
                     self.run = adapt(self.run, run == want, s.elapsed().as_secs_f64());
                 }
                 base += run;
             }
-            if !eligible.is_empty() {
-                let slab = self
-                    .slab
-                    .as_ref()
-                    .ok_or_else(|| GpuError::Internal("jlf atlas slab missing".into()))?;
-                self.box_search(block, slab, &eligible, &offsets_buf, &out_buf, ext, atlases)
-                    .await?;
-                prof::add("n.box_centres", eligible.len() as f64);
-            }
             let search_s = seconds(search_start);
-            prof::add("s.kernel", search_s);
-            prof::add("n.search_items", f64::from(items));
             let mut weight_s = 0.0;
             let mut tiled_runs = 0u64;
             if let (Some(args), Some((tiled, pipeline))) = (weigh, self.weigh.as_ref()) {
@@ -881,11 +647,7 @@ impl GpuJlfSearch {
                 let weight_start = stamp();
                 let mut base = 0u32;
                 while base < total {
-                    let want = if self.variant.dynamic {
-                        scaled(u64::from(per_dispatch), self.wrun, 1) as u32
-                    } else {
-                        per_dispatch
-                    };
+                    let want = scaled(u64::from(per_dispatch), self.wrun, 1) as u32;
                     let run = want.min(total - base);
                     let started = stamp();
                     let tiled = *tiled;
@@ -923,23 +685,19 @@ impl GpuJlfSearch {
                         [gx, gy],
                     )
                     .await?;
-                    if let (true, Some(s)) = (self.variant.dynamic, started) {
+                    if let Some(s) = started {
                         self.wrun = adapt(self.wrun, run == want, s.elapsed().as_secs_f64());
                     }
                     base += run;
                 }
                 weight_s = seconds(weight_start);
-                prof::add("w.kernel", weight_s);
-                let _sp = prof::span("w.readback");
                 weights.extend(
                     self.ctx
                         .read_f32_async(&wout, count * (atlases + 1))
                         .await?,
                 );
             }
-            let sp = prof::span("s.readback");
             let got = self.ctx.read_u32_async(&out_buf, items as usize).await?;
-            drop(sp);
             for (k, j) in got.iter().enumerate() {
                 let c = first + k / atlases;
                 if *j as usize >= block.list(c).len() {
@@ -950,7 +708,6 @@ impl GpuJlfSearch {
                     )));
                 }
             }
-            prof::hash(&got);
             best.extend(got);
             self.tiled_dispatches += tiled_runs;
             self.times[0] += search_s;
@@ -960,174 +717,8 @@ impl GpuJlfSearch {
         Ok((best, weights))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn box_search(
-        &self,
-        block: &SearchBlock<'_>,
-        slab: &AtlasSlab,
-        eligible: &[[u32; 2]],
-        offsets_buf: &wgpu::Buffer,
-        out_buf: &wgpu::Buffer,
-        ext: [i32; 4],
-        atlases: usize,
-    ) -> GpuResult<()> {
-        let Some(pipe) = self.boxpipe.as_ref() else {
-            return Ok(());
-        };
-        let Some(tbuf) = slab.target.as_ref() else {
-            return Ok(());
-        };
-        let [nx, ny, nz] = block.size;
-        let pr = block.patch_radius.map(|r| r as i32);
-        let sr = [ext[0] - pr[0], ext[1] - pr[1], ext[2] - pr[2]];
-        let BoxDims { lo, b, ds, dp, dq } = box_dims(block, eligible, ext);
-        let total = block.lists[0].len() as u64;
-        let limit = self.binding.min(256 << 20) / 4;
-        let jn = (limit / dp.max(1)).clamp(1, total);
-        let ncent = eligible.len();
-        let n = block.patch_len() as f32;
-        let cy = (eligible
-            .iter()
-            .map(|e| f64::from(block.target[0][e[0] as usize]))
-            .sum::<f64>()
-            / ncent as f64) as f32;
-        let ecent = self.storage("jlf box centres", eligible).await?;
-        let cstat = self.scratch("jlf box stats", ncent as u64 * 8).await?;
-        let bx = self.scratch("jlf box sums", 2 * ds * 4).await?;
-        let px = self.scratch("jlf box px", jn * dp * 4).await?;
-        let pxy = self.scratch("jlf box pxy", jn * dq * 4).await?;
-        let state = self.scratch("jlf box state", ncent as u64 * 16).await?;
-        let buffers = [
-            &slab.buffer,
-            tbuf,
-            offsets_buf,
-            &ecent,
-            &cstat,
-            &bx,
-            &px,
-            &pxy,
-            &state,
-            out_buf,
-        ];
-        let mut calls: Vec<(BoxU, [u32; 2])> = Vec::new();
-        let mut call = |mode: u32, a: usize, cx: f32, j0: u64, jcount: u64, items: u64| {
-            let (gx, gy) = self.groups_of(items as u32, WG);
-            calls.push((
-                BoxU {
-                    dims: [nx as u32, ny as u32, nz as u32, mode],
-                    slab: [slab.zlo as u32, slab.planes as u32, a as u32, 0],
-                    org: [lo[0], lo[1], lo[2], atlases as i32],
-                    ext: [b[0] as u32, b[1] as u32, b[2] as u32, ncent as u32],
-                    pr: [pr[0], pr[1], pr[2], 0],
-                    sr: [sr[0], sr[1], sr[2], 0],
-                    jb: [j0 as u32, jcount as u32, total as u32, gx * WG],
-                    sh: [cx, cy, n, 0.0],
-                },
-                [gx, gy],
-            ));
-        };
-        call(0, 0, 0.0, 0, 0, ncent as u64);
-        for a in 0..atlases {
-            let img = &block.atlases[a][0];
-            let cx = (eligible
-                .iter()
-                .map(|e| f64::from(img[e[0] as usize]))
-                .sum::<f64>()
-                / ncent as f64) as f32;
-            call(1, a, cx, 0, 0, ds);
-            let mut j0 = 0;
-            while j0 < total {
-                let jc = jn.min(total - j0);
-                call(2, a, cx, j0, jc, jc * dp);
-                call(3, a, cx, j0, jc, jc * dq);
-                call(4, a, cx, j0, jc, ncent as u64);
-                j0 += jc;
-            }
-        }
-        let per_atlas = 1 + 3 * total.div_ceil(jn) as usize;
-        let ends: Vec<usize> = (1..=atlases).map(|a| 1 + a * per_atlas).collect();
-        let list: Vec<(Vec<u8>, [u32; 2])> = calls
-            .iter()
-            .map(|(u, g)| (bytemuck::bytes_of(u).to_vec(), *g))
-            .collect();
-        let mut start = 0;
-        for end in ends {
-            self.dispatch_batch(pipe, &buffers, &list[start..end])
-                .await?;
-            start = end;
-        }
-        Ok(())
-    }
-
-    async fn dispatch_batch(
-        &self,
-        pipeline: &wgpu::ComputePipeline,
-        buffers: &[&wgpu::Buffer],
-        calls: &[(Vec<u8>, [u32; 2])],
-    ) -> GpuResult<()> {
-        let layout = pipeline.get_bind_group_layout(0);
-        let mut groups = Vec::with_capacity(calls.len());
-        for (bytes, _) in calls {
-            let ubuf = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("jlf box uniform"),
-                size: bytes.len() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.ctx.queue.write_buffer(&ubuf, 0, bytes);
-            let mut entries: Vec<wgpu::BindGroupEntry> = buffers
-                .iter()
-                .enumerate()
-                .map(|(i, b)| wgpu::BindGroupEntry {
-                    binding: i as u32,
-                    resource: b.as_entire_binding(),
-                })
-                .collect();
-            entries.push(wgpu::BindGroupEntry {
-                binding: buffers.len() as u32,
-                resource: ubuf.as_entire_binding(),
-            });
-            let group = self
-                .ctx
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("jlf box"),
-                    layout: &layout,
-                    entries: &entries,
-                });
-            groups.push((group, ubuf));
-        }
-        let mut enc = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("jlf box"),
-            });
-        {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("jlf box"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipeline);
-            for ((group, _), (_, g)) in groups.iter().zip(calls) {
-                pass.set_bind_group(0, group, &[]);
-                pass.dispatch_workgroups(g[0], g[1], 1);
-            }
-        }
-        self.ctx
-            .scoped_async("jlf box", 0, || {
-                self.ctx.queue.submit(Some(enc.finish()));
-            })
-            .await?;
-        self.ctx.sync_async().await
-    }
-
     fn groups(&self, items: u32) -> (u32, u32) {
-        self.groups_of(items, WG)
-    }
-
-    fn groups_of(&self, items: u32, wg: u32) -> (u32, u32) {
-        let groups = items.div_ceil(wg);
+        let groups = items.div_ceil(WG);
         if groups <= self.max_groups {
             (groups, 1)
         } else {
@@ -1434,13 +1025,11 @@ impl GpuJlfSearch {
                     }
                 }
             }
-            let (r0, r1) = if self.variant.legacy {
-                ([0, 0, a], [nx, ny, b])
-            } else {
-                if bmin[0] == usize::MAX {
-                    a = b;
-                    continue;
-                }
+            if bmin[0] == usize::MAX {
+                a = b;
+                continue;
+            }
+            let (r0, r1) = {
                 let lo = [
                     bmin[0].saturating_sub(reach[0]),
                     bmin[1].saturating_sub(reach[1]),
@@ -1462,8 +1051,7 @@ impl GpuJlfSearch {
                 r0[0] + t % bw + nx * (r0[1] + (t / bw) % bh + ny * (r0[2] + t / (bw * bh)))
             };
             self.gathers += 1;
-            let sp = prof::span("gp.host_prep");
-            let (t_lo, t_hi) = (0usize, bw * bh * bd);
+            let voxels = bw * bh * bd;
             let ga = r0[2].saturating_sub(rs);
             let gb = (r1[2] + rs).min(nz);
             let apl = (gb - ga) * plane;
@@ -1491,7 +1079,6 @@ impl GpuJlfSearch {
                     co.extend_from_slice(&pc.offsets[k * n..(k + 1) * n]);
                 }
             }
-            let voxels = t_hi - t_lo;
             let mask: Vec<u32> = match &input.mask {
                 Some(m) => (0..voxels).map(|t| u32::from(m[region(t)] != 0)).collect(),
                 None => vec![1; voxels],
@@ -1501,8 +1088,6 @@ impl GpuJlfSearch {
                 .iter()
                 .map(|o| [o[0] as i32, o[1] as i32, o[2] as i32, 0])
                 .collect();
-            drop(sp);
-            let sp = prof::span("gp.upload");
             let atlas_buf = self.storage("jlf gather atlases", &atlas).await?;
             let slots_buf = self.storage("jlf gather label slots", &slots).await?;
             let cmap_buf = self.storage("jlf gather centre map", &cmap).await?;
@@ -1516,19 +1101,14 @@ impl GpuJlfSearch {
             let out_buf = self
                 .scratch("jlf gather output", (out_len as u64) * 4)
                 .await?;
-            drop(sp);
             let per_voxel = (p * n * (modalities + 1)) as u64;
             let per_dispatch =
                 (WORK_PER_DISPATCH / per_voxel.max(1)).clamp(u64::from(WG), 1 << 22) as usize;
             let gather_start = stamp();
-            let mut first = t_lo;
-            while first < t_hi {
-                let want = if self.variant.dynamic {
-                    scaled(per_dispatch as u64, self.grun, u64::from(WG)) as usize
-                } else {
-                    per_dispatch
-                };
-                let run = want.min(t_hi - first);
+            let mut first = 0usize;
+            while first < voxels {
+                let want = scaled(per_dispatch as u64, self.grun, u64::from(WG)) as usize;
+                let run = want.min(voxels - first);
                 let started = stamp();
                 let (gx, gy) = self.groups(run as u32);
                 let uniform = GatherU {
@@ -1541,7 +1121,7 @@ impl GpuJlfSearch {
                         apl as u32,
                         u32::from(voting),
                     ],
-                    e: [first as u32, t_lo as u32, 0, 0],
+                    e: [first as u32, 0, 0, 0],
                     f: [r0[0] as u32, r0[1] as u32, bw as u32, bh as u32],
                 };
                 self.dispatch(
@@ -1554,17 +1134,13 @@ impl GpuJlfSearch {
                     [gx, gy],
                 )
                 .await?;
-                if let (true, Some(s)) = (self.variant.dynamic, started) {
+                if let Some(s) = started {
                     self.grun = adapt(self.grun, run == want, s.elapsed().as_secs_f64());
                 }
                 first += run;
             }
             self.times[2] += seconds(gather_start);
-            prof::add("gp.kernel", seconds(gather_start));
-            let sp = prof::span("gp.readback");
             let rec = self.ctx.read_u32_async(&out_buf, out_len).await?;
-            drop(sp);
-            let sp = prof::span("gp.unpack");
             for t in 0..voxels {
                 let v = region(t);
                 let r = &rec[t * rsize..(t + 1) * rsize];
@@ -1590,7 +1166,6 @@ impl GpuJlfSearch {
                     }
                 }
             }
-            drop(sp);
             a = b;
         }
         Ok(())
@@ -1625,17 +1200,12 @@ async fn fuse_on_gpu(
     opts: &JlfOptions,
     cancel: Option<&AtomicBool>,
 ) -> RegResult<JlfOutput> {
-    let sp = prof::span("g.parts");
     let parts = FusionParts::new(input, opts)?;
-    drop(sp);
-    let sp = prof::span("g.compile_gather");
     let gather = search
         .ctx
         .compile_async("k_jlf_gather", GATHER_SRC, "k_jlf_gather")
         .await
         .map_err(gerr)?;
-    drop(sp);
-    let sp = prof::span("g.slots_acc");
     let [nx, ny, nz] = input.size;
     let plane = nx * ny;
     let n = input.atlases.len();
@@ -1664,7 +1234,6 @@ async fn fuse_on_gpu(
     let rp = input_reach(&full.patch);
     let mut acc = full.parts.accumulators();
     let per_plane = full.parts.active_per_plane();
-    drop(sp);
     let pc = opts.metric == PatchMetric::PearsonCorrelation;
     let mut next = 0usize;
     let mut z0 = 0usize;
@@ -1676,16 +1245,8 @@ async fn fuse_on_gpu(
             total += per_plane[z1];
             z1 += 1;
         }
-        if search.variant.legacy {
-            z1 = (z0 + (search.block_voxels(input.size, width) / plane).max(1)).min(nz);
-        }
-        let sp = prof::span("g.active");
         let (centres, list_of) = full.parts.active(z0 * plane, z1 * plane);
-        drop(sp);
-        let sp = prof::span("g.search_patches");
         let patches = full.parts.search_patches(&centres);
-        drop(sp);
-        let sp = prof::span("g.search_weigh");
         let block = full.parts.block(&centres, &list_of, &patches);
         let (best, gpu) = if opts.nonnegative {
             (search.search_async(&block).await.map_err(gerr)?, Vec::new())
@@ -1705,9 +1266,6 @@ async fn fuse_on_gpu(
                 .await
                 .map_err(gerr)?
         };
-        drop(sp);
-        prof::add("n.centres", centres.len() as f64);
-        let sp = prof::span("g.redo_store");
         let mut weights = vec![0f32; centres.len() * n];
         let mut redo = Vec::new();
         for c in 0..centres.len() {
@@ -1755,8 +1313,6 @@ async fn fuse_on_gpu(
                 entry.offsets.push(pack(*off));
             }
         }
-        drop(sp);
-        let _sp = prof::span("g.gather");
         let ready = if z1 == nz { nz } else { z1.saturating_sub(rp) };
         if ready > next {
             search
@@ -1769,7 +1325,6 @@ async fn fuse_on_gpu(
         z0 = z1;
     }
     cancelled(cancel)?;
-    let _sp = prof::span("g.finish");
     Ok(full.parts.finish(acc))
 }
 

@@ -53,8 +53,6 @@ pub struct SearchBlock<'a> {
     pub patches: &'a [f32],
     /// The atlases, each with its modalities (flat, x fastest).
     pub atlases: &'a [Vec<Vec<f32>>],
-    /// The target modalities (flat, x fastest).
-    pub target: &'a [Vec<f32>],
     /// The atlas modalities the search compares (the first ones).
     pub modalities: usize,
     /// The patch similarity.

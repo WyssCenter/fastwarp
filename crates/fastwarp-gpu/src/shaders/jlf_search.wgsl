@@ -61,108 +61,158 @@ fn inside(p: vec3<i32>) -> bool {
     && p.z < i32(u.dims.z);
 }
 
+fn score(sx: f32, sxx: f32, sxy: f32, sdd: f32, n: f32, xbad: bool, ok: ptr<function, bool>) -> f32 {
+  var sim = FLT_MAX;
+  var usable = true;
+  if (n >= 3.0) {
+    if (u.pw.y == 0u) {
+      if (xbad) {
+        sim = 0.0;
+      } else {
+        let variance = sxx - sx * sx / n;
+        let s2 = sxy * sxy;
+        let positive = !is_nan(sxy) && sxy > 0.0;
+        var measure = 0.0;
+        if (is_pos_inf(variance)) {
+          if (!finite(s2)) {
+            usable = false;
+          }
+        } else if (finite(variance) && variance > FLT_EPSILON) {
+          if (is_nan(s2)) {
+            usable = false;
+          } else if (is_pos_inf(s2)) {
+            if (positive) {
+              measure = bitcast<f32>(0x7f800000u);
+            } else {
+              usable = false;
+            }
+          } else {
+            measure = s2 / variance;
+          }
+        }
+        if (positive) {
+          sim = -measure;
+        } else {
+          sim = measure;
+        }
+      }
+    } else if (xbad) {
+      usable = false;
+    } else {
+      sim = sdd / n;
+    }
+  }
+  *ok = usable && !is_nan(sim) && !is_pos_inf(sim);
+  return sim;
+}
+
 @compute @workgroup_size(64)
 fn k_jlf_search(@builtin(global_invocation_id) gid: vec3<u32>) {
   let t = u.pw.w + gid.x + gid.y * u.pw.z;
-  if (t >= u.dims.w) {
-    return;
-  }
+  let count = u.pad.x;
   let atlases = u.slab.z;
-  let c = t / atlases;
-  let a = t % atlases;
-  let rec = centres[c];
+  let lane = t % 64u;
+  let grp = t / 64u;
+  let a = grp % atlases;
+  let chunk = grp / atlases;
+  let c = chunk * 64u + lane;
+  let live = t < u.dims.w && c < count;
   let nx = u.dims.x;
   let ny = u.dims.y;
   let plane = nx * ny;
-  let at = vec3<i32>(i32(rec.x % nx), i32((rec.x / nx) % ny), i32(rec.x / plane));
   let p = u.pw.x;
   let used = u.slab.w;
   let zlo = i32(u.slab.x);
   let planes = u.slab.y;
-  let ybase = c * p * used;
+  var rec = vec4<u32>(0u);
+  if (live) {
+    rec = centres[c];
+  }
+  let at = vec3<i32>(i32(rec.x % nx), i32((rec.x / nx) % ny), i32(rec.x / plane));
+  if (!live) {
+    return;
+  }
+  let ybase = chunk * p * used * 64u + lane;
   var found = false;
   var best = 0.0;
   var best_j = 0u;
-  for (var j = 0u; j < rec.z; j = j + 1u) {
-    let s = at + offsets[rec.y + j].xyz;
-    if (!inside(s)) {
-      continue;
-    }
-    var sx = 0.0;
-    var sxx = 0.0;
-    var sxy = 0.0;
-    var sdd = 0.0;
-    var n = 0.0;
-    var xbad = false;
-    var count = ybase;
-    for (var m = 0u; m < used; m = m + 1u) {
-      let mbase = (a * used + m) * planes;
-      for (var k = 0u; k < p; k = k + 1u) {
-        let yv = tpatch[count];
-        count = count + 1u;
-        let q = s + poffsets[k].xyz;
-        if (!inside(q) || !finite(yv)) {
-          continue;
-        }
-        let x = atlas[(mbase + u32(q.z - zlo)) * plane + u32(q.y) * nx + u32(q.x)];
-        n = n + 1.0;
-        if (!finite(x)) {
-          xbad = true;
-          continue;
-        }
-        sx = sx + x;
-        sxx = sxx + x * x;
-        sxy = sxy + x * yv;
-        let d = yv - x;
-        sdd = sdd + d * d;
-      }
-    }
-    var sim = FLT_MAX;
-    var usable = true;
-    if (n >= 3.0) {
-      if (u.pw.y == 0u) {
-        if (xbad) {
-          sim = 0.0;
-        } else {
-          let variance = sxx - sx * sx / n;
-          let s2 = sxy * sxy;
-          let positive = !is_nan(sxy) && sxy > 0.0;
-          var measure = 0.0;
-          if (is_pos_inf(variance)) {
-            if (!finite(s2)) {
-              usable = false;
-            }
-          } else if (finite(variance) && variance > FLT_EPSILON) {
-            if (is_nan(s2)) {
-              usable = false;
-            } else if (is_pos_inf(s2)) {
-              if (positive) {
-                measure = bitcast<f32>(0x7f800000u);
-              } else {
-                usable = false;
-              }
+  for (var j = 0u; j < rec.z; j = j + 2u) {
+    let s0 = at + offsets[rec.y + min(j + 0u, rec.z - 1u)].xyz;
+    let v0 = j + 0u < rec.z && inside(s0);
+    var sx0 = 0.0;
+    var sxx0 = 0.0;
+    var sxy0 = 0.0;
+    var sdd0 = 0.0;
+    var n0 = 0.0;
+    var xbad0 = false;
+    let s1 = at + offsets[rec.y + min(j + 1u, rec.z - 1u)].xyz;
+    let v1 = j + 1u < rec.z && inside(s1);
+    var sx1 = 0.0;
+    var sxx1 = 0.0;
+    var sxy1 = 0.0;
+    var sdd1 = 0.0;
+    var n1 = 0.0;
+    var xbad1 = false;
+    if (v0 || v1) {
+      var count_i = ybase;
+      for (var m = 0u; m < used; m = m + 1u) {
+        let mbase = (a * used + m) * planes;
+        for (var k = 0u; k < p; k = k + 1u) {
+          let yv = tpatch[count_i];
+          count_i = count_i + 64u;
+          if (!finite(yv)) {
+            continue;
+          }
+          let po = poffsets[k].xyz;
+          let q0 = s0 + po;
+          if (v0 && inside(q0)) {
+            let x = atlas[(mbase + u32(q0.z - zlo)) * plane + u32(q0.y) * nx + u32(q0.x)];
+            n0 = n0 + 1.0;
+            if (!finite(x)) {
+              xbad0 = true;
             } else {
-              measure = s2 / variance;
+              sx0 = sx0 + x;
+              sxx0 = sxx0 + x * x;
+              sxy0 = sxy0 + x * yv;
+              let d = yv - x;
+              sdd0 = sdd0 + d * d;
             }
           }
-          if (positive) {
-            sim = -measure;
-          } else {
-            sim = measure;
+          let q1 = s1 + po;
+          if (v1 && inside(q1)) {
+            let x = atlas[(mbase + u32(q1.z - zlo)) * plane + u32(q1.y) * nx + u32(q1.x)];
+            n1 = n1 + 1.0;
+            if (!finite(x)) {
+              xbad1 = true;
+            } else {
+              sx1 = sx1 + x;
+              sxx1 = sxx1 + x * x;
+              sxy1 = sxy1 + x * yv;
+              let d = yv - x;
+              sdd1 = sdd1 + d * d;
+            }
           }
         }
-      } else if (xbad) {
-        usable = false;
-      } else {
-        sim = sdd / n;
       }
     }
-    usable = usable && !is_nan(sim) && !is_pos_inf(sim);
-    if (usable && (!found || sim < best)) {
-      found = true;
-      best = sim;
-      best_j = j;
+    if (v0) {
+      var ok0 = false;
+      let sim0 = score(sx0, sxx0, sxy0, sdd0, n0, xbad0, &ok0);
+      if (ok0 && (!found || sim0 < best)) {
+        found = true;
+        best = sim0;
+        best_j = j + 0u;
+      }
+    }
+    if (v1) {
+      var ok1 = false;
+      let sim1 = score(sx1, sxx1, sxy1, sdd1, n1, xbad1, &ok1);
+      if (ok1 && (!found || sim1 < best)) {
+        found = true;
+        best = sim1;
+        best_j = j + 1u;
+      }
     }
   }
-  best_out[t] = best_j;
+  best_out[c * atlases + a] = best_j;
 }

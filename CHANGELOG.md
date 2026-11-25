@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Changed: joint label fusion on a dedicated GPU is 2.5 to 3.6 times faster with the same labels,
+  offsets and intensities to the bit. The patch search kernel handles 64 neighbouring voxels of
+  one atlas per workgroup and two candidate offsets per thread, the size of each dispatch follows
+  the measured kernel time, the GPU mode cuts the image into blocks by the number of fused voxels
+  and gathers the votes only around them, and the host steps around the kernels run in parallel.
+  On an RTX PRO 6000, `mode="gpu"`: deep7t with 9 atlases 12.1 s to 3.4 s, a 1 mm brain with 5
+  atlases 9.7 s to 3.4 s, with 20 atlases 23.2 s to 9.3 s.
 - Changed: while a level of a linear stage runs on the GPU, a second thread smooths the images
   and draws the sample points of the next level (same results to the bit).
 - Changed: the composite `.h5` files are written without building the whole file in memory
