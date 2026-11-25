@@ -214,6 +214,7 @@ pub struct GpuJlfSearch {
     run: u32,
     wrun: u32,
     grun: u32,
+    rate: [f64; 3],
     transpose: wgpu::ComputePipeline,
 }
 
@@ -231,6 +232,28 @@ fn adapt(scale: u32, full: bool, dt: f64) -> u32 {
 
 fn scaled(base: u64, scale: u32, unit: u64) -> u64 {
     (base * u64::from(scale)).min(1 << 24) / unit * unit
+}
+
+/// Seconds one dispatch should take at the slowest rate measured so far, well below the 2 s
+/// watchdog of Windows display drivers.
+const TARGET_DISPATCH_S: f64 = 0.1;
+
+/// `want` items, at most as many as take [`TARGET_DISPATCH_S`] at `rate` seconds per item
+/// (a multiple of `unit`, at least one `unit`).
+fn capped(want: u64, rate: f64, unit: u64) -> u64 {
+    if rate > 0.0 {
+        let cap = ((TARGET_DISPATCH_S / rate) as u64 / unit * unit).max(unit);
+        want.min(cap)
+    } else {
+        want
+    }
+}
+
+/// The rate per item after a dispatch of `items` took `seconds`: the new rate when it is
+/// slower, otherwise the old one halved toward it, so one slow first dispatch (shader warm-up)
+/// stops limiting the dispatches after a few, while a dense slab limits the next one at once.
+fn slowest(rate: f64, seconds: f64, items: u64) -> f64 {
+    (seconds / items.max(1) as f64).max(rate * 0.5)
 }
 
 impl GpuJlfSearch {
@@ -268,6 +291,7 @@ impl GpuJlfSearch {
             run: 1,
             wrun: 1,
             grun: 1,
+            rate: [0.0; 3],
             transpose,
             pipeline,
             ctx,
@@ -451,6 +475,10 @@ impl GpuJlfSearch {
         block: &SearchBlock<'_>,
         weigh: Option<&WeighArgs<'_>>,
     ) -> GpuResult<(Vec<u32>, Vec<f32>)> {
+        self.run = 1;
+        self.wrun = 1;
+        self.grun = 1;
+        self.rate = [0.0; 3];
         let atlases = block.atlases.len();
         let centres = block.centres.len();
         let mut best = Vec::with_capacity(centres * atlases);
@@ -594,7 +622,11 @@ impl GpuJlfSearch {
             ];
             let mut base = 0u32;
             while base < pitems {
-                let want = scaled(u64::from(items_per_dispatch), self.run, u64::from(WG)) as u32;
+                let want = capped(
+                    scaled(u64::from(items_per_dispatch), self.run, u64::from(WG)),
+                    self.rate[0],
+                    u64::from(WG),
+                ) as u32;
                 let run = want.min(pitems - base);
                 let (gx, gy) = self.groups(run);
                 let started = stamp();
@@ -622,7 +654,9 @@ impl GpuJlfSearch {
                 )
                 .await?;
                 if let Some(s) = started {
-                    self.run = adapt(self.run, run == want, s.elapsed().as_secs_f64());
+                    let dt = s.elapsed().as_secs_f64();
+                    self.run = adapt(self.run, run == want, dt);
+                    self.rate[0] = slowest(self.rate[0], dt, u64::from(run));
                 }
                 base += run;
             }
@@ -647,7 +681,11 @@ impl GpuJlfSearch {
                 let weight_start = stamp();
                 let mut base = 0u32;
                 while base < total {
-                    let want = scaled(u64::from(per_dispatch), self.wrun, 1) as u32;
+                    let want = capped(
+                        scaled(u64::from(per_dispatch), self.wrun, 1),
+                        self.rate[1],
+                        1,
+                    ) as u32;
                     let run = want.min(total - base);
                     let started = stamp();
                     let tiled = *tiled;
@@ -686,7 +724,9 @@ impl GpuJlfSearch {
                     )
                     .await?;
                     if let Some(s) = started {
-                        self.wrun = adapt(self.wrun, run == want, s.elapsed().as_secs_f64());
+                        let dt = s.elapsed().as_secs_f64();
+                        self.wrun = adapt(self.wrun, run == want, dt);
+                        self.rate[1] = slowest(self.rate[1], dt, u64::from(run));
                     }
                     base += run;
                 }
@@ -1107,7 +1147,11 @@ impl GpuJlfSearch {
             let gather_start = stamp();
             let mut first = 0usize;
             while first < voxels {
-                let want = scaled(per_dispatch as u64, self.grun, u64::from(WG)) as usize;
+                let want = capped(
+                    scaled(per_dispatch as u64, self.grun, u64::from(WG)),
+                    self.rate[2],
+                    u64::from(WG),
+                ) as usize;
                 let run = want.min(voxels - first);
                 let started = stamp();
                 let (gx, gy) = self.groups(run as u32);
@@ -1135,7 +1179,9 @@ impl GpuJlfSearch {
                 )
                 .await?;
                 if let Some(s) = started {
-                    self.grun = adapt(self.grun, run == want, s.elapsed().as_secs_f64());
+                    let dt = s.elapsed().as_secs_f64();
+                    self.grun = adapt(self.grun, run == want, dt);
+                    self.rate[2] = slowest(self.rate[2], dt, run as u64);
                 }
                 first += run;
             }
