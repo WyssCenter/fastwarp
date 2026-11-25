@@ -420,8 +420,9 @@ fn field_at(chain: &TransformChain, index: usize) -> Result<&DisplacementField> 
 /// Writes the transforms of `out` under `prefix` in `layout` (ANTs naming, the prefix taken as
 /// text) and, with `write_warped`, `<prefix>_Warped.nii.gz`; returns the paths written, in the
 /// order composites, `0GenericAffine.mat`, warp, inverse warp, warped image. The files are
-/// written in parallel: when one fails, the others are still written and one of the errors is
-/// returned.
+/// written in parallel, each to a temporary name in its folder that is renamed when it is
+/// complete, so a failure leaves no truncated file; when one fails the others are still written
+/// and the first error in that order is returned.
 pub fn write_stage_outputs(
     prefix: &Path,
     out: &StagesOutput,
@@ -433,17 +434,39 @@ pub fn write_stage_outputs(
         files.push((path, content));
         Ok(())
     })?;
-    files
+    let written: Vec<Result<PathBuf>> = files
         .into_par_iter()
-        .map(|(path, content)| {
-            let file = std::fs::File::create(&path).map_err(|source| RegError::Io {
-                path: path.clone(),
-                source,
-            })?;
-            content.write_to(&path, std::io::BufWriter::with_capacity(1 << 20, file))?;
-            Ok(path)
+        .map(|(path, content)| write_complete(&path, content).map(|()| path))
+        .collect();
+    written.into_iter().collect()
+}
+
+/// Writes `content` to a temporary file next to `path` and renames it to `path` when it is
+/// complete; the temporary file is removed when writing fails.
+fn write_complete(path: &Path, content: StageContent<'_>) -> Result<()> {
+    let io = |source| RegError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".{name}.{}.{n}.part", std::process::id()));
+    let result = std::fs::File::create(&tmp)
+        .map_err(io)
+        .and_then(|file| {
+            content
+                .write_to(path, std::io::BufWriter::with_capacity(1 << 20, file))
+                .map(drop)
         })
-        .collect()
+        .and_then(|()| std::fs::rename(&tmp, path).map_err(io));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// One file of [`write_stage_outputs`], to be serialised into a writer.
@@ -491,7 +514,8 @@ impl StageContent<'_> {
 
 /// Calls `visit` for each file [`write_stage_outputs`] writes, in the same order, with its path
 /// (`prefix` with the ANTs suffix appended) and its content. Nothing is serialised until the
-/// visitor asks, so a visitor that writes and drops each file holds one file at a time.
+/// visitor asks, so a visitor that writes and drops each file before the next holds one file
+/// at a time ([`write_stage_outputs`] collects them and writes them in parallel).
 pub fn visit_stage_outputs<'a>(
     prefix: &Path,
     out: &'a StagesOutput,
