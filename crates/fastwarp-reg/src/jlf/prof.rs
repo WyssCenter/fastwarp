@@ -1,12 +1,15 @@
 //! Phase timings of a fusion, printed to stderr when `FASTWARP_JLF_PROFILE` is set. Not a stable API.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 static TIMES: Mutex<Vec<(&'static str, f64, u64)>> = Mutex::new(Vec::new());
 static HASH: Mutex<u64> = Mutex::new(0xcbf2_9ce4_8422_2325);
 
 /// Mixes `values` into the hash of the search offsets.
 pub fn hash(values: &[u32]) {
+    if !enabled() {
+        return;
+    }
     if let Ok(mut h) = HASH.lock() {
         for v in values {
             for b in v.to_le_bytes() {
@@ -19,11 +22,15 @@ pub fn hash(values: &[u32]) {
 
 /// Whether `FASTWARP_JLF_PROFILE` is set.
 pub fn enabled() -> bool {
-    std::env::var_os("FASTWARP_JLF_PROFILE").is_some()
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FASTWARP_JLF_PROFILE").is_some())
 }
 
 /// Adds `value` to the phase `name`.
 pub fn add(name: &'static str, value: f64) {
+    if !enabled() {
+        return;
+    }
     if let Ok(mut t) = TIMES.lock() {
         if let Some(e) = t.iter_mut().find(|e| e.0 == name) {
             e.1 += value;
