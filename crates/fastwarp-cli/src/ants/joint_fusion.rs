@@ -643,6 +643,7 @@ pub fn run_joint_fusion_plan(
     for f in plan.output_names() {
         images.check_folder(&f)?;
     }
+    let load_span = fastwarp_reg::jlf::prof::span("cli.load");
     let mut load = Loader {
         images: &mut images,
         grid: None,
@@ -708,14 +709,19 @@ pub fn run_joint_fusion_plan(
     opts.posteriors = plan.retain_posteriors;
     opts.voting_weights = plan.retain_voting_weights;
     opts.device = device;
+    drop(load_span);
     let fused = match device {
         JlfDevice::Cpu => joint_fusion(&input, &opts, cancel.as_deref()),
         _ => {
+            let sp = fastwarp_reg::jlf::prof::span("cli.open_gpu");
             let ctx = open_gpu(adapter)?;
+            drop(sp);
+            let _sp = fastwarp_reg::jlf::prof::span("cli.fusion");
             fastwarp_gpu::jlf::joint_fusion(Arc::new(ctx), &input, &opts, cancel.as_deref())
         }
     }
     .map_err(reg_failure)?;
+    let emit_span = fastwarp_reg::jlf::prof::span("cli.emit");
     drop(input);
     let mut files = Vec::new();
     let mut emit = |images: &mut Images,
@@ -759,9 +765,12 @@ pub fn run_joint_fusion_plan(
             emit(&mut images, Path::new(format), name, KeptData::Real(data))?;
         }
     }
+    let kept = images.into_kept();
+    drop(emit_span);
+    fastwarp_reg::jlf::prof::report(&format!("{device:?}"));
     Ok(JointFusionOutcome {
         files,
-        kept: images.into_kept(),
+        kept,
         label_set: fused.label_set,
     })
 }

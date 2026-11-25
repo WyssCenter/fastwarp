@@ -39,6 +39,8 @@
 //! threads.
 
 mod patch;
+#[doc(hidden)]
+pub mod prof;
 mod search;
 mod solve;
 #[cfg(test)]
@@ -691,17 +693,20 @@ async fn fuse<S: PatchSearch>(
     search: &mut S,
     cancel: Option<&AtomicBool>,
 ) -> Result<JlfOutput> {
+    let sp = prof::span("h.parts_acc");
     let fusion = FusionParts::new(input, opts)?;
     let n = fusion.voxels;
     let set = fusion.set.clone();
     let atlases = input.atlases.len();
     let mut acc = fusion.accumulators();
+    drop(sp);
     let width = fusion.patch.len() * fusion.used();
     let block_voxels = search.block_voxels(input.size, width).max(1);
     let mut start = 0;
     while start < n {
         check_cancel(cancel)?;
         let end = start.saturating_add(block_voxels).min(n);
+        let sp = prof::span("h.active_patches");
         let (centres, list_of): (Vec<usize>, Vec<u32>) = (start..end)
             .into_par_iter()
             .filter_map(|v| fusion.list_at(v).map(|l| (v, l)))
@@ -711,7 +716,11 @@ async fn fuse<S: PatchSearch>(
             .flat_map_iter(|&v| fusion.search_patch(v))
             .collect();
         let block = fusion.block(&centres, &list_of, &patches);
+        drop(sp);
+        let sp = prof::span("h.search");
         let best = search.search(&block).await?;
+        drop(sp);
+        let sp = prof::span("h.cpu_rest");
         drop(patches);
         if best.len() != centres.len() * atlases
             || best.chunks(atlases.max(1)).zip(&list_of).any(|(b, l)| {
@@ -737,9 +746,11 @@ async fn fuse<S: PatchSearch>(
                 fusion.add(c, &mut acc, &set);
             }
         }
+        drop(sp);
         start = end;
     }
     check_cancel(cancel)?;
+    let _sp = prof::span("h.finish");
     Ok(fusion.finish(acc))
 }
 

@@ -42,6 +42,7 @@ use bytemuck::{Pod, Zeroable};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
+use fastwarp_reg::jlf::prof;
 use fastwarp_reg::jlf::{
     float_almost_equal, joint_fusion_with, Accumulators, FusionParts, JlfDevice, JlfInput,
     JlfOptions, JlfOutput, PatchMetric, PatchSearch, SearchBlock,
@@ -479,7 +480,10 @@ impl GpuJlfSearch {
             let z1 = block.centres[last - 1] / plane;
             let lo = z0.saturating_sub(reach);
             let hi = (z1 + reach + 1).min(nz);
+            let sp = prof::span("s.slab");
             self.ensure_slab(block, lo, hi, budget_planes).await?;
+            drop(sp);
+            let sp = prof::span("s.upload");
             let slab = self
                 .slab
                 .as_ref()
@@ -507,6 +511,7 @@ impl GpuJlfSearch {
             let out_buf = self
                 .storage("jlf best offsets", &vec![UNSET; items as usize])
                 .await?;
+            drop(sp);
             let search_start = stamp();
             let slab = self
                 .slab
@@ -550,6 +555,8 @@ impl GpuJlfSearch {
                 base += run;
             }
             let search_s = seconds(search_start);
+            prof::add("s.kernel", search_s);
+            prof::add("n.search_items", f64::from(items));
             let mut weight_s = 0.0;
             let mut tiled_runs = 0u64;
             if let (Some(args), Some((tiled, pipeline))) = (weigh, self.weigh.as_ref()) {
@@ -606,13 +613,17 @@ impl GpuJlfSearch {
                     base += run;
                 }
                 weight_s = seconds(weight_start);
+                prof::add("w.kernel", weight_s);
+                let _sp = prof::span("w.readback");
                 weights.extend(
                     self.ctx
                         .read_f32_async(&wout, count * (atlases + 1))
                         .await?,
                 );
             }
+            let sp = prof::span("s.readback");
             let got = self.ctx.read_u32_async(&out_buf, items as usize).await?;
+            drop(sp);
             for (k, j) in got.iter().enumerate() {
                 let c = first + k / atlases;
                 if *j as usize >= block.list(c).len() {
@@ -623,6 +634,7 @@ impl GpuJlfSearch {
                     )));
                 }
             }
+            prof::hash(&got);
             best.extend(got);
             self.tiled_dispatches += tiled_runs;
             self.times[0] += search_s;
@@ -918,6 +930,7 @@ impl GpuJlfSearch {
                 b += 1;
             }
             self.gathers += 1;
+            let sp = prof::span("gp.host_prep");
             let ga = a.saturating_sub(rs);
             let gb = (b + rs).min(nz);
             let ca = a.saturating_sub(rp);
@@ -962,6 +975,8 @@ impl GpuJlfSearch {
                 .iter()
                 .map(|o| [o[0] as i32, o[1] as i32, o[2] as i32, 0])
                 .collect();
+            drop(sp);
+            let sp = prof::span("gp.upload");
             let atlas_buf = self.storage("jlf gather atlases", &atlas).await?;
             let slots_buf = self.storage("jlf gather label slots", &slots).await?;
             let cmap_buf = self.storage("jlf gather centre map", &cmap).await?;
@@ -975,6 +990,7 @@ impl GpuJlfSearch {
             let out_buf = self
                 .storage("jlf gather output", &vec![0u32; out_len])
                 .await?;
+            drop(sp);
             let per_voxel = (p * n * (modalities + 1)) as u64;
             let per_dispatch =
                 (WORK_PER_DISPATCH / per_voxel.max(1)).clamp(u64::from(WG), 1 << 22) as usize;
@@ -1008,7 +1024,11 @@ impl GpuJlfSearch {
                 first += run;
             }
             self.times[2] += seconds(gather_start);
+            prof::add("gp.kernel", seconds(gather_start));
+            let sp = prof::span("gp.readback");
             let rec = self.ctx.read_u32_async(&out_buf, out_len).await?;
+            drop(sp);
+            let sp = prof::span("gp.unpack");
             for t in 0..voxels {
                 let v = a * plane + t;
                 let r = &rec[t * rsize..(t + 1) * rsize];
@@ -1034,6 +1054,7 @@ impl GpuJlfSearch {
                     }
                 }
             }
+            drop(sp);
             a = b;
         }
         Ok(())
@@ -1068,12 +1089,17 @@ async fn fuse_on_gpu(
     opts: &JlfOptions,
     cancel: Option<&AtomicBool>,
 ) -> RegResult<JlfOutput> {
+    let sp = prof::span("g.parts");
     let parts = FusionParts::new(input, opts)?;
+    drop(sp);
+    let sp = prof::span("g.compile_gather");
     let gather = search
         .ctx
         .compile_async("k_jlf_gather", GATHER_SRC, "k_jlf_gather")
         .await
         .map_err(gerr)?;
+    drop(sp);
+    let sp = prof::span("g.slots_acc");
     let set = parts.label_set().to_vec();
     let slots = input
         .labels
@@ -1112,14 +1138,20 @@ async fn fuse_on_gpu(
     };
     let rp = input_reach(&full.patch);
     let mut acc = full.parts.accumulators();
+    drop(sp);
     let pc = opts.metric == PatchMetric::PearsonCorrelation;
     let mut next = 0usize;
     let mut z0 = 0usize;
     while z0 < nz {
         cancelled(cancel)?;
         let z1 = (z0 + per_block).min(nz);
+        let sp = prof::span("g.active");
         let (centres, list_of) = full.parts.active(z0 * plane, z1 * plane);
+        drop(sp);
+        let sp = prof::span("g.search_patches");
         let patches = full.parts.search_patches(&centres);
+        drop(sp);
+        let sp = prof::span("g.search_weigh");
         let block = full.parts.block(&centres, &list_of, &patches);
         let (best, gpu) = if opts.nonnegative {
             (search.search_async(&block).await.map_err(gerr)?, Vec::new())
@@ -1139,6 +1171,9 @@ async fn fuse_on_gpu(
                 .await
                 .map_err(gerr)?
         };
+        drop(sp);
+        prof::add("n.centres", centres.len() as f64);
+        let sp = prof::span("g.redo_store");
         let mut weights = vec![0f32; centres.len() * n];
         let mut redo = Vec::new();
         for c in 0..centres.len() {
@@ -1186,6 +1221,8 @@ async fn fuse_on_gpu(
                 entry.offsets.push(pack(*off));
             }
         }
+        drop(sp);
+        let _sp = prof::span("g.gather");
         let ready = if z1 == nz { nz } else { z1.saturating_sub(rp) };
         if ready > next {
             search
@@ -1198,6 +1235,7 @@ async fn fuse_on_gpu(
         z0 = z1;
     }
     cancelled(cancel)?;
+    let _sp = prof::span("g.finish");
     Ok(full.parts.finish(acc))
 }
 
