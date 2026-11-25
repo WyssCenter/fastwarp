@@ -73,6 +73,7 @@ struct Variant {
     kernel: usize,
     dynamic: bool,
     legacy: bool,
+    boxsum: bool,
 }
 
 impl Variant {
@@ -94,6 +95,7 @@ impl Variant {
                     "gk4" => v.kernel = 11,
                     "dyn" => v.dynamic = true,
                     "legacy" => v.legacy = true,
+                    "box" => v.boxsum = true,
                     _ => {}
                 }
             }
@@ -239,7 +241,24 @@ struct AtlasSlab {
     zlo: usize,
     planes: usize,
     buffer: wgpu::Buffer,
+    target: Option<wgpu::Buffer>,
+    finite: bool,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct BoxU {
+    dims: [u32; 4],
+    slab: [u32; 4],
+    org: [i32; 4],
+    ext: [u32; 4],
+    pr: [i32; 4],
+    sr: [i32; 4],
+    jb: [u32; 4],
+    sh: [f32; 4],
+}
+
+const BOX_SRC: &str = include_str!("shaders/jlf_box.wgsl");
 
 fn gerr(e: GpuError) -> RegError {
     RegError::Invalid {
@@ -275,6 +294,7 @@ pub struct GpuJlfSearch {
     run: u32,
     wrun: u32,
     grun: usize,
+    boxpipe: Option<wgpu::ComputePipeline>,
 }
 
 fn adapt(run: u32, ran: u32, dt: f64, unit: u32) -> u32 {
@@ -308,6 +328,11 @@ impl GpuJlfSearch {
         let pipeline = ctx
             .compile_async("k_jlf_search", src, "k_jlf_search")
             .await?;
+        let boxpipe = if variant.boxsum {
+            Some(ctx.compile_async("k_jlf_box", BOX_SRC, "k_jlf_box").await?)
+        } else {
+            None
+        };
         drop(sp);
         let limits = ctx.device.limits();
         let binding = limits
@@ -331,6 +356,7 @@ impl GpuJlfSearch {
             run: 0,
             wrun: 0,
             grun: 0,
+            boxpipe,
             pipeline,
             ctx,
         })
@@ -428,12 +454,21 @@ impl GpuJlfSearch {
             }
         }
         let buffer = self.storage("jlf atlas slab", &data).await?;
+        let (target, finite) = if self.boxpipe.is_some() && !block.target.is_empty() {
+            let t = &block.target[0][lo * plane..(lo + planes) * plane];
+            let finite = data.iter().all(|v| v.is_finite()) && t.iter().all(|v| v.is_finite());
+            (Some(self.storage("jlf target slab", t).await?), finite)
+        } else {
+            (None, false)
+        };
         self.uploads += 1;
         self.slab = Some(AtlasSlab {
             key,
             zlo: lo,
             planes,
             buffer,
+            target,
+            finite,
         });
         Ok(())
     }
@@ -619,6 +654,30 @@ impl GpuJlfSearch {
             };
             let pitems = (pcount * atlases) as u32;
             let centre_buf = self.storage("jlf centres", &recs).await?;
+            let boxed = self.boxpipe.is_some()
+                && block.metric == PatchMetric::PearsonCorrelation
+                && block.lists.len() == 1
+                && block.modalities == 1
+                && self.slab.as_ref().is_some_and(|s| s.finite);
+            let mut eligible: Vec<[u32; 2]> = Vec::new();
+            let search_buf = if boxed {
+                let mut srecs = recs.clone();
+                for (k, r) in srecs.iter_mut().enumerate() {
+                    let v = r[0] as usize;
+                    let q = [v % nx, (v / nx) % ny, v / plane];
+                    let interior = (0..3).all(|d| {
+                        q[d] >= ext[d] as usize && q[d] + (ext[d] as usize) < block.size[d]
+                    });
+                    let c = first + k;
+                    if interior && block.patches[c * width..(c + 1) * width].iter().all(|x| x.is_finite()) {
+                        r[2] = 0;
+                        eligible.push([v as u32, k as u32]);
+                    }
+                }
+                Some(self.storage("jlf search centres", &srecs).await?)
+            } else {
+                None
+            };
             let patch_values = &block.patches[first * width..last * width];
             let target_buf = if self.variant.transposed() {
                 let mut tr = vec![0f32; pcount * width];
@@ -644,7 +703,7 @@ impl GpuJlfSearch {
             let buffers = [
                 &slab.buffer,
                 &target_buf,
-                &centre_buf,
+                search_buf.as_ref().unwrap_or(&centre_buf),
                 &offsets_buf,
                 &patch_buf,
                 &out_buf,
@@ -692,6 +751,15 @@ impl GpuJlfSearch {
                     }
                 }
                 base += run;
+            }
+            if !eligible.is_empty() {
+                let slab = self
+                    .slab
+                    .as_ref()
+                    .ok_or_else(|| GpuError::Internal("jlf atlas slab missing".into()))?;
+                self.box_search(block, slab, &eligible, &offsets_buf, &out_buf, ext, atlases)
+                    .await?;
+                prof::add("n.box_centres", eligible.len() as f64);
             }
             let search_s = seconds(search_start);
             prof::add("s.kernel", search_s);
@@ -793,6 +861,171 @@ impl GpuJlfSearch {
             first = last;
         }
         Ok((best, weights))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn box_search(
+        &self,
+        block: &SearchBlock<'_>,
+        slab: &AtlasSlab,
+        eligible: &[[u32; 2]],
+        offsets_buf: &wgpu::Buffer,
+        out_buf: &wgpu::Buffer,
+        ext: [i32; 4],
+        atlases: usize,
+    ) -> GpuResult<()> {
+        let Some(pipe) = self.boxpipe.as_ref() else {
+            return Ok(());
+        };
+        let Some(tbuf) = slab.target.as_ref() else {
+            return Ok(());
+        };
+        let [nx, ny, nz] = block.size;
+        let plane = nx * ny;
+        let pr = block.patch_radius.map(|r| r as i32);
+        let sr = [ext[0] - pr[0], ext[1] - pr[1], ext[2] - pr[2]];
+        let mut lo = [i32::MAX; 3];
+        let mut hi = [i32::MIN; 3];
+        for e in eligible {
+            let v = e[0] as usize;
+            let q = [(v % nx) as i32, ((v / nx) % ny) as i32, (v / plane) as i32];
+            for d in 0..3 {
+                lo[d] = lo[d].min(q[d]);
+                hi[d] = hi[d].max(q[d]);
+            }
+        }
+        let b = [0, 1, 2].map(|d| (hi[d] - lo[d] + 1) as u64);
+        let ds = (b[0] + 2 * sr[0] as u64) * (b[1] + 2 * sr[1] as u64) * (b[2] + 2 * sr[2] as u64);
+        let dp = b[0] * (b[1] + 2 * pr[1] as u64) * (b[2] + 2 * pr[2] as u64);
+        let dq = b[0] * b[1] * (b[2] + 2 * pr[2] as u64);
+        let total = block.lists[0].len() as u64;
+        let limit = self.binding.min(1 << 30) / 4;
+        let jn = (limit / dp.max(1)).clamp(1, total);
+        let ncent = eligible.len();
+        let n = block.patch_len() as f32;
+        let cy = (eligible
+            .iter()
+            .map(|e| f64::from(block.target[0][e[0] as usize]))
+            .sum::<f64>()
+            / ncent as f64) as f32;
+        let ecent = self.storage("jlf box centres", eligible).await?;
+        let cstat = self.storage("jlf box stats", &vec![[0f32; 2]; ncent]).await?;
+        let bx = self.storage("jlf box sums", &vec![0f32; (2 * ds) as usize]).await?;
+        let px = self.storage("jlf box px", &vec![0f32; (jn * dp) as usize]).await?;
+        let pxy = self.storage("jlf box pxy", &vec![0f32; (jn * dq) as usize]).await?;
+        let state = self.storage("jlf box state", &vec![[0u32; 4]; ncent]).await?;
+        let buffers = [
+            &slab.buffer,
+            tbuf,
+            offsets_buf,
+            &ecent,
+            &cstat,
+            &bx,
+            &px,
+            &pxy,
+            &state,
+            out_buf,
+        ];
+        let mut calls: Vec<(BoxU, [u32; 2])> = Vec::new();
+        let mut call = |mode: u32, a: usize, cx: f32, j0: u64, jcount: u64, items: u64| {
+            let (gx, gy) = self.groups_of(items as u32, WG);
+            calls.push((
+                BoxU {
+                    dims: [nx as u32, ny as u32, nz as u32, mode],
+                    slab: [slab.zlo as u32, slab.planes as u32, a as u32, 0],
+                    org: [lo[0], lo[1], lo[2], atlases as i32],
+                    ext: [b[0] as u32, b[1] as u32, b[2] as u32, ncent as u32],
+                    pr: [pr[0], pr[1], pr[2], 0],
+                    sr: [sr[0], sr[1], sr[2], 0],
+                    jb: [j0 as u32, jcount as u32, total as u32, gx * WG],
+                    sh: [cx, cy, n, 0.0],
+                },
+                [gx, gy],
+            ));
+        };
+        call(0, 0, 0.0, 0, 0, ncent as u64);
+        for a in 0..atlases {
+            let img = &block.atlases[a][0];
+            let cx = (eligible
+                .iter()
+                .map(|e| f64::from(img[e[0] as usize]))
+                .sum::<f64>()
+                / ncent as f64) as f32;
+            call(1, a, cx, 0, 0, ds);
+            let mut j0 = 0;
+            while j0 < total {
+                let jc = jn.min(total - j0);
+                call(2, a, cx, j0, jc, jc * dp);
+                call(3, a, cx, j0, jc, jc * dq);
+                call(4, a, cx, j0, jc, ncent as u64);
+                j0 += jc;
+            }
+        }
+        let list: Vec<(Vec<u8>, [u32; 2])> = calls
+            .iter()
+            .map(|(u, g)| (bytemuck::bytes_of(u).to_vec(), *g))
+            .collect();
+        self.dispatch_batch(pipe, &buffers, &list).await
+    }
+
+    async fn dispatch_batch(
+        &self,
+        pipeline: &wgpu::ComputePipeline,
+        buffers: &[&wgpu::Buffer],
+        calls: &[(Vec<u8>, [u32; 2])],
+    ) -> GpuResult<()> {
+        let layout = pipeline.get_bind_group_layout(0);
+        let mut groups = Vec::with_capacity(calls.len());
+        for (bytes, _) in calls {
+            let ubuf = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("jlf box uniform"),
+                size: bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.ctx.queue.write_buffer(&ubuf, 0, bytes);
+            let mut entries: Vec<wgpu::BindGroupEntry> = buffers
+                .iter()
+                .enumerate()
+                .map(|(i, b)| wgpu::BindGroupEntry {
+                    binding: i as u32,
+                    resource: b.as_entire_binding(),
+                })
+                .collect();
+            entries.push(wgpu::BindGroupEntry {
+                binding: buffers.len() as u32,
+                resource: ubuf.as_entire_binding(),
+            });
+            let group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("jlf box"),
+                layout: &layout,
+                entries: &entries,
+            });
+            groups.push((group, ubuf));
+        }
+        let mut enc = self
+            .ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("jlf box"),
+            });
+        {
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("jlf box"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            for ((group, _), (_, g)) in groups.iter().zip(calls) {
+                pass.set_bind_group(0, group, &[]);
+                pass.dispatch_workgroups(g[0], g[1], 1);
+            }
+        }
+        self.ctx
+            .scoped_async("jlf box", 0, || {
+                self.ctx.queue.submit(Some(enc.finish()));
+            })
+            .await?;
+        self.ctx.sync_async().await
     }
 
     fn groups(&self, items: u32) -> (u32, u32) {
