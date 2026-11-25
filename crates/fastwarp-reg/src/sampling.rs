@@ -449,7 +449,9 @@ mod tests {
                                 count = 0;
                                 let mut p = g.index_to_point([i as f64, j as f64, k as f64]);
                                 for d in 0..3 {
-                                    p[d] += rng.normal(0.0, 1.0) * (spacing[d] / 3.0);
+                                    let r = (-2.0 * (1.0 - rng.open()).ln() * 1.0).sqrt();
+                                    let phi = 2.0 * std::f64::consts::PI * rng.open_upper();
+                                    p[d] += (0.0 + r * phi.cos()) * (spacing[d] / 3.0);
                                 }
                                 want.push(p);
                             }
