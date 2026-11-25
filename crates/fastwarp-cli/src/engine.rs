@@ -144,14 +144,17 @@ impl GpuCheckout {
             return;
         }
         self.gpu.release_idle();
-        let mut list = IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner());
-        if list.iter().any(|(k, _)| *k == self.key) {
-            return;
-        }
-        if list.len() >= MAX_IDLE_GPUS {
-            list.remove(0);
-        }
-        list.push((self.key, self.gpu));
+        let freed = {
+            let mut list = IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner());
+            if list.iter().any(|(k, _)| *k == self.key) {
+                Some((self.key, self.gpu))
+            } else {
+                let evicted = (list.len() >= MAX_IDLE_GPUS).then(|| list.remove(0));
+                list.push((self.key, self.gpu));
+                evicted
+            }
+        };
+        drop(freed);
     }
 }
 
@@ -164,7 +167,8 @@ impl std::ops::Deref for GpuCheckout {
 
 /// Frees the GPU devices that finished registrations of this process keep for the next one.
 pub fn release_idle_gpus() {
-    IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    let freed = std::mem::take(&mut *IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner()));
+    drop(freed);
 }
 
 /// The adapter choice and every `FASTWARP_GPU_*`, `DBSLOC_GPU_*` and `WGPU_*` variable,
@@ -186,13 +190,19 @@ fn gpu_key(adapter: Option<&str>) -> String {
 /// An idle backend opened for the same choice, or a new one from [`open_gpu`].
 fn checkout_gpu(adapter: Option<String>) -> Result<GpuCheckout, Failure> {
     let key = gpu_key(adapter.as_deref());
-    let idle = {
+    let (idle, lost) = {
         let mut list = IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner());
-        list.retain(|(_, g)| !g.context().is_lost());
-        list.iter()
+        let (lost, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *list)
+            .into_iter()
+            .partition(|(_, g)| g.context().is_lost());
+        *list = kept;
+        let idle = list
+            .iter()
             .position(|(k, _)| *k == key)
-            .map(|at| list.swap_remove(at).1)
+            .map(|at| list.swap_remove(at).1);
+        (idle, lost)
     };
+    drop(lost);
     let gpu = match idle {
         Some(g) => {
             g.reset_peak_allocated_bytes();
