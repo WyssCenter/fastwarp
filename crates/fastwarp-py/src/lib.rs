@@ -284,6 +284,28 @@ fn fits_gpu(
         .map_err(py_err)
 }
 
+#[pyfunction]
+#[pyo3(signature = (dims, channels, max, adapter=None, moving_dims=None, recipe=None))]
+fn registrations_at_once(
+    py: Python<'_>,
+    dims: [usize; 3],
+    channels: usize,
+    max: usize,
+    adapter: Option<String>,
+    moving_dims: Option<[usize; 3]>,
+    recipe: Option<Bound<'_, PyDict>>,
+) -> PyResult<usize> {
+    if channels == 0 {
+        return Err(PyValueError::new_err("channels must be at least 1"));
+    }
+    let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
+    let masks = engine::MaskDims::default();
+    py.detach(move || {
+        engine::registrations_at_once(dims, moving_dims, channels, adapter, &recipe, &masks, max)
+    })
+    .map_err(py_err)
+}
+
 /// A reference grid from Python: size, spacing, origin, direction (ITK / LPS).
 type GridArgs = ([usize; 3], Vec3, Vec3, Mat3);
 
@@ -551,6 +573,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(gpu_info, m)?)?;
     m.add_function(wrap_pyfunction!(release_idle_gpus, m)?)?;
     m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
+    m.add_function(wrap_pyfunction!(registrations_at_once, m)?)?;
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;

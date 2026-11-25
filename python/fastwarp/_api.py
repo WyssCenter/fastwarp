@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from os import PathLike, fspath
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from ._core import cohort_recipe as _cohort_recipe
 from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
+from ._core import registrations_at_once as _registrations_at_once
 
 #: The citation of FastWarp as one line of text, for method sections and logs.
 CITATION = (
@@ -1035,6 +1037,27 @@ def _warp_file(image: Any, reference: tuple, composite: str, path: str, labels: 
     )
 
 
+_ATLASES_AT_ONCE = 4
+
+
+def _atlases_at_once(
+    target: Any, atlases: Sequence[Any], iso_mm: float, adapter: str | None, recipe: Any
+) -> int:
+    if len(atlases) < 2:
+        return 1
+    grids = [iso_grid_dims(_first(a), iso_mm) for a in atlases]
+    moving = max(grids, key=lambda d: d[0] * d[1] * d[2])
+    n = _registrations_at_once(
+        iso_grid_dims(target, iso_mm),
+        1,
+        min(len(atlases), _ATLASES_AT_ONCE),
+        adapter,
+        moving,
+        _recipe_arg(recipe),
+    )
+    return max(n, 1)
+
+
 def register_atlases(
     target: Any,
     atlases: Sequence[Any],
@@ -1052,9 +1075,11 @@ def register_atlases(
     Each atlas is registered to ``target`` with :func:`register_syn` (the default recipe unless
     ``recipe`` is given) on the GPU; its images are then resampled onto the target's grid with
     linear interpolation and its label image with nearest neighbour, as :func:`apply_transforms`
-    does. Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
-    :func:`register_syn`), ``atlasNN_Warped.nii.gz`` (one file per modality after the first:
-    ``atlasNN_Warped2.nii.gz``, ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
+    does. Up to four atlases are registered and resampled at the same time, as many as fit the
+    GPU's memory; the files are the same as when they run one after the other. Atlas ``i`` (from
+    1) writes ``atlasNN_Composite.h5`` (and the other files of :func:`register_syn`),
+    ``atlasNN_Warped.nii.gz`` (one file per modality after the first: ``atlasNN_Warped2.nii.gz``,
+    ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
 
     Parameters
     ----------
@@ -1097,8 +1122,8 @@ def register_atlases(
         reference = _grid_args((np.asarray(arr).shape, spacing, origin, direction))
     else:
         reference = _grid_args(target)
-    result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
-    for i, atlas in enumerate(atlases, 1):
+
+    def one(i: int, atlas: Any) -> tuple[list[Path], Path | None, Path]:
         prefix = out / f"atlas{i:02d}_"
         register_syn(
             target,
@@ -1115,10 +1140,25 @@ def register_atlases(
             path = Path(f"{prefix}Warped{'' if m == 0 else m + 1}.nii.gz")
             _warp_file(image, reference, composite, str(path), labels=False)
             files.append(path)
-        result["atlases"].append(files)
+        label_path = None
         if labels is not None:
-            path = Path(f"{prefix}WarpedLabels.nii.gz")
-            _warp_file(labels[i - 1], reference, composite, str(path), labels=True)
-            result["labels"].append(path)
-        result["transforms"].append(Path(composite))
+            label_path = Path(f"{prefix}WarpedLabels.nii.gz")
+            _warp_file(labels[i - 1], reference, composite, str(label_path), labels=True)
+        return files, label_path, Path(composite)
+
+    workers = _atlases_at_once(target, atlases, iso_mm, adapter, recipe)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
+        try:
+            done = [f.result() for f in futures]
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+    result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
+    for files, label_path, composite in done:
+        result["atlases"].append(files)
+        if label_path is not None:
+            result["labels"].append(label_path)
+        result["transforms"].append(composite)
     return result

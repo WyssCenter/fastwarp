@@ -10,8 +10,9 @@ the work on the GPU ([below](#running-on-the-gpu)).
 
 {func}`~fastwarp.register_atlases` registers each atlas to the target with
 {func}`~fastwarp.register_syn` on the GPU and writes its images (linear interpolation) and its
-label image (nearest neighbour) on the target's grid; {func}`~fastwarp.joint_label_fusion` then
-fuses them:
+label image (nearest neighbour) on the target's grid, up to four atlases at the same time on one
+GPU (as many as fit its memory; the files are the same as one at a time);
+{func}`~fastwarp.joint_label_fusion` then fuses them:
 
 ```python
 import ants
