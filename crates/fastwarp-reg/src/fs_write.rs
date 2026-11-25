@@ -25,13 +25,17 @@ impl Drop for PartFile {
     }
 }
 
-/// Renames `from` to `to`, trying again a few times after `PermissionDenied` (on Windows, a
-/// virus scanner reading the new file or a reader holding the old one).
+/// Renames `from` to `to`, trying again a few times after `PermissionDenied` or the Windows
+/// errors 5 and 32 (access denied, sharing violation: a virus scanner reading the new file or a
+/// reader holding the old one).
 fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut delay = Duration::from_millis(50);
     for _ in 0..5 {
         match std::fs::rename(from, to) {
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    || (cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32))) =>
+            {
                 std::thread::sleep(delay);
                 delay = (delay * 2).min(Duration::from_millis(200));
             }

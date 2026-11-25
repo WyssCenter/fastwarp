@@ -576,6 +576,7 @@ pub struct SmoothCache {
     samples: Vec<(SampleKey, PreparedSamples)>,
     planned: Vec<SampleKey>,
     plan_active: bool,
+    plan_pair: Option<PairId>,
 }
 
 /// What the prepared samples of a level without a fixed mask depend on: the smoothed pair, the
@@ -607,6 +608,7 @@ impl SmoothCache {
         self.samples.clear();
         self.planned.clear();
         self.plan_active = false;
+        self.plan_pair = None;
     }
 
     fn has_smoothed(&self, pair: PairId, sigma: f64, units: SigmaUnits) -> bool {
@@ -634,9 +636,9 @@ impl SmoothCache {
     ) {
         let pair = PairId::of(fixed, moving);
         let fixed_grid = *fixed.grid();
-        self.planned.clear();
-        self.samples.clear();
+        self.clear_samples();
         self.plan_active = true;
+        self.plan_pair = Some(pair);
         for recipe in stages {
             if recipe.mask.is_some() || !recipe.cache_smoothed_images {
                 continue;
@@ -718,6 +720,10 @@ impl SmoothCache {
         if self.owner != Some(id) {
             self.entries.clear();
             self.samples.clear();
+            if self.plan_pair != Some(id) {
+                self.planned.clear();
+                self.plan_active = false;
+            }
             self.owner = Some(id);
         }
         let voxels = units == SigmaUnits::Voxels;
@@ -1730,5 +1736,27 @@ mod tests {
         cache.clear_samples();
         assert!(cache.consume_planned(&key));
         assert!(cache.consume_planned(&key));
+    }
+
+    #[test]
+    fn a_plan_survives_the_first_smoothing_of_its_pair_and_is_dropped_for_another_pair() {
+        let fixed = volume(16, 1.0, &AffineTransform::identity());
+        let moving = volume(16, 1.0, &AffineTransform::identity());
+        let other = volume(12, 1.0, &AffineTransform::identity());
+        let rigid = chain_recipe(LinearKind::Rigid);
+        let affine = chain_recipe(LinearKind::Affine);
+        let mut cache = SmoothCache::default();
+        cache.plan_samples(&fixed, &moving, [&rigid, &affine]);
+        let key = cache.planned[0];
+        cache
+            .get(&fixed, &moving, 1.0, SigmaUnits::Voxels, true)
+            .unwrap();
+        assert!(cache.consume_planned(&key));
+        assert!(!cache.consume_planned(&key));
+        cache.plan_samples(&fixed, &moving, [&rigid, &affine]);
+        cache
+            .get(&other, &other, 1.0, SigmaUnits::Voxels, true)
+            .unwrap();
+        assert!(cache.planned.is_empty() && !cache.plan_active);
     }
 }
