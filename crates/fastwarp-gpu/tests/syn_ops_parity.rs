@@ -186,6 +186,41 @@ fn an_inversion_longer_than_one_submission_runs_every_step_and_matches_the_cpu()
 }
 
 #[test]
+fn an_inversion_dispatched_indirectly_matches_the_cpu() {
+    let Some(b) = backend() else { return };
+    let cpu = fastwarp_reg::cpu::CpuBackend;
+    let grid = Case::awkward([136, 128, 72], [1.0, 1.1, 1.3], true, 5)
+        .grid()
+        .unwrap();
+    let f0 = field(&grid, 1.5, 11);
+    let every_step = InvertParams {
+        max_iterations: 12,
+        mean_error_tolerance: 0.0,
+        max_error_tolerance: 0.0,
+        enforce_boundary_condition: true,
+    };
+    for params in [InvertParams::SYN, every_step] {
+        let f = block_on(b.upload_field(&f0)).unwrap();
+        let (inverse, stats) =
+            block_on(b.invert(&f, block_on(b.zero_field(&grid)).unwrap(), &params)).unwrap();
+        let (cpu_inverse, cpu_stats) = cpu
+            .invert(&f0, cpu.zero_field(&grid).unwrap(), &params)
+            .unwrap();
+        assert_eq!(stats.iterations, cpu_stats.iterations);
+        assert!((stats.max_error_norm - cpu_stats.max_error_norm).abs() < 1e-3);
+        assert!((stats.mean_error_norm - cpu_stats.mean_error_norm).abs() < 1e-3);
+        let gpu_inverse = block_on(b.download_field(&inverse)).unwrap();
+        let worst = gpu_inverse
+            .data()
+            .iter()
+            .zip(cpu_inverse.data())
+            .flat_map(|(g, c)| (0..3).map(move |k| (g[k] - c[k]).abs()))
+            .fold(0.0f64, f64::max);
+        assert!(worst < 2e-2, "{worst}");
+    }
+}
+
+#[test]
 fn cc_of_an_image_with_itself_is_minus_one_with_zero_derivative() {
     let Some(b) = backend() else { return };
     let grid = Case::awkward([13, 11, 9], [1.0, 1.0, 1.0], false, 2)
