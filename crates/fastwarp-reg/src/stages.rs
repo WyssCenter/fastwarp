@@ -204,10 +204,17 @@ pub async fn run_linear_stages_async<E: LinearEngine>(
                 ParametricTransform::affine(&AffineTransform::new(IDENTITY3, [0.0; 3], center))
             }
         };
-        let stage = run_linear_stage_cached_async(
+        let stage = match run_linear_stage_cached_async(
             engine, recipe, fixed, moving, current, start, cache, cancel,
         )
-        .await?;
+        .await
+        {
+            Ok(stage) => stage,
+            Err(e) => {
+                cache.clear_samples();
+                return Err(e);
+            }
+        };
         current = AffineTransform::compose(&current, &stage.affine);
         center = stage.affine.center;
         results.push(stage);

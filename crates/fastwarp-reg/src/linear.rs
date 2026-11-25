@@ -1158,7 +1158,7 @@ pub async fn run_linear_chain_cached_async<E: LinearEngine>(
     }
     let initial = initial_transform(fixed_raw, moving_raw, InitFeature::CentreOfMass)?;
     cache.plan_samples(fixed, moving, [rigid, affine]);
-    let rigid_result = run_linear_stage_cached_async(
+    let rigid_result = match run_linear_stage_cached_async(
         engine,
         rigid,
         fixed,
@@ -1168,7 +1168,14 @@ pub async fn run_linear_chain_cached_async<E: LinearEngine>(
         cache,
         cancel,
     )
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            cache.clear_samples();
+            return Err(e);
+        }
+    };
     let after_rigid = AffineTransform::compose(&initial, &rigid_result.affine);
     let start_affine = ParametricTransform::affine(&AffineTransform::new(
         crate::linalg::IDENTITY3,
@@ -1185,8 +1192,9 @@ pub async fn run_linear_chain_cached_async<E: LinearEngine>(
         cache,
         cancel,
     )
-    .await?;
+    .await;
     cache.clear_samples();
+    let affine_result = affine_result?;
     let collapsed = AffineTransform::compose(&after_rigid, &affine_result.affine);
     let total = with_center(&collapsed, affine_result.affine.center);
     Ok(LinearChainResult {
