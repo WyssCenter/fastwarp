@@ -924,6 +924,7 @@ struct GatherU {
     b: [u32; 4],
     c: [u32; 4],
     e: [u32; 4],
+    f: [u32; 4],
 }
 
 const GATHER_SRC: &str = include_str!("shaders/jlf_gather.wgsl");
@@ -954,7 +955,6 @@ struct Full<'a> {
     input: &'a JlfInput,
     opts: &'a JlfOptions,
     gather: wgpu::ComputePipeline,
-    slots: Vec<Vec<u32>>,
     store: BTreeMap<usize, PlaneCentres>,
     patch: Vec<[isize; 3]>,
 }
@@ -1001,9 +1001,12 @@ impl Full<'_> {
                 if !self.inside(q) {
                     continue;
                 }
-                let slot = self.slots[i][self.index(q)];
-                if slot != UNSET {
-                    acc.posteriors[slot as usize][v] += plane.weights[k * n + i];
+                if let Ok(slot) = self
+                    .parts
+                    .label_set()
+                    .binary_search(&self.input.labels[i][self.index(q)])
+                {
+                    acc.posteriors[slot][v] += plane.weights[k * n + i];
                 }
             }
         }
@@ -1057,10 +1060,9 @@ impl GpuJlfSearch {
                 self.binding
             )));
         }
-        let reach_lin = {
-            let r = |d: usize| full.patch.iter().map(|o| o[d].unsigned_abs()).max().unwrap_or(0);
-            r(2) * plane + r(1) * nx + r(0)
-        };
+        let reach: [usize; 3] = std::array::from_fn(|d| {
+            full.patch.iter().map(|o| o[d].unsigned_abs()).max().unwrap_or(0)
+        });
         let mut a = z0;
         while a < z1 {
             let mut b = a + 1;
@@ -1069,33 +1071,47 @@ impl GpuJlfSearch {
             }
             let ca = a.saturating_sub(rp);
             let cb = (b + rp).min(nz);
-            let mut span: Option<(usize, usize)> = None;
+            let mut bmin = [usize::MAX; 3];
+            let mut bmax = [0usize; 3];
             for (_, pc) in full.store.range(ca..cb) {
-                if let (Some(&f), Some(&l)) = (pc.voxels.first(), pc.voxels.last()) {
-                    span = Some(span.map_or((f, l), |(x, y)| (x.min(f), y.max(l))));
+                for &v in &pc.voxels {
+                    let q = [v % nx, (v / nx) % ny, v / plane];
+                    for d in 0..3 {
+                        bmin[d] = bmin[d].min(q[d]);
+                        bmax[d] = bmax[d].max(q[d]);
+                    }
                 }
             }
-            let (lo, hi) = if self.variant.legacy {
-                (a * plane, b * plane)
+            let (r0, r1) = if self.variant.legacy {
+                ([0, 0, a], [nx, ny, b])
             } else {
-                let Some((first_c, last_c)) = span else {
+                if bmin[0] == usize::MAX {
                     a = b;
                     continue;
-                };
-                (
-                    first_c.saturating_sub(reach_lin).max(a * plane),
-                    (last_c + reach_lin + 1).min(b * plane),
-                )
+                }
+                let lo = [
+                    bmin[0].saturating_sub(reach[0]),
+                    bmin[1].saturating_sub(reach[1]),
+                    bmin[2].saturating_sub(reach[2]).max(a),
+                ];
+                let hi = [
+                    (bmax[0] + reach[0] + 1).min(nx),
+                    (bmax[1] + reach[1] + 1).min(ny),
+                    (bmax[2] + reach[2] + 1).min(b),
+                ];
+                (lo, hi)
             };
-            if lo >= hi {
+            if r0[2] >= r1[2] {
                 a = b;
                 continue;
             }
+            let [bw, bh, bd] = [r1[0] - r0[0], r1[1] - r0[1], r1[2] - r0[2]];
+            let region = |t: usize| r0[0] + t % bw + nx * (r0[1] + (t / bw) % bh + ny * (r0[2] + t / (bw * bh)));
             self.gathers += 1;
             let sp = prof::span("gp.host_prep");
-            let (t_lo, t_hi) = (lo - a * plane, hi - a * plane);
-            let ga = (lo / plane).saturating_sub(rs);
-            let gb = ((hi - 1) / plane + rs + 1).min(nz);
+            let (t_lo, t_hi) = (0usize, bw * bh * bd);
+            let ga = r0[2].saturating_sub(rs);
+            let gb = (r1[2] + rs).min(nz);
             let apl = (gb - ga) * plane;
             let mut atlas = Vec::with_capacity(n * modalities * apl);
             for at in &input.atlases {
@@ -1103,13 +1119,11 @@ impl GpuJlfSearch {
                     atlas.extend_from_slice(&image[ga * plane..gb * plane]);
                 }
             }
-            let mut slots = Vec::new();
-            if labelled {
-                slots.reserve(n * apl);
-                for s in &full.slots {
-                    slots.extend_from_slice(&s[ga * plane..gb * plane]);
-                }
-            }
+            let slots = if labelled {
+                full.parts.label_slots_range(ga * plane, gb * plane)
+            } else {
+                Vec::new()
+            };
             let mut cmap = vec![UNSET; (cb - ca) * plane];
             let mut cw = Vec::new();
             let mut co = Vec::new();
@@ -1125,7 +1139,7 @@ impl GpuJlfSearch {
             }
             let voxels = t_hi - t_lo;
             let mask: Vec<u32> = match &input.mask {
-                Some(m) => m[lo..hi].iter().map(|v| u32::from(*v != 0)).collect(),
+                Some(m) => (0..voxels).map(|t| u32::from(m[region(t)] != 0)).collect(),
                 None => vec![1; voxels],
             };
             let poff: Vec<[i32; 4]> = full
@@ -1168,7 +1182,7 @@ impl GpuJlfSearch {
                 let (gx, gy) = self.groups(run as u32);
                 let uniform = GatherU {
                     dims: [nx as u32, ny as u32, nz as u32, (first + run) as u32],
-                    a: [a as u32, ga as u32, ca as u32, n as u32],
+                    a: [r0[2] as u32, ga as u32, ca as u32, n as u32],
                     b: [modalities as u32, p as u32, gx * WG, rsize as u32],
                     c: [
                         u32::from(labelled),
@@ -1177,6 +1191,7 @@ impl GpuJlfSearch {
                         u32::from(voting),
                     ],
                     e: [first as u32, t_lo as u32, 0, 0],
+                    f: [r0[0] as u32, r0[1] as u32, bw as u32, bh as u32],
                 };
                 self.dispatch(
                     &full.gather,
@@ -1201,7 +1216,7 @@ impl GpuJlfSearch {
             drop(sp);
             let sp = prof::span("gp.unpack");
             for t in 0..voxels {
-                let v = lo + t;
+                let v = region(t);
                 let r = &rec[t * rsize..(t + 1) * rsize];
                 let used = (r[0] & 0x7fff_ffff) as usize;
                 let overflow = r[0] >> 31 != 0;
@@ -1271,7 +1286,6 @@ async fn fuse_on_gpu(
         .map_err(gerr)?;
     drop(sp);
     let sp = prof::span("g.slots_acc");
-    let slots = parts.label_slots();
     let [nx, ny, nz] = input.size;
     let plane = nx * ny;
     let n = input.atlases.len();
@@ -1295,7 +1309,6 @@ async fn fuse_on_gpu(
         input,
         opts,
         gather,
-        slots,
         store: BTreeMap::new(),
     };
     let rp = input_reach(&full.patch);

@@ -580,6 +580,21 @@ impl<'a> FusionParts<'a> {
             .collect()
     }
 
+    /// [`Self::label_slots`] of the voxels `start..end`, atlas after atlas.
+    pub fn label_slots_range(&self, start: usize, end: usize) -> Vec<u32> {
+        let mut out = vec![u32::MAX; self.input.labels.len() * (end - start)];
+        if end > start {
+            out.par_chunks_mut(end - start)
+                .zip(self.input.labels.par_iter())
+                .for_each(|(o, l)| {
+                    o.par_iter_mut().zip(&l[start..end]).for_each(|(s, x)| {
+                        *s = self.set.binary_search(x).map_or(u32::MAX, |k| k as u32);
+                    });
+                });
+        }
+        out
+    }
+
     /// Per atlas label image, the index of each voxel's label in [`Self::label_set`], or
     /// `u32::MAX` for a label outside it.
     pub fn label_slots(&self) -> Vec<Vec<u32>> {
@@ -795,9 +810,9 @@ impl FusionParts<'_> {
             None
         } else {
             let mut out = vec![0u32; n];
-            for (v, label) in out.iter_mut().enumerate() {
+            out.par_iter_mut().enumerate().for_each(|(v, label)| {
                 if input.mask.as_ref().is_some_and(|m| m[v] == 0) {
-                    continue;
+                    return;
                 }
                 let mut max = 0.0f64;
                 for (slot, &l) in set.iter().enumerate() {
@@ -816,31 +831,29 @@ impl FusionParts<'_> {
                         *label = l;
                     }
                 }
-            }
+            });
             Some(out)
         };
-        if opts.posteriors || opts.voting_weights {
-            for v in 0..n {
-                let sum = acc.weight_sum[v];
+        let weight_sum = &acc.weight_sum;
+        let divide = |image: &mut Vec<f32>| {
+            image.par_iter_mut().zip(weight_sum).for_each(|(value, &sum)| {
                 if sum < 0.1f32 {
-                    continue;
+                    return;
                 }
-                if opts.posteriors {
-                    for image in &mut acc.posteriors {
-                        image[v] /= sum;
-                    }
-                }
-                for image in &mut acc.voting {
-                    image[v] /= sum;
-                }
-            }
+                *value /= sum;
+            });
+        };
+        if opts.posteriors {
+            acc.posteriors.iter_mut().for_each(divide);
         }
+        acc.voting.iter_mut().for_each(divide);
+        let count = &acc.count;
         for image in &mut acc.intensity {
-            for (value, &count) in image.iter_mut().zip(&acc.count) {
+            image.par_iter_mut().zip(count).for_each(|(value, &count)| {
                 if count > 0 {
                     *value /= count as f32;
                 }
-            }
+            });
         }
         let posteriors = if opts.posteriors {
             set.iter().copied().zip(acc.posteriors).collect()
