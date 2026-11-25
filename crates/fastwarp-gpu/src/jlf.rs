@@ -54,12 +54,15 @@ use crate::error::{GpuError, GpuResult};
 use crate::wgpu_backend::block_reg;
 
 const SRC: &str = include_str!("shaders/jlf_search.wgsl");
-const VARIANT_SRC: [&str; 5] = [
+const VARIANT_SRC: [&str; 8] = [
     include_str!("shaders/jlf_search_k1.wgsl"),
     include_str!("shaders/jlf_search_k2.wgsl"),
     include_str!("shaders/jlf_search_k4.wgsl"),
     include_str!("shaders/jlf_search_t32.wgsl"),
     include_str!("shaders/jlf_search_t64.wgsl"),
+    include_str!("shaders/jlf_search_ck2.wgsl"),
+    include_str!("shaders/jlf_search_ck4.wgsl"),
+    include_str!("shaders/jlf_search_ck8.wgsl"),
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -80,6 +83,9 @@ impl Variant {
                     "k4" => v.kernel = 3,
                     "t32" => v.kernel = 4,
                     "t64" => v.kernel = 5,
+                    "ck2" => v.kernel = 6,
+                    "ck4" => v.kernel = 7,
+                    "ck8" => v.kernel = 8,
                     "dyn" => v.dynamic = true,
                     "legacy" => v.legacy = true,
                     _ => {}
@@ -257,6 +263,21 @@ pub struct GpuJlfSearch {
     gather_budget: u64,
     variant: Variant,
     run: u32,
+    wrun: u32,
+    grun: usize,
+}
+
+fn adapt(run: u32, ran: u32, dt: f64, unit: u32) -> u32 {
+    if run != ran {
+        return run;
+    }
+    if dt < 0.05 && run < (1 << 24) {
+        run * 2
+    } else if dt > 0.25 && run > 64 * unit {
+        run / 2 / unit * unit
+    } else {
+        run
+    }
 }
 
 impl GpuJlfSearch {
@@ -298,6 +319,8 @@ impl GpuJlfSearch {
             gather_budget: GATHER_OUT_BYTES.min(binding),
             variant,
             run: 0,
+            wrun: 0,
+            grun: 0,
             pipeline,
             ctx,
         })
@@ -668,8 +691,17 @@ impl GpuJlfSearch {
                 let total = count as u32;
                 let weight_start = stamp();
                 let mut base = 0u32;
+                if self.wrun == 0 {
+                    self.wrun = per_dispatch;
+                }
                 while base < total {
-                    let run = per_dispatch.min(total - base);
+                    let want = if self.variant.dynamic {
+                        self.wrun
+                    } else {
+                        per_dispatch
+                    };
+                    let run = want.min(total - base);
+                    let started = std::time::Instant::now();
                     let tiled = *tiled;
                     tiled_runs += u64::from(tiled);
                     let (gx, gy, stride) = if tiled {
@@ -705,6 +737,9 @@ impl GpuJlfSearch {
                         [gx, gy],
                     )
                     .await?;
+                    if self.variant.dynamic {
+                        self.wrun = adapt(want, run, started.elapsed().as_secs_f64(), 1);
+                    }
                     base += run;
                 }
                 weight_s = seconds(weight_start);
@@ -1119,8 +1154,17 @@ impl GpuJlfSearch {
                 (WORK_PER_DISPATCH / per_voxel.max(1)).clamp(u64::from(WG), 1 << 22) as usize;
             let gather_start = stamp();
             let mut first = t_lo;
+            if self.grun == 0 {
+                self.grun = per_dispatch;
+            }
             while first < t_hi {
-                let run = per_dispatch.min(t_hi - first);
+                let want = if self.variant.dynamic {
+                    self.grun
+                } else {
+                    per_dispatch
+                };
+                let run = want.min(t_hi - first);
+                let started = std::time::Instant::now();
                 let (gx, gy) = self.groups(run as u32);
                 let uniform = GatherU {
                     dims: [nx as u32, ny as u32, nz as u32, (first + run) as u32],
@@ -1144,6 +1188,10 @@ impl GpuJlfSearch {
                     [gx, gy],
                 )
                 .await?;
+                if self.variant.dynamic {
+                    self.grun =
+                        adapt(want as u32, run as u32, started.elapsed().as_secs_f64(), 64) as usize;
+                }
                 first += run;
             }
             self.times[2] += seconds(gather_start);
