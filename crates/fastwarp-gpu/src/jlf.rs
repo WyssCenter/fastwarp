@@ -66,6 +66,7 @@ const VARIANT_SRC: [&str; 5] = [
 struct Variant {
     kernel: usize,
     dynamic: bool,
+    legacy: bool,
 }
 
 impl Variant {
@@ -80,6 +81,7 @@ impl Variant {
                     "t32" => v.kernel = 4,
                     "t64" => v.kernel = 5,
                     "dyn" => v.dynamic = true,
+                    "legacy" => v.legacy = true,
                     _ => {}
                 }
             }
@@ -1020,18 +1022,45 @@ impl GpuJlfSearch {
                 self.binding
             )));
         }
+        let reach_lin = {
+            let r = |d: usize| full.patch.iter().map(|o| o[d].unsigned_abs()).max().unwrap_or(0);
+            r(2) * plane + r(1) * nx + r(0)
+        };
         let mut a = z0;
         while a < z1 {
             let mut b = a + 1;
             while b < z1 && fits(b + 1 - a) {
                 b += 1;
             }
-            self.gathers += 1;
-            let sp = prof::span("gp.host_prep");
-            let ga = a.saturating_sub(rs);
-            let gb = (b + rs).min(nz);
             let ca = a.saturating_sub(rp);
             let cb = (b + rp).min(nz);
+            let mut span: Option<(usize, usize)> = None;
+            for (_, pc) in full.store.range(ca..cb) {
+                if let (Some(&f), Some(&l)) = (pc.voxels.first(), pc.voxels.last()) {
+                    span = Some(span.map_or((f, l), |(x, y)| (x.min(f), y.max(l))));
+                }
+            }
+            let (lo, hi) = if self.variant.legacy {
+                (a * plane, b * plane)
+            } else {
+                let Some((first_c, last_c)) = span else {
+                    a = b;
+                    continue;
+                };
+                (
+                    first_c.saturating_sub(reach_lin).max(a * plane),
+                    (last_c + reach_lin + 1).min(b * plane),
+                )
+            };
+            if lo >= hi {
+                a = b;
+                continue;
+            }
+            self.gathers += 1;
+            let sp = prof::span("gp.host_prep");
+            let (t_lo, t_hi) = (lo - a * plane, hi - a * plane);
+            let ga = (lo / plane).saturating_sub(rs);
+            let gb = ((hi - 1) / plane + rs + 1).min(nz);
             let apl = (gb - ga) * plane;
             let mut atlas = Vec::with_capacity(n * modalities * apl);
             for at in &input.atlases {
@@ -1059,12 +1088,9 @@ impl GpuJlfSearch {
                     co.extend_from_slice(&pc.offsets[k * n..(k + 1) * n]);
                 }
             }
-            let voxels = (b - a) * plane;
+            let voxels = t_hi - t_lo;
             let mask: Vec<u32> = match &input.mask {
-                Some(m) => m[a * plane..b * plane]
-                    .iter()
-                    .map(|v| u32::from(*v != 0))
-                    .collect(),
+                Some(m) => m[lo..hi].iter().map(|v| u32::from(*v != 0)).collect(),
                 None => vec![1; voxels],
             };
             let poff: Vec<[i32; 4]> = full
@@ -1092,9 +1118,9 @@ impl GpuJlfSearch {
             let per_dispatch =
                 (WORK_PER_DISPATCH / per_voxel.max(1)).clamp(u64::from(WG), 1 << 22) as usize;
             let gather_start = stamp();
-            let mut first = 0usize;
-            while first < voxels {
-                let run = per_dispatch.min(voxels - first);
+            let mut first = t_lo;
+            while first < t_hi {
+                let run = per_dispatch.min(t_hi - first);
                 let (gx, gy) = self.groups(run as u32);
                 let uniform = GatherU {
                     dims: [nx as u32, ny as u32, nz as u32, (first + run) as u32],
@@ -1106,7 +1132,7 @@ impl GpuJlfSearch {
                         apl as u32,
                         u32::from(voting),
                     ],
-                    e: [first as u32, 0, 0, 0],
+                    e: [first as u32, t_lo as u32, 0, 0],
                 };
                 self.dispatch(
                     &full.gather,
@@ -1127,7 +1153,7 @@ impl GpuJlfSearch {
             drop(sp);
             let sp = prof::span("gp.unpack");
             for t in 0..voxels {
-                let v = a * plane + t;
+                let v = lo + t;
                 let r = &rec[t * rsize..(t + 1) * rsize];
                 let used = (r[0] & 0x7fff_ffff) as usize;
                 let overflow = r[0] >> 31 != 0;
@@ -1197,21 +1223,12 @@ async fn fuse_on_gpu(
         .map_err(gerr)?;
     drop(sp);
     let sp = prof::span("g.slots_acc");
-    let set = parts.label_set().to_vec();
-    let slots = input
-        .labels
-        .iter()
-        .map(|l| {
-            l.iter()
-                .map(|x| set.binary_search(x).map_or(UNSET, |s| s as u32))
-                .collect()
-        })
-        .collect();
+    let slots = parts.label_slots();
     let [nx, ny, nz] = input.size;
     let plane = nx * ny;
     let n = input.atlases.len();
     let width = parts.patch_len() * parts.used();
-    let per_block = (search.block_voxels(input.size, width) / plane).max(1);
+    let cap = (search.patch_budget / (width.max(1) as u64 * 4)).max(1) as usize;
     let lists: Vec<Vec<[isize; 3]>> = parts.lists().to_vec();
     if lists
         .iter()
@@ -1235,13 +1252,22 @@ async fn fuse_on_gpu(
     };
     let rp = input_reach(&full.patch);
     let mut acc = full.parts.accumulators();
+    let per_plane = full.parts.active_per_plane();
     drop(sp);
     let pc = opts.metric == PatchMetric::PearsonCorrelation;
     let mut next = 0usize;
     let mut z0 = 0usize;
     while z0 < nz {
         cancelled(cancel)?;
-        let z1 = (z0 + per_block).min(nz);
+        let mut z1 = z0 + 1;
+        let mut total = per_plane[z0];
+        while z1 < nz && total + per_plane[z1] <= cap {
+            total += per_plane[z1];
+            z1 += 1;
+        }
+        if search.variant.legacy {
+            z1 = (z0 + (search.block_voxels(input.size, width) / plane).max(1)).min(nz);
+        }
         let sp = prof::span("g.active");
         let (centres, list_of) = full.parts.active(z0 * plane, z1 * plane);
         drop(sp);

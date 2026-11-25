@@ -566,6 +566,34 @@ impl<'a> FusionParts<'a> {
             .collect()
     }
 
+    /// The number of fused voxels in each z plane.
+    pub fn active_per_plane(&self) -> Vec<usize> {
+        let [nx, ny, nz] = self.input.size;
+        let plane = nx * ny;
+        (0..nz)
+            .into_par_iter()
+            .map(|z| {
+                (z * plane..(z + 1) * plane)
+                    .filter(|&v| self.list_at(v).is_some())
+                    .count()
+            })
+            .collect()
+    }
+
+    /// Per atlas label image, the index of each voxel's label in [`Self::label_set`], or
+    /// `u32::MAX` for a label outside it.
+    pub fn label_slots(&self) -> Vec<Vec<u32>> {
+        self.input
+            .labels
+            .par_iter()
+            .map(|l| {
+                l.par_iter()
+                    .map(|x| self.set.binary_search(x).map_or(u32::MAX, |s| s as u32))
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Empty accumulators for this fusion.
     pub fn accumulators(&self) -> Accumulators {
         let n = self.voxels;
