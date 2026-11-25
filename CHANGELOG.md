@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Changed: the linear stages prepare their sample points faster: at each level the affine stage
+  reuses the points of the rigid stage (same seed, level grid and images, no fixed mask) and the
+  jittered points are computed on all cores. The results are the same to the bit.
 - New: a result viewer on the page *Try FastWarp in your browser*. After a run it shows the template
   and your image in three linked views (axial, coronal, sagittal, at the voxel
   proportions, left on the left; click or tap to place the cross, sliders and arrow keys for the

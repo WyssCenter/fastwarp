@@ -209,6 +209,7 @@ pub async fn run_linear_stages_async<E: LinearEngine>(
         center = stage.affine.center;
         results.push(stage);
     }
+    cache.clear_samples();
     let total = if results.is_empty() {
         initial
     } else {
