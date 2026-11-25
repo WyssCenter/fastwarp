@@ -189,15 +189,13 @@ fn h5_layout(chain: &TransformChain) -> Result<WriteLayout<'_>> {
 
 /// Writes a chain to an ITK HDF5 transform file.
 pub fn write_h5_file(path: &Path, chain: &TransformChain) -> Result<()> {
-    let io = |source| RegError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
     let layout = h5_layout(chain)?;
-    let mut out =
-        std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(path).map_err(io)?);
-    layout.write_to(&mut out).map_err(io)?;
-    out.flush().map_err(io)
+    crate::fs_write::write_complete(path, |out| {
+        layout.write_to(out).map_err(|source| RegError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    })
 }
 
 #[cfg(test)]
