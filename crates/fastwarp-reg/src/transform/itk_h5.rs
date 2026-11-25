@@ -31,13 +31,14 @@
 //! A displacement field has 18 fixed parameters (size, origin, spacing, direction row-major)
 //! and `3 * N` interleaved parameters. The low-level container is `hdf5.rs`.
 
+use std::io::Write;
 use std::path::Path;
 
 use crate::error::{fmt_err, RegError, Result};
 use crate::grid::Grid;
 use crate::transform::composite::{TransformChain, TransformElem};
 use crate::transform::field::DisplacementField;
-use crate::transform::hdf5::{write_bytes, H5File, Node};
+use crate::transform::hdf5::{write_layout, H5File, Node, WriteLayout};
 use crate::transform::itk_params::{
     elem_from_record, is_displacement_field, record_from_elem, Record, COMPOSITE_NAME, FIELD_NAME,
     FORMAT,
@@ -111,6 +112,21 @@ pub fn read_h5_file(path: &Path) -> Result<TransformChain> {
 /// Serialises a chain as an ITK HDF5 composite transform file: group `0` is the composite,
 /// groups `1..` the queue in order.
 pub fn format_h5(chain: &TransformChain) -> Result<Vec<u8>> {
+    h5_layout(chain)?.into_bytes()
+}
+
+/// Writes the bytes of [`format_h5`] into `out` without holding them all in memory; `path` is
+/// what errors report.
+pub fn write_h5_to<W: Write>(chain: &TransformChain, path: &Path, out: &mut W) -> Result<()> {
+    h5_layout(chain)?
+        .write_to(out)
+        .map_err(|source| RegError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+fn h5_layout(chain: &TransformChain) -> Result<WriteLayout<'_>> {
     let mut groups: Vec<(String, Node)> = vec![(
         "0".to_owned(),
         Node::Group(vec![(
@@ -168,16 +184,20 @@ pub fn format_h5(chain: &TransformChain) -> Result<Vec<u8>> {
         ),
         (GROUP.to_owned(), Node::Group(groups)),
     ];
-    write_bytes(&root)
+    write_layout(&root)
 }
 
 /// Writes a chain to an ITK HDF5 transform file.
 pub fn write_h5_file(path: &Path, chain: &TransformChain) -> Result<()> {
-    let bytes = format_h5(chain)?;
-    std::fs::write(path, bytes).map_err(|source| RegError::Io {
+    let io = |source| RegError::Io {
         path: path.to_path_buf(),
         source,
-    })
+    };
+    let layout = h5_layout(chain)?;
+    let mut out =
+        std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(path).map_err(io)?);
+    layout.write_to(&mut out).map_err(io)?;
+    out.flush().map_err(io)
 }
 
 #[cfg(test)]
@@ -189,6 +209,7 @@ mod tests {
     use crate::transform::affine::AffineTransform;
     use crate::transform::composite::TransformElem;
     use crate::transform::field::DisplacementField;
+    use crate::transform::hdf5::write_bytes;
 
     const CTEST: &[u8] = include_bytes!("../../tests/data/ctest.h5");
 

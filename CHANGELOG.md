@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Changed: the composite `.h5` files are written without building the whole file in memory
+  first (the same bytes).
 - Changed: a process keeps the GPU device of a finished registration (its idle buffers freed; one
   per adapter and `FASTWARP_GPU_*` / `WGPU_*` settings, four at most) and reuses it for the next
   registration with the same settings, which saves the device creation, the kernel compilation and

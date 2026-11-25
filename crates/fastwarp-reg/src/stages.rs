@@ -63,7 +63,7 @@ use crate::transform::ants_io::{
     WARP_SUFFIX,
 };
 use crate::transform::field_nifti::write_field_nifti_to;
-use crate::transform::itk_h5::format_h5;
+use crate::transform::itk_h5::write_h5_to;
 use crate::transform::itk_mat::format_mat;
 use crate::transform::{
     AffineTransform, CompositePair, DisplacementField, ParametricTransform, TransformChain,
@@ -469,7 +469,7 @@ impl StageContent<'_> {
         };
         match *self {
             StageContent::Composite(chain) => {
-                out.write_all(&format_h5(chain)?).map_err(io)?;
+                write_h5_to(chain, label, &mut out)?;
             }
             StageContent::Affine(total) => {
                 out.write_all(&format_mat(&[TransformElem::Affine(*total)])?)
