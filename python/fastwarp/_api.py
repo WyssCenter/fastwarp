@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from os import PathLike, fspath
 from pathlib import Path
 from typing import Any
@@ -1083,7 +1083,8 @@ def register_atlases(
     linear interpolation and its label image with nearest neighbour, as :func:`apply_transforms`
     does. Up to four atlases are registered and resampled at the same time, as many as fit the
     GPU's memory and the computer's free memory (one at a time on an integrated GPU, or when the
-    GPU reports no memory size); the files are the same as when they run one after the other.
+    GPU reports no memory size); the files are the same as when they run one after the other. The
+    first failure, a cancelled ``cancel`` or an interrupt stops the atlases still running.
     Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
     :func:`register_syn`), ``atlasNN_Warped.nii.gz`` (one file per modality after the first:
     ``atlasNN_Warped2.nii.gz``, ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
@@ -1130,6 +1131,10 @@ def register_atlases(
     else:
         reference = _grid_args(target)
 
+    stop = CancelToken()
+    if cancel is not None and cancel.cancelled:
+        stop.cancel()
+
     def one(i: int, atlas: Any) -> tuple[list[Path], Path | None, Path]:
         prefix = out / f"atlas{i:02d}_"
         register_syn(
@@ -1138,7 +1143,7 @@ def register_atlases(
             prefix,
             iso_mm=iso_mm,
             adapter=adapter,
-            cancel=cancel,
+            cancel=stop,
             recipe=recipe,
         )
         composite = f"{prefix}Composite.h5"
@@ -1157,8 +1162,18 @@ def register_atlases(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
         try:
+            pending = set(futures)
+            while pending:
+                finished, pending = wait(pending, timeout=0.05, return_when=FIRST_EXCEPTION)
+                if cancel is not None and cancel.cancelled:
+                    stop.cancel()
+                for f in finished:
+                    error = f.exception()
+                    if error is not None:
+                        raise error
             done = [f.result() for f in futures]
         except BaseException:
+            stop.cancel()
             for f in futures:
                 f.cancel()
             raise
