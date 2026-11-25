@@ -845,12 +845,15 @@ impl FusionParts<'_> {
         };
         let weight_sum = &acc.weight_sum;
         let divide = |image: &mut Vec<f32>| {
-            image.par_iter_mut().zip(weight_sum).for_each(|(value, &sum)| {
-                if sum < 0.1f32 {
-                    return;
-                }
-                *value /= sum;
-            });
+            image
+                .par_iter_mut()
+                .zip(weight_sum)
+                .for_each(|(value, &sum)| {
+                    if sum < 0.1f32 {
+                        return;
+                    }
+                    *value /= sum;
+                });
         };
         if opts.posteriors {
             acc.posteriors.iter_mut().for_each(divide);

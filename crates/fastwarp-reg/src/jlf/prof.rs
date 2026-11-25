@@ -70,7 +70,10 @@ pub fn span(_name: &'static str) -> Span {
 
 /// Prints and clears the phases.
 pub fn report(header: &str) {
-    let taken = TIMES.lock().map(|mut t| std::mem::take(&mut *t)).unwrap_or_default();
+    let taken = TIMES
+        .lock()
+        .map(|mut t| std::mem::take(&mut *t))
+        .unwrap_or_default();
     let h = HASH
         .lock()
         .map(|mut h| std::mem::replace(&mut *h, 0xcbf2_9ce4_8422_2325))

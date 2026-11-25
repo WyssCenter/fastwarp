@@ -749,7 +749,11 @@ impl GpuJlfSearch {
                         q[d] >= ext[d] as usize && q[d] + (ext[d] as usize) < block.size[d]
                     });
                     let c = first + k;
-                    if interior && block.patches[c * width..(c + 1) * width].iter().all(|x| x.is_finite()) {
+                    if interior
+                        && block.patches[c * width..(c + 1) * width]
+                            .iter()
+                            .all(|x| x.is_finite())
+                    {
                         r[2] = 0;
                         eligible.push([v as u32, k as u32]);
                     }
@@ -769,11 +773,18 @@ impl GpuJlfSearch {
             let target_buf = match self.transpose.as_ref() {
                 Some(tp) => {
                     let total = (pcount * width) as u32;
-                    let tr = self.scratch("jlf transposed target patches", u64::from(total) * 4).await?;
+                    let tr = self
+                        .scratch("jlf transposed target patches", u64::from(total) * 4)
+                        .await?;
                     let (gx, gy) = self.groups(total);
                     let uniform = [count as u32, width as u32, total, gx * WG];
-                    self.dispatch(tp, &[&plain_buf, &tr], bytemuck::bytes_of(&uniform), [gx, gy])
-                        .await?;
+                    self.dispatch(
+                        tp,
+                        &[&plain_buf, &tr],
+                        bytemuck::bytes_of(&uniform),
+                        [gx, gy],
+                    )
+                    .await?;
                     tr
                 }
                 None => plain_buf.clone(),
@@ -1041,7 +1052,8 @@ impl GpuJlfSearch {
             .collect();
         let mut start = 0;
         for end in ends {
-            self.dispatch_batch(pipe, &buffers, &list[start..end]).await?;
+            self.dispatch_batch(pipe, &buffers, &list[start..end])
+                .await?;
             start = end;
         }
         Ok(())
@@ -1075,11 +1087,14 @@ impl GpuJlfSearch {
                 binding: buffers.len() as u32,
                 resource: ubuf.as_entire_binding(),
             });
-            let group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("jlf box"),
-                layout: &layout,
-                entries: &entries,
-            });
+            let group = self
+                .ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("jlf box"),
+                    layout: &layout,
+                    entries: &entries,
+                });
             groups.push((group, ubuf));
         }
         let mut enc = self
@@ -1394,7 +1409,11 @@ impl GpuJlfSearch {
             )));
         }
         let reach: [usize; 3] = std::array::from_fn(|d| {
-            full.patch.iter().map(|o| o[d].unsigned_abs()).max().unwrap_or(0)
+            full.patch
+                .iter()
+                .map(|o| o[d].unsigned_abs())
+                .max()
+                .unwrap_or(0)
         });
         let mut a = z0;
         while a < z1 {
@@ -1439,7 +1458,9 @@ impl GpuJlfSearch {
                 continue;
             }
             let [bw, bh, bd] = [r1[0] - r0[0], r1[1] - r0[1], r1[2] - r0[2]];
-            let region = |t: usize| r0[0] + t % bw + nx * (r0[1] + (t / bw) % bh + ny * (r0[2] + t / (bw * bh)));
+            let region = |t: usize| {
+                r0[0] + t % bw + nx * (r0[1] + (t / bw) % bh + ny * (r0[2] + t / (bw * bh)))
+            };
             self.gathers += 1;
             let sp = prof::span("gp.host_prep");
             let (t_lo, t_hi) = (0usize, bw * bh * bd);

@@ -9,9 +9,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fastwarp_gpu::{BackendSelect, GpuContext};
-use rayon::prelude::*;
 use fastwarp_reg::jlf::{joint_fusion, JlfDevice, JlfInput, JlfOptions, PatchMetric, SearchRadius};
 use fastwarp_reg::{Grid, RegError, Volume};
+use rayon::prelude::*;
 
 use super::run::{failed, refused, warn};
 use super::{
@@ -608,7 +608,10 @@ impl Loader<'_> {
     fn labels(&mut self, path: &Path, role: &str, whole: bool) -> Result<Vec<u32>, CliError> {
         let volume = self.volume(path, role, true)?;
         let data = volume.data();
-        if let Some(i) = data.par_iter().position_first(|v| as_label(*v, whole).is_none()) {
+        if let Some(i) = data
+            .par_iter()
+            .position_first(|v| as_label(*v, whole).is_none())
+        {
             let kind = if whole {
                 "whole numbers"
             } else {
