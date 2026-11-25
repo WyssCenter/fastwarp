@@ -460,6 +460,7 @@ impl<'a> FusionParts<'a> {
             patch_radius: self.opts.patch_radius,
             patches,
             atlases: &self.input.atlases,
+            target: &self.input.target,
             modalities: self.used(),
             metric: self.opts.metric,
         }

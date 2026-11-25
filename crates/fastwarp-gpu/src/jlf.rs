@@ -54,7 +54,7 @@ use crate::error::{GpuError, GpuResult};
 use crate::wgpu_backend::block_reg;
 
 const SRC: &str = include_str!("shaders/jlf_search.wgsl");
-const VARIANT_SRC: [&str; 8] = [
+const VARIANT_SRC: [&str; 11] = [
     include_str!("shaders/jlf_search_k1.wgsl"),
     include_str!("shaders/jlf_search_k2.wgsl"),
     include_str!("shaders/jlf_search_k4.wgsl"),
@@ -63,6 +63,9 @@ const VARIANT_SRC: [&str; 8] = [
     include_str!("shaders/jlf_search_ck2.wgsl"),
     include_str!("shaders/jlf_search_ck4.wgsl"),
     include_str!("shaders/jlf_search_ck8.wgsl"),
+    include_str!("shaders/jlf_search_gk1.wgsl"),
+    include_str!("shaders/jlf_search_gk2.wgsl"),
+    include_str!("shaders/jlf_search_gk4.wgsl"),
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -86,6 +89,9 @@ impl Variant {
                     "ck2" => v.kernel = 6,
                     "ck4" => v.kernel = 7,
                     "ck8" => v.kernel = 8,
+                    "gk1" => v.kernel = 9,
+                    "gk2" => v.kernel = 10,
+                    "gk4" => v.kernel = 11,
                     "dyn" => v.dynamic = true,
                     "legacy" => v.legacy = true,
                     _ => {}
@@ -93,6 +99,10 @@ impl Variant {
             }
         }
         v
+    }
+
+    fn transposed(&self) -> bool {
+        self.kernel >= 9
     }
 
     fn wg(&self) -> u32 {
@@ -610,7 +620,18 @@ impl GpuJlfSearch {
             let pitems = (pcount * atlases) as u32;
             let centre_buf = self.storage("jlf centres", &recs).await?;
             let patch_values = &block.patches[first * width..last * width];
-            let target_buf = self.storage("jlf target patches", patch_values).await?;
+            let target_buf = if self.variant.transposed() {
+                let mut tr = vec![0f32; pcount * width];
+                for (c, row) in patch_values.chunks(width).enumerate() {
+                    let (chunk, lane) = (c / 64, c % 64);
+                    for (kk, v) in row.iter().enumerate() {
+                        tr[(chunk * width + kk) * 64 + lane] = *v;
+                    }
+                }
+                self.storage("jlf target patches", &tr).await?
+            } else {
+                self.storage("jlf target patches", patch_values).await?
+            };
             let out_buf = self
                 .storage("jlf best offsets", &vec![UNSET; items as usize])
                 .await?;
