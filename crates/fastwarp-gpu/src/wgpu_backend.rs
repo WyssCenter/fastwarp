@@ -47,6 +47,7 @@ use fastwarp_reg::linalg::{mat3_inverse, mat3_mul, mat3_mul_vec, Mat3, Vec3, IDE
 use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
 use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::volume::Volume;
+use rayon::prelude::*;
 
 use crate::device::{block_gpu, blocking_unavailable, BackendSelect, GpuContext, WEB};
 use crate::error::{GpuError, GpuResult};
@@ -1661,27 +1662,15 @@ impl Backend for WgpuBackend {
                             &owned
                         }
                     };
-                    let threads = std::env::var("RAYON_NUM_THREADS")
-                        .ok()
-                        .and_then(|v| v.trim().parse::<usize>().ok())
-                        .filter(|n| *n > 0)
-                        .unwrap_or_else(|| {
-                            std::thread::available_parallelism().map_or(1, |p| p.get())
-                        })
-                        .min(16);
-                    let chunk = n.div_ceil(threads).max(1);
-                    std::thread::scope(|s| {
-                        for (c, part) in out.chunks_mut(chunk).enumerate() {
-                            s.spawn(move || {
-                                for (k, v) in part.iter_mut().enumerate() {
-                                    let i = c * chunk + k;
-                                    *v = [
-                                        f64::from(data[i]),
-                                        f64::from(data[n + i]),
-                                        f64::from(data[2 * n + i]),
-                                    ];
-                                }
-                            });
+                    const CHUNK: usize = 1 << 14;
+                    out.par_chunks_mut(CHUNK).enumerate().for_each(|(c, part)| {
+                        for (k, v) in part.iter_mut().enumerate() {
+                            let i = c * CHUNK + k;
+                            *v = [
+                                f64::from(data[i]),
+                                f64::from(data[n + i]),
+                                f64::from(data[2 * n + i]),
+                            ];
                         }
                     });
                 })
