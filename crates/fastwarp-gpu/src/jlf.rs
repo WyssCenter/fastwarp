@@ -68,7 +68,7 @@ const VARIANT_SRC: [&str; 11] = [
     include_str!("shaders/jlf_search_gk4.wgsl"),
 ];
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 struct Variant {
     kernel: usize,
     dynamic: bool,
@@ -78,10 +78,17 @@ struct Variant {
 
 impl Variant {
     fn from_env() -> Self {
-        let mut v = Variant::default();
+        let mut v = Variant {
+            kernel: 10,
+            dynamic: true,
+            legacy: false,
+            boxsum: false,
+        };
         if let Ok(s) = std::env::var("FASTWARP_JLF_VARIANT") {
             for tok in s.split(',') {
                 match tok.trim() {
+                    "orig" => v.kernel = 0,
+                    "fixed" => v.dynamic = false,
                     "k1" => v.kernel = 1,
                     "k2" => v.kernel = 2,
                     "k4" => v.kernel = 3,
@@ -94,7 +101,11 @@ impl Variant {
                     "gk2" => v.kernel = 10,
                     "gk4" => v.kernel = 11,
                     "dyn" => v.dynamic = true,
-                    "legacy" => v.legacy = true,
+                    "legacy" => {
+                        v.kernel = 0;
+                        v.dynamic = false;
+                        v.legacy = true;
+                    }
                     "box" => v.boxsum = true,
                     _ => {}
                 }
@@ -295,6 +306,7 @@ pub struct GpuJlfSearch {
     wrun: u32,
     grun: usize,
     boxpipe: Option<wgpu::ComputePipeline>,
+    transpose: Option<wgpu::ComputePipeline>,
 }
 
 fn adapt(run: u32, ran: u32, dt: f64, unit: u32) -> u32 {
@@ -328,6 +340,18 @@ impl GpuJlfSearch {
         let pipeline = ctx
             .compile_async("k_jlf_search", src, "k_jlf_search")
             .await?;
+        let transpose = if variant.transposed() {
+            Some(
+                ctx.compile_async(
+                    "k_jlf_transpose",
+                    include_str!("shaders/jlf_transpose.wgsl"),
+                    "k_jlf_transpose",
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let boxpipe = if variant.boxsum {
             Some(ctx.compile_async("k_jlf_box", BOX_SRC, "k_jlf_box").await?)
         } else {
@@ -357,6 +381,7 @@ impl GpuJlfSearch {
             wrun: 0,
             grun: 0,
             boxpipe,
+            transpose,
             pipeline,
             ctx,
         })
@@ -426,6 +451,23 @@ impl GpuJlfSearch {
             self.ctx.upload(&buffer, data);
         }
         Ok(buffer)
+    }
+
+    async fn scratch(&self, label: &str, bytes: u64) -> GpuResult<wgpu::Buffer> {
+        let bytes = bytes.max(4);
+        if bytes > self.binding {
+            return Err(too_large(label));
+        }
+        self.ctx
+            .scoped_async(label, bytes, || {
+                self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: bytes,
+                    usage: STORAGE,
+                    mapped_at_creation: false,
+                })
+            })
+            .await
     }
 
     async fn ensure_slab(
@@ -679,17 +721,18 @@ impl GpuJlfSearch {
                 None
             };
             let patch_values = &block.patches[first * width..last * width];
-            let target_buf = if self.variant.transposed() {
-                let mut tr = vec![0f32; pcount * width];
-                for (c, row) in patch_values.chunks(width).enumerate() {
-                    let (chunk, lane) = (c / 64, c % 64);
-                    for (kk, v) in row.iter().enumerate() {
-                        tr[(chunk * width + kk) * 64 + lane] = *v;
-                    }
+            let plain_buf = self.storage("jlf target patches", patch_values).await?;
+            let target_buf = match self.transpose.as_ref() {
+                Some(tp) => {
+                    let total = (pcount * width) as u32;
+                    let tr = self.scratch("jlf transposed target patches", u64::from(total) * 4).await?;
+                    let (gx, gy) = self.groups(total);
+                    let uniform = [count as u32, width as u32, total, gx * WG];
+                    self.dispatch(tp, &[&plain_buf, &tr], bytemuck::bytes_of(&uniform), [gx, gy])
+                        .await?;
+                    tr
                 }
-                self.storage("jlf target patches", &tr).await?
-            } else {
-                self.storage("jlf target patches", patch_values).await?
+                None => plain_buf.clone(),
             };
             let out_buf = self
                 .storage("jlf best offsets", &vec![UNSET; items as usize])
@@ -768,9 +811,12 @@ impl GpuJlfSearch {
             let mut tiled_runs = 0u64;
             if let (Some(args), Some((tiled, pipeline))) = (weigh, self.weigh.as_ref()) {
                 let normalized = &args.normalized[first * width..last * width];
-                let tn_buf = self
-                    .storage("jlf normalised target patches", normalized)
-                    .await?;
+                let tn_buf = if std::ptr::eq(normalized, patch_values) {
+                    plain_buf.clone()
+                } else {
+                    self.storage("jlf normalised target patches", normalized)
+                        .await?
+                };
                 let wout = self
                     .storage("jlf weights", &vec![0f32; count * (atlases + 1)])
                     .await?;
@@ -1414,7 +1460,7 @@ impl GpuJlfSearch {
                 .checked_mul(rsize)
                 .ok_or_else(|| too_large("the gather output"))?;
             let out_buf = self
-                .storage("jlf gather output", &vec![0u32; out_len])
+                .scratch("jlf gather output", (out_len as u64) * 4)
                 .await?;
             drop(sp);
             let per_voxel = (p * n * (modalities + 1)) as u64;

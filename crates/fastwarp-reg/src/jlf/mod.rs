@@ -302,15 +302,22 @@ fn check(input: &JlfInput, opts: &JlfOptions) -> Result<usize> {
 }
 
 fn label_set(input: &JlfInput) -> Vec<u32> {
-    let mut set = std::collections::BTreeSet::new();
-    for labels in &input.labels {
-        for (v, &l) in labels.iter().enumerate() {
-            if input.mask.as_ref().is_none_or(|m| m[v] != 0) {
-                set.insert(l);
+    let mut set: Vec<u32> = input
+        .labels
+        .par_iter()
+        .flat_map_iter(|labels| {
+            let mut s = std::collections::BTreeSet::new();
+            for (v, &l) in labels.iter().enumerate() {
+                if input.mask.as_ref().is_none_or(|m| m[v] != 0) {
+                    s.insert(l);
+                }
             }
-        }
-    }
-    set.into_iter().collect()
+            s
+        })
+        .collect();
+    set.sort_unstable();
+    set.dedup();
+    set
 }
 
 fn joint_error(diffs: &[f64], atlases: usize, width: usize, patch: usize, beta: f64) -> Vec<f64> {
@@ -613,13 +620,14 @@ impl<'a> FusionParts<'a> {
     /// Empty accumulators for this fusion.
     pub fn accumulators(&self) -> Accumulators {
         let n = self.voxels;
+        let zeros = |k: usize| (0..k).map(|_| vec![0.0f32; n]).collect::<Vec<_>>();
         Accumulators {
-            intensity: vec![vec![0.0f32; n]; self.input.atlases[0].len()],
+            intensity: zeros(self.input.atlases[0].len()),
             count: vec![0u32; n],
-            posteriors: vec![vec![0.0f32; n]; self.set.len()],
+            posteriors: zeros(self.set.len()),
             weight_sum: vec![0.0f32; n],
             voting: if self.opts.voting_weights {
-                vec![vec![0.0f32; n]; self.input.atlases.len()]
+                zeros(self.input.atlases.len())
             } else {
                 Vec::new()
             },
