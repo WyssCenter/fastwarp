@@ -41,6 +41,11 @@ impl BufferPool {
         self.peak_bytes
     }
 
+    /// Starts [`Self::peak_bytes`] again from the bytes owned now.
+    pub fn reset_peak(&mut self) {
+        self.peak_bytes = self.allocated_bytes;
+    }
+
     /// Bytes held by idle buffers.
     pub fn idle_bytes(&self) -> u64 {
         self.free.iter().map(wgpu::Buffer::size).sum()

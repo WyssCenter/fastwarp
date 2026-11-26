@@ -483,6 +483,7 @@ fn time_case(
         };
         let _ = writeln!(err, "fastwarp bench: {name}: {label}");
         let (f, m) = (fixed.clone(), moving.clone());
+        engine::release_idle_gpus();
         let t = Instant::now();
         let run = engine::register_syn(
             vec![f],

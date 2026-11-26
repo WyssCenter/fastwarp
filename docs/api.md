@@ -111,6 +111,10 @@ Guide: [GPU and memory](guide/gpu.md).
 ```
 
 ```{eval-rst}
+.. autoapifunction:: fastwarp.release_idle_gpus
+```
+
+```{eval-rst}
 .. autoapifunction:: fastwarp.iso_grid_dims
 ```
 

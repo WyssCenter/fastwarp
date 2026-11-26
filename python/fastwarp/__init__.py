@@ -38,6 +38,7 @@ from ._core import (
     RegistrationCancelled,
     RegistrationError,
     gpu_info,
+    release_idle_gpus,
 )
 
 try:
@@ -67,6 +68,7 @@ __all__ = [
     "linear_session",
     "register_atlases",
     "register_syn",
+    "release_idle_gpus",
     "fits_gpu",
 ]
 
@@ -82,6 +84,7 @@ for _obj in (
     linear_session,
     register_atlases,
     register_syn,
+    release_idle_gpus,
 ):
     _obj.__module__ = "fastwarp"
 del _obj

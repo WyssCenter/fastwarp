@@ -122,6 +122,99 @@ pub fn open_gpu(adapter_substring: Option<String>) -> Result<WgpuBackend, Failur
     WgpuBackend::new(&sel).map_err(|e| Failure::GpuUnavailable(e.to_string()))
 }
 
+/// GPU backends of finished registrations, at most one per key of [`gpu_key`] and
+/// [`MAX_IDLE_GPUS`] in all, oldest first.
+static IDLE_GPUS: std::sync::Mutex<Vec<(String, WgpuBackend)>> = std::sync::Mutex::new(Vec::new());
+
+/// Most backends [`IDLE_GPUS`] keeps.
+const MAX_IDLE_GPUS: usize = 4;
+
+/// A GPU backend used by one registration. [`GpuCheckout::finish`] after a successful run puts
+/// it in [`IDLE_GPUS`] with its idle buffers released, so that the next registration of the
+/// process skips the device creation, the kernel compilation and the known-answer check; dropped
+/// otherwise, it frees the device.
+struct GpuCheckout {
+    key: String,
+    gpu: WgpuBackend,
+}
+
+impl GpuCheckout {
+    fn finish(self) {
+        if self.gpu.context().is_lost() || self.gpu.context().check_errors().is_err() {
+            return;
+        }
+        self.gpu.release_idle();
+        let freed = {
+            let mut list = IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner());
+            if list.iter().any(|(k, _)| *k == self.key) {
+                Some((self.key, self.gpu))
+            } else {
+                let evicted = (list.len() >= MAX_IDLE_GPUS).then(|| list.remove(0));
+                list.push((self.key, self.gpu));
+                evicted
+            }
+        };
+        drop(freed);
+    }
+}
+
+impl std::ops::Deref for GpuCheckout {
+    type Target = WgpuBackend;
+    fn deref(&self) -> &WgpuBackend {
+        &self.gpu
+    }
+}
+
+/// Frees the GPU devices that finished registrations of this process keep for the next one.
+pub fn release_idle_gpus() {
+    let freed = std::mem::take(&mut *IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner()));
+    drop(freed);
+}
+
+/// The adapter choice and every `FASTWARP_GPU_*`, `DBSLOC_GPU_*` and `WGPU_*` variable,
+/// which decide the device [`open_gpu`] creates.
+fn gpu_key(adapter: Option<&str>) -> String {
+    let mut vars: Vec<String> = std::env::vars_os()
+        .filter_map(|(k, v)| {
+            let k = k.to_string_lossy().into_owned();
+            ["FASTWARP_GPU_", "DBSLOC_GPU_", "WGPU_"]
+                .iter()
+                .any(|p| k.starts_with(p))
+                .then(|| format!("{k}={}", v.to_string_lossy()))
+        })
+        .collect();
+    vars.sort();
+    format!("{adapter:?}|{}", vars.join("|"))
+}
+
+/// An idle backend opened for the same choice, or a new one from [`open_gpu`].
+fn checkout_gpu(adapter: Option<String>) -> Result<GpuCheckout, Failure> {
+    let key = gpu_key(adapter.as_deref());
+    let (idle, lost) = {
+        let mut list = IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner());
+        let (lost, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *list)
+            .into_iter()
+            .partition(|(_, g)| g.context().is_lost());
+        *list = kept;
+        let idle = list
+            .iter()
+            .position(|(k, _)| *k == key)
+            .map(|at| list.swap_remove(at).1);
+        (idle, lost)
+    };
+    drop(lost);
+    let gpu = match idle {
+        Some(g) => {
+            g.reset_peak_allocated_bytes();
+            g.reset_stats();
+            g.reset_profile();
+            g
+        }
+        None => open_gpu(adapter)?,
+    };
+    Ok(GpuCheckout { key, gpu })
+}
+
 /// `name (backend, device type)` of the GPU in use.
 pub fn adapter_name(g: &WgpuBackend) -> String {
     let i = &g.context().info;
@@ -429,7 +522,7 @@ where
 {
     guarded(move || {
         let t_all = Instant::now();
-        let g = open_gpu(adapter)?;
+        let g = checkout_gpu(adapter)?;
         let caps = CapacityCaps::from_context(g.context());
         let dims = iso_dims(fixed[0].grid(), iso_mm);
         let moving_dims = moving
@@ -444,8 +537,8 @@ where
             cancel: cancel.as_deref(),
         };
         let out = register_stages(
-            &g,
-            &g,
+            &*g,
+            &*g,
             &recipe.plan,
             &fixed,
             &moving,
@@ -475,7 +568,7 @@ where
                 s.warnings(&format!("linear stage {} ({})", i + 1, kind_name(r.kind)))
             })
             .collect();
-        Ok(SynRun {
+        let run = SynRun {
             recipe,
             adapter: adapter_name(&g),
             grid: out.grid.size(),
@@ -507,7 +600,9 @@ where
             files,
             peak_gpu_bytes: g.peak_allocated_bytes(),
             memory_budget_bytes: caps.memory_budget,
-        })
+        };
+        g.finish();
+        Ok(run)
     })
 }
 

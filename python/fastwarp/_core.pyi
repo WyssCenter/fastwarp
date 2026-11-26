@@ -84,6 +84,15 @@ def register_syn(
     fixed_mask: _Image | None = None,
     moving_mask: _Image | None = None,
 ) -> dict[str, Any]: ...
+def release_idle_gpus() -> None:
+    """Free the GPU devices that finished registrations keep for the next one.
+
+    After a successful registration the process keeps its GPU device, with its idle buffers
+    freed, so that the next registration with the same adapter and ``FASTWARP_GPU_*`` settings
+    skips the device creation and the known-answer check. Call this to give that memory back,
+    for example before other GPU work in a long Python session.
+    """
+
 def gpu_info(adapter: str | None = None) -> dict[str, Any]:
     """Open the GPU that FastWarp would use and describe it.
 

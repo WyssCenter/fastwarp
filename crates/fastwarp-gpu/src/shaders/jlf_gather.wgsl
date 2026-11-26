@@ -31,6 +31,7 @@ struct GatherU {
   b: vec4<u32>,
   c: vec4<u32>,
   e: vec4<u32>,
+  f: vec4<u32>,
 };
 
 @group(0) @binding(0) var<storage, read> atlas: array<f32>;
@@ -81,7 +82,7 @@ fn k_jlf_gather(@builtin(global_invocation_id) gid: vec3<u32>) {
   let nx = u.dims.x;
   let ny = u.dims.y;
   let plane = nx * ny;
-  let v = vec3<i32>(i32(t % nx), i32((t / nx) % ny), i32(u.a.x + t / plane));
+  let v = vec3<i32>(i32(u.f.x + t % u.f.z), i32(u.f.y + (t / u.f.z) % u.f.w), i32(u.a.x + t / (u.f.z * u.f.w)));
   let n = u.a.w;
   let modalities = u.b.x;
   let p = u.b.y;

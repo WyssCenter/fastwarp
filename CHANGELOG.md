@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- New: `fastwarp.release_idle_gpus()` frees the GPU devices that a process keeps between
+  registrations.
+- Changed: joint label fusion on a dedicated GPU is 2.5 to 3.6 times faster with the same labels,
+  offsets and intensities to the bit. The patch search kernel handles 64 neighbouring voxels of
+  one atlas per workgroup and two candidate offsets per thread, the size of each dispatch follows
+  the measured kernel time, the GPU mode cuts the image into blocks by the number of fused voxels
+  and gathers the votes only around them, and the host steps around the kernels run in parallel.
+  On an RTX PRO 6000, `mode="gpu"`: deep7t with 9 atlases 12.1 s to 3.4 s, a 1 mm brain with 5
+  atlases 9.7 s to 3.4 s, with 20 atlases 23.2 s to 9.3 s.
+- Changed: while a level of a linear stage runs on the GPU, a second thread smooths the images
+  and draws the sample points of the next level (same results to the bit).
+- Changed: the composite `.h5` files are written without building the whole file in memory
+  first (the same bytes).
+- Changed: a process keeps the GPU device of a finished registration (its idle buffers freed; one
+  per adapter and `FASTWARP_GPU_*` / `WGPU_*` settings, four at most) and reuses it for the next
+  registration with the same settings, which saves the device creation, the kernel compilation and
+  the known-answer check (about 0.2 s). `fastwarp bench` still times every run with a new device. With the two
+  changes above, a 1 mm brain pair on an RTX PRO 6000 takes 2.1 to 3.5 s instead of 2.8 to 5.0 s
+  (1.3 to 1.4 times faster), with the same files to the bit.
+- Changed: the end of a registration is faster: the displacement fields are converted on several
+  threads and the transform files are written in parallel. The files are the same to the bit.
+- Changed: the linear stages prepare their sample points faster: at each level the affine stage
+  reuses the points of the rigid stage (same seed, level grid and images, no fixed mask) and the
+  jittered points are computed on all cores. The results are the same to the bit.
 - New: a result viewer on the page *Try FastWarp in your browser*. After a run it shows the template
   and your image in three linked views (axial, coronal, sagittal, at the voxel
   proportions, left on the left; click or tap to place the cross, sliders and arrow keys for the

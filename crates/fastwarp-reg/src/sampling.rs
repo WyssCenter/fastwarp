@@ -31,6 +31,8 @@
 
 //! ITK's Mersenne Twister and the metric sample-point selection of `ImageRegistrationMethodv4`.
 
+use rayon::prelude::*;
+
 use crate::grid::Grid;
 use crate::linalg::Vec3;
 
@@ -112,9 +114,9 @@ impl Mt19937 {
     /// A normal variate by ITK's Box-Muller form (`GetNormalVariate(mean, variance)`): one
     /// open-range then one open-upper-range draw per call, the cosine branch only.
     pub fn normal(&mut self, mean: f64, variance: f64) -> f64 {
-        let r = (-2.0 * (1.0 - self.open()).ln() * variance).sqrt();
-        let phi = 2.0 * std::f64::consts::PI * self.open_upper();
-        mean + r * phi.cos()
+        let open = self.integer();
+        let open_upper = self.integer();
+        normal_from(open, open_upper, mean, variance)
     }
 }
 
@@ -148,6 +150,11 @@ impl SeedSequence {
         Self { current: seed }
     }
 
+    /// The seed that [`Self::next_seed`] returns next.
+    pub fn peek(&self) -> u32 {
+        self.current
+    }
+
     /// The seed for the next generator (post-increment).
     pub fn next_seed(&mut self) -> u32 {
         let s = self.current;
@@ -156,11 +163,26 @@ impl SeedSequence {
     }
 }
 
-fn jittered_point(grid: &Grid, index: [usize; 3], rng: &mut Mt19937) -> Vec3 {
+/// Sample points jittered together: the generator's draws for one block are stored, then the
+/// points are computed in parallel.
+const SAMPLE_BLOCK: usize = 1 << 16;
+
+/// [`Mt19937::normal`] from its two integer draws.
+fn normal_from(open: u32, open_upper: u32, mean: f64, variance: f64) -> f64 {
+    let open = (f64::from(open) + 0.5) * (1.0 / 4_294_967_296.0);
+    let open_upper = f64::from(open_upper) * (1.0 / 4_294_967_296.0);
+    let r = (-2.0 * (1.0 - open).ln() * variance).sqrt();
+    let phi = 2.0 * std::f64::consts::PI * open_upper;
+    mean + r * phi.cos()
+}
+
+/// The grid point at `index` jittered by three normal variates drawn from `draws` (two integer
+/// draws each, x first).
+fn jittered_point(grid: &Grid, index: [usize; 3], draws: &[u32]) -> Vec3 {
     let spacing = grid.spacing();
     let mut p = grid.index_to_point([index[0] as f64, index[1] as f64, index[2] as f64]);
     for d in 0..3 {
-        p[d] += rng.normal(0.0, 1.0) * (spacing[d] / 3.0);
+        p[d] += normal_from(draws[2 * d], draws[2 * d + 1], 0.0, 1.0) * (spacing[d] / 3.0);
     }
     p
 }
@@ -177,31 +199,38 @@ pub fn metric_sample_points(
     seeds: &mut SeedSequence,
     mask: Option<&dyn Fn(Vec3) -> bool>,
 ) -> Vec<Vec3> {
-    let mut out = Vec::new();
-    let keep = |p: Vec3| mask.is_none_or(|m| m(p));
     match spec.strategy {
         SamplingStrategy::Regular => {
             let mut rng = Mt19937::new(seeds.next_seed());
             let stride = (1.0 / f64::from(spec.percentage)).ceil().max(1.0) as usize;
             let [nx, ny, nz] = grid.size();
-            let mut count = stride;
-            for k in 0..nz {
-                for j in 0..ny {
-                    for i in 0..nx {
-                        if count == stride {
-                            count = 0;
-                            let p = jittered_point(grid, [i, j, k], &mut rng);
-                            if keep(p) {
-                                out.push(p);
-                            }
-                        }
-                        count += 1;
-                    }
+            let picks = (nx * ny * nz).div_ceil(stride);
+            let mut out = Vec::with_capacity(if mask.is_none() { picks } else { 0 });
+            let mut draws = vec![0u32; 6 * SAMPLE_BLOCK.min(picks)];
+            let mut first = 0;
+            while first < picks {
+                let count = SAMPLE_BLOCK.min(picks - first);
+                for d in &mut draws[..6 * count] {
+                    *d = rng.integer();
                 }
+                let block_draws = &draws[..6 * count];
+                let block: Vec<Vec3> = (0..count)
+                    .into_par_iter()
+                    .map(|q| {
+                        let flat = (first + q) * stride;
+                        let index = [flat % nx, (flat / nx) % ny, flat / (nx * ny)];
+                        jittered_point(grid, index, &block_draws[6 * q..6 * q + 6])
+                    })
+                    .collect();
+                match mask {
+                    Some(keep) => out.extend(block.into_iter().filter(|p| keep(*p))),
+                    None => out.extend(block),
+                }
+                first += count;
             }
+            out
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -283,6 +312,7 @@ mod tests {
         assert_ne!(a, b);
         let c = metric_sample_points(&g, spec, &mut SeedSequence::new(20_260_910), None);
         assert_eq!(a, c);
+        assert_eq!(seeds.peek(), 20_260_912);
 
         let mut rng = Mt19937::new(20_260_910);
         let first = [
@@ -396,5 +426,47 @@ mod tests {
             .collect();
         assert_eq!(masked, expected);
         assert!(!masked.is_empty() && masked.len() < plain.len());
+    }
+
+    #[test]
+    fn regular_sampling_equals_the_raster_scan_with_one_generator_bit_for_bit() {
+        for size in [[7usize, 5, 3], [71, 67, 15]] {
+            let g = Grid::new(size, [0.9, 1.3, 2.1], [-3.0, 4.5, 1.25], IDENTITY3).unwrap();
+            for percentage in [1.0f32, 0.3, 0.25, 0.07] {
+                let spec = SamplingSpec {
+                    strategy: SamplingStrategy::Regular,
+                    percentage,
+                };
+                let mut rng = Mt19937::new(99);
+                let stride = (1.0 / f64::from(percentage)).ceil().max(1.0) as usize;
+                let spacing = g.spacing();
+                let mut want = Vec::new();
+                let mut count = stride;
+                for k in 0..size[2] {
+                    for j in 0..size[1] {
+                        for i in 0..size[0] {
+                            if count == stride {
+                                count = 0;
+                                let mut p = g.index_to_point([i as f64, j as f64, k as f64]);
+                                for d in 0..3 {
+                                    let r = (-2.0 * (1.0 - rng.open()).ln() * 1.0).sqrt();
+                                    let phi = 2.0 * std::f64::consts::PI * rng.open_upper();
+                                    p[d] += (0.0 + r * phi.cos()) * (spacing[d] / 3.0);
+                                }
+                                want.push(p);
+                            }
+                            count += 1;
+                        }
+                    }
+                }
+                let got = metric_sample_points(&g, spec, &mut SeedSequence::new(99), None);
+                let bits = |v: &[Vec3]| -> Vec<[u64; 3]> {
+                    v.iter()
+                        .map(|p| [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()])
+                        .collect()
+                };
+                assert_eq!(bits(&got), bits(&want));
+            }
+        }
     }
 }

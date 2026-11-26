@@ -84,3 +84,7 @@ def test_the_removed_rigid_names_are_gone():
     assert not hasattr(fastwarp._core, "check_linear_stage")
     with pytest.raises(AttributeError):
         _ = fastwarp.no_such_name
+
+
+def test_release_idle_gpus_runs_without_a_registration():
+    assert fastwarp.release_idle_gpus() is None

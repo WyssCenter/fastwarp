@@ -53,6 +53,7 @@ use crate::error::{GpuError, GpuResult};
 use crate::wgpu_backend::block_reg;
 
 const SRC: &str = include_str!("shaders/jlf_search.wgsl");
+const TRANSPOSE_SRC: &str = include_str!("shaders/jlf_transpose.wgsl");
 const WEIGH_SRC: &str = include_str!("shaders/jlf_weights.wgsl");
 const WEIGH_TILED_SRC: &str = include_str!("shaders/jlf_weights_tiled.wgsl");
 const TILED_FROM: usize = 11;
@@ -210,6 +211,49 @@ pub struct GpuJlfSearch {
     times: [f64; 3],
     weigh: Option<(bool, wgpu::ComputePipeline)>,
     gather_budget: u64,
+    run: u32,
+    wrun: u32,
+    grun: u32,
+    rate: [f64; 3],
+    transpose: wgpu::ComputePipeline,
+}
+
+const MAX_SCALE: u32 = 64;
+
+fn adapt(scale: u32, full: bool, dt: f64) -> u32 {
+    if dt > 0.25 {
+        (scale / 2).max(1)
+    } else if full && dt < 0.05 {
+        (scale * 2).min(MAX_SCALE)
+    } else {
+        scale
+    }
+}
+
+fn scaled(base: u64, scale: u32, unit: u64) -> u64 {
+    (base * u64::from(scale)).min(1 << 24) / unit * unit
+}
+
+/// Seconds one dispatch should take at the slowest rate measured so far, well below the 2 s
+/// watchdog of Windows display drivers.
+const TARGET_DISPATCH_S: f64 = 0.1;
+
+/// `want` items, at most as many as take [`TARGET_DISPATCH_S`] at `rate` seconds per item
+/// (a multiple of `unit`, at least one `unit`).
+fn capped(want: u64, rate: f64, unit: u64) -> u64 {
+    if rate > 0.0 {
+        let cap = ((TARGET_DISPATCH_S / rate) as u64 / unit * unit).max(unit);
+        want.min(cap)
+    } else {
+        want
+    }
+}
+
+/// The rate per item after a dispatch of `items` took `seconds`: the new rate when it is
+/// slower, otherwise the old one halved toward it, so one slow first dispatch (shader warm-up)
+/// stops limiting the dispatches after a few, while a dense slab limits the next one at once.
+fn slowest(rate: f64, seconds: f64, items: u64) -> f64 {
+    (seconds / items.max(1) as f64).max(rate * 0.5)
 }
 
 impl GpuJlfSearch {
@@ -222,6 +266,9 @@ impl GpuJlfSearch {
     pub async fn new_async(ctx: Arc<GpuContext>) -> GpuResult<Self> {
         let pipeline = ctx
             .compile_async("k_jlf_search", SRC, "k_jlf_search")
+            .await?;
+        let transpose = ctx
+            .compile_async("k_jlf_transpose", TRANSPOSE_SRC, "k_jlf_transpose")
             .await?;
         let limits = ctx.device.limits();
         let binding = limits
@@ -241,6 +288,11 @@ impl GpuJlfSearch {
             times: [0.0; 3],
             weigh: None,
             gather_budget: GATHER_OUT_BYTES.min(binding),
+            run: 1,
+            wrun: 1,
+            grun: 1,
+            rate: [0.0; 3],
+            transpose,
             pipeline,
             ctx,
         })
@@ -310,6 +362,23 @@ impl GpuJlfSearch {
             self.ctx.upload(&buffer, data);
         }
         Ok(buffer)
+    }
+
+    async fn scratch(&self, label: &str, bytes: u64) -> GpuResult<wgpu::Buffer> {
+        let bytes = bytes.max(4);
+        if bytes > self.binding {
+            return Err(too_large(label));
+        }
+        self.ctx
+            .scoped_async(label, bytes, || {
+                self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: bytes,
+                    usage: STORAGE,
+                    mapped_at_creation: false,
+                })
+            })
+            .await
     }
 
     async fn ensure_slab(
@@ -406,6 +475,9 @@ impl GpuJlfSearch {
         block: &SearchBlock<'_>,
         weigh: Option<&WeighArgs<'_>>,
     ) -> GpuResult<(Vec<u32>, Vec<f32>)> {
+        self.run = 1;
+        self.wrun = 1;
+        self.grun = 1;
         let atlases = block.atlases.len();
         let centres = block.centres.len();
         let mut best = Vec::with_capacity(centres * atlases);
@@ -446,7 +518,7 @@ impl GpuJlfSearch {
         let patch_buf = self.storage("jlf patch offsets", &patch).await?;
         let per_item = (longest * width as u64).max(1);
         let items_per_dispatch =
-            (WORK_PER_DISPATCH / per_item).clamp(u64::from(WG), 1 << 24) as u32;
+            (WORK_PER_DISPATCH / per_item).clamp(u64::from(WG), 1 << 24) as u32 / WG * WG;
         let max_count = [
             self.binding / (atlases as u64 * 4),
             self.binding / 16,
@@ -458,6 +530,11 @@ impl GpuJlfSearch {
         .min()
         .unwrap_or(1)
         .max(1) as usize;
+        let max_count = if max_count >= WG as usize {
+            max_count / WG as usize * WG as usize
+        } else {
+            max_count
+        };
         let mut first = 0;
         while first < centres {
             let z0 = block.centres[first] / plane;
@@ -501,9 +578,31 @@ impl GpuJlfSearch {
                 .checked_mul(atlases)
                 .and_then(|n| u32::try_from(n).ok())
                 .ok_or_else(|| too_large("the offsets of one block"))?;
+            let pcount = count.next_multiple_of(WG as usize);
+            let pitems = (pcount * atlases) as u32;
             let centre_buf = self.storage("jlf centres", &recs).await?;
             let patch_values = &block.patches[first * width..last * width];
-            let target_buf = self.storage("jlf target patches", patch_values).await?;
+            let plain_buf = self.storage("jlf target patches", patch_values).await?;
+            let target_buf = {
+                let total = (pcount * width) as u32;
+                let tr = self
+                    .scratch("jlf transposed target patches", u64::from(total) * 4)
+                    .await?;
+                let (gx, gy) = self.groups(total);
+                let uniform = [count as u32, width as u32, total, gx * WG];
+                self.dispatch(
+                    &self.transpose,
+                    &[&plain_buf, &tr],
+                    bytemuck::bytes_of(&uniform),
+                    [gx, gy],
+                )
+                .await?;
+                tr
+            };
+            let shared = weigh.is_some_and(|a| {
+                std::ptr::eq(&a.normalized[first * width..last * width], patch_values)
+            });
+            let plain_buf = shared.then_some(plain_buf);
             let out_buf = self
                 .storage("jlf best offsets", &vec![UNSET; items as usize])
                 .await?;
@@ -521,9 +620,15 @@ impl GpuJlfSearch {
                 &out_buf,
             ];
             let mut base = 0u32;
-            while base < items {
-                let run = items_per_dispatch.min(items - base);
+            while base < pitems {
+                let want = capped(
+                    scaled(u64::from(items_per_dispatch), self.run, u64::from(WG)),
+                    self.rate[0],
+                    u64::from(WG),
+                ) as u32;
+                let run = want.min(pitems - base);
                 let (gx, gy) = self.groups(run);
+                let started = stamp();
                 let uniform = SearchU {
                     dims: [nx as u32, ny as u32, nz as u32, base + run],
                     slab: [
@@ -538,7 +643,7 @@ impl GpuJlfSearch {
                         gx * WG,
                         base,
                     ],
-                    pad: [0; 4],
+                    pad: [count as u32, pcount as u32, 0, 0],
                 };
                 self.dispatch(
                     &self.pipeline,
@@ -547,6 +652,11 @@ impl GpuJlfSearch {
                     [gx, gy],
                 )
                 .await?;
+                if let Some(s) = started {
+                    let dt = s.elapsed().as_secs_f64();
+                    self.run = adapt(self.run, run == want, dt);
+                    self.rate[0] = slowest(self.rate[0], dt, u64::from(run));
+                }
                 base += run;
             }
             let search_s = seconds(search_start);
@@ -554,9 +664,12 @@ impl GpuJlfSearch {
             let mut tiled_runs = 0u64;
             if let (Some(args), Some((tiled, pipeline))) = (weigh, self.weigh.as_ref()) {
                 let normalized = &args.normalized[first * width..last * width];
-                let tn_buf = self
-                    .storage("jlf normalised target patches", normalized)
-                    .await?;
+                let tn_buf = if let Some(b) = plain_buf.as_ref() {
+                    b.clone()
+                } else {
+                    self.storage("jlf normalised target patches", normalized)
+                        .await?
+                };
                 let wout = self
                     .storage("jlf weights", &vec![0f32; count * (atlases + 1)])
                     .await?;
@@ -567,7 +680,13 @@ impl GpuJlfSearch {
                 let weight_start = stamp();
                 let mut base = 0u32;
                 while base < total {
-                    let run = per_dispatch.min(total - base);
+                    let want = capped(
+                        scaled(u64::from(per_dispatch), self.wrun, 1),
+                        self.rate[1],
+                        1,
+                    ) as u32;
+                    let run = want.min(total - base);
+                    let started = stamp();
                     let tiled = *tiled;
                     tiled_runs += u64::from(tiled);
                     let (gx, gy, stride) = if tiled {
@@ -603,6 +722,11 @@ impl GpuJlfSearch {
                         [gx, gy],
                     )
                     .await?;
+                    if let Some(s) = started {
+                        let dt = s.elapsed().as_secs_f64();
+                        self.wrun = adapt(self.wrun, run == want, dt);
+                        self.rate[1] = slowest(self.rate[1], dt, u64::from(run));
+                    }
                     base += run;
                 }
                 weight_s = seconds(weight_start);
@@ -778,6 +902,7 @@ struct GatherU {
     b: [u32; 4],
     c: [u32; 4],
     e: [u32; 4],
+    f: [u32; 4],
 }
 
 const GATHER_SRC: &str = include_str!("shaders/jlf_gather.wgsl");
@@ -808,7 +933,6 @@ struct Full<'a> {
     input: &'a JlfInput,
     opts: &'a JlfOptions,
     gather: wgpu::ComputePipeline,
-    slots: Vec<Vec<u32>>,
     store: BTreeMap<usize, PlaneCentres>,
     patch: Vec<[isize; 3]>,
 }
@@ -855,9 +979,12 @@ impl Full<'_> {
                 if !self.inside(q) {
                     continue;
                 }
-                let slot = self.slots[i][self.index(q)];
-                if slot != UNSET {
-                    acc.posteriors[slot as usize][v] += plane.weights[k * n + i];
+                if let Ok(slot) = self
+                    .parts
+                    .label_set()
+                    .binary_search(&self.input.labels[i][self.index(q)])
+                {
+                    acc.posteriors[slot][v] += plane.weights[k * n + i];
                 }
             }
         }
@@ -911,17 +1038,61 @@ impl GpuJlfSearch {
                 self.binding
             )));
         }
+        let reach: [usize; 3] = std::array::from_fn(|d| {
+            full.patch
+                .iter()
+                .map(|o| o[d].unsigned_abs())
+                .max()
+                .unwrap_or(0)
+        });
         let mut a = z0;
         while a < z1 {
             let mut b = a + 1;
             while b < z1 && fits(b + 1 - a) {
                 b += 1;
             }
-            self.gathers += 1;
-            let ga = a.saturating_sub(rs);
-            let gb = (b + rs).min(nz);
             let ca = a.saturating_sub(rp);
             let cb = (b + rp).min(nz);
+            let mut bmin = [usize::MAX; 3];
+            let mut bmax = [0usize; 3];
+            for (_, pc) in full.store.range(ca..cb) {
+                for &v in &pc.voxels {
+                    let q = [v % nx, (v / nx) % ny, v / plane];
+                    for d in 0..3 {
+                        bmin[d] = bmin[d].min(q[d]);
+                        bmax[d] = bmax[d].max(q[d]);
+                    }
+                }
+            }
+            if bmin[0] == usize::MAX {
+                a = b;
+                continue;
+            }
+            let (r0, r1) = {
+                let lo = [
+                    bmin[0].saturating_sub(reach[0]),
+                    bmin[1].saturating_sub(reach[1]),
+                    bmin[2].saturating_sub(reach[2]).max(a),
+                ];
+                let hi = [
+                    (bmax[0] + reach[0] + 1).min(nx),
+                    (bmax[1] + reach[1] + 1).min(ny),
+                    (bmax[2] + reach[2] + 1).min(b),
+                ];
+                (lo, hi)
+            };
+            if r0[2] >= r1[2] {
+                a = b;
+                continue;
+            }
+            let [bw, bh, bd] = [r1[0] - r0[0], r1[1] - r0[1], r1[2] - r0[2]];
+            let region = |t: usize| {
+                r0[0] + t % bw + nx * (r0[1] + (t / bw) % bh + ny * (r0[2] + t / (bw * bh)))
+            };
+            self.gathers += 1;
+            let voxels = bw * bh * bd;
+            let ga = r0[2].saturating_sub(rs);
+            let gb = (r1[2] + rs).min(nz);
             let apl = (gb - ga) * plane;
             let mut atlas = Vec::with_capacity(n * modalities * apl);
             for at in &input.atlases {
@@ -929,13 +1100,11 @@ impl GpuJlfSearch {
                     atlas.extend_from_slice(&image[ga * plane..gb * plane]);
                 }
             }
-            let mut slots = Vec::new();
-            if labelled {
-                slots.reserve(n * apl);
-                for s in &full.slots {
-                    slots.extend_from_slice(&s[ga * plane..gb * plane]);
-                }
-            }
+            let slots = if labelled {
+                full.parts.label_slots_range(ga * plane, gb * plane)
+            } else {
+                Vec::new()
+            };
             let mut cmap = vec![UNSET; (cb - ca) * plane];
             let mut cw = Vec::new();
             let mut co = Vec::new();
@@ -949,12 +1118,8 @@ impl GpuJlfSearch {
                     co.extend_from_slice(&pc.offsets[k * n..(k + 1) * n]);
                 }
             }
-            let voxels = (b - a) * plane;
             let mask: Vec<u32> = match &input.mask {
-                Some(m) => m[a * plane..b * plane]
-                    .iter()
-                    .map(|v| u32::from(*v != 0))
-                    .collect(),
+                Some(m) => (0..voxels).map(|t| u32::from(m[region(t)] != 0)).collect(),
                 None => vec![1; voxels],
             };
             let poff: Vec<[i32; 4]> = full
@@ -973,7 +1138,7 @@ impl GpuJlfSearch {
                 .checked_mul(rsize)
                 .ok_or_else(|| too_large("the gather output"))?;
             let out_buf = self
-                .storage("jlf gather output", &vec![0u32; out_len])
+                .scratch("jlf gather output", (out_len as u64) * 4)
                 .await?;
             let per_voxel = (p * n * (modalities + 1)) as u64;
             let per_dispatch =
@@ -981,11 +1146,17 @@ impl GpuJlfSearch {
             let gather_start = stamp();
             let mut first = 0usize;
             while first < voxels {
-                let run = per_dispatch.min(voxels - first);
+                let want = capped(
+                    scaled(per_dispatch as u64, self.grun, u64::from(WG)),
+                    self.rate[2],
+                    u64::from(WG),
+                ) as usize;
+                let run = want.min(voxels - first);
+                let started = stamp();
                 let (gx, gy) = self.groups(run as u32);
                 let uniform = GatherU {
                     dims: [nx as u32, ny as u32, nz as u32, (first + run) as u32],
-                    a: [a as u32, ga as u32, ca as u32, n as u32],
+                    a: [r0[2] as u32, ga as u32, ca as u32, n as u32],
                     b: [modalities as u32, p as u32, gx * WG, rsize as u32],
                     c: [
                         u32::from(labelled),
@@ -994,6 +1165,7 @@ impl GpuJlfSearch {
                         u32::from(voting),
                     ],
                     e: [first as u32, 0, 0, 0],
+                    f: [r0[0] as u32, r0[1] as u32, bw as u32, bh as u32],
                 };
                 self.dispatch(
                     &full.gather,
@@ -1005,12 +1177,17 @@ impl GpuJlfSearch {
                     [gx, gy],
                 )
                 .await?;
+                if let Some(s) = started {
+                    let dt = s.elapsed().as_secs_f64();
+                    self.grun = adapt(self.grun, run == want, dt);
+                    self.rate[2] = slowest(self.rate[2], dt, run as u64);
+                }
                 first += run;
             }
             self.times[2] += seconds(gather_start);
             let rec = self.ctx.read_u32_async(&out_buf, out_len).await?;
             for t in 0..voxels {
-                let v = a * plane + t;
+                let v = region(t);
                 let r = &rec[t * rsize..(t + 1) * rsize];
                 let used = (r[0] & 0x7fff_ffff) as usize;
                 let overflow = r[0] >> 31 != 0;
@@ -1074,21 +1251,11 @@ async fn fuse_on_gpu(
         .compile_async("k_jlf_gather", GATHER_SRC, "k_jlf_gather")
         .await
         .map_err(gerr)?;
-    let set = parts.label_set().to_vec();
-    let slots = input
-        .labels
-        .iter()
-        .map(|l| {
-            l.iter()
-                .map(|x| set.binary_search(x).map_or(UNSET, |s| s as u32))
-                .collect()
-        })
-        .collect();
     let [nx, ny, nz] = input.size;
     let plane = nx * ny;
     let n = input.atlases.len();
     let width = parts.patch_len() * parts.used();
-    let per_block = (search.block_voxels(input.size, width) / plane).max(1);
+    let cap = (search.patch_budget / (width.max(1) as u64 * 4)).max(1) as usize;
     let lists: Vec<Vec<[isize; 3]>> = parts.lists().to_vec();
     if lists
         .iter()
@@ -1107,17 +1274,22 @@ async fn fuse_on_gpu(
         input,
         opts,
         gather,
-        slots,
         store: BTreeMap::new(),
     };
     let rp = input_reach(&full.patch);
     let mut acc = full.parts.accumulators();
+    let per_plane = full.parts.active_per_plane();
     let pc = opts.metric == PatchMetric::PearsonCorrelation;
     let mut next = 0usize;
     let mut z0 = 0usize;
     while z0 < nz {
         cancelled(cancel)?;
-        let z1 = (z0 + per_block).min(nz);
+        let mut z1 = z0 + 1;
+        let mut total = per_plane[z0];
+        while z1 < nz && total + per_plane[z1] <= cap {
+            total += per_plane[z1];
+            z1 += 1;
+        }
         let (centres, list_of) = full.parts.active(z0 * plane, z1 * plane);
         let patches = full.parts.search_patches(&centres);
         let block = full.parts.block(&centres, &list_of, &patches);

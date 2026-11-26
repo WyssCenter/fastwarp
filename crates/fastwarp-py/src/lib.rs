@@ -232,6 +232,12 @@ fn register_syn<'py>(
     Ok(d)
 }
 
+/// Free the GPU devices that finished registrations of this process keep for the next one.
+#[pyfunction]
+fn release_idle_gpus(py: Python<'_>) {
+    py.detach(engine::release_idle_gpus);
+}
+
 /// Open the GPU that FastWarp would use and describe it: `name`, `backend` (graphics API),
 /// `device_type`, `driver` (driver name, not a version) and `memory_budget_bytes`. Raises
 /// `GpuUnavailableError` when there is no usable GPU.
@@ -543,6 +549,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     m.add_function(wrap_pyfunction!(register_syn, m)?)?;
     m.add_function(wrap_pyfunction!(gpu_info, m)?)?;
+    m.add_function(wrap_pyfunction!(release_idle_gpus, m)?)?;
     m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;

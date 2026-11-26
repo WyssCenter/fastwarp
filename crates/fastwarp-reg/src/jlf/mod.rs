@@ -300,15 +300,22 @@ fn check(input: &JlfInput, opts: &JlfOptions) -> Result<usize> {
 }
 
 fn label_set(input: &JlfInput) -> Vec<u32> {
-    let mut set = std::collections::BTreeSet::new();
-    for labels in &input.labels {
-        for (v, &l) in labels.iter().enumerate() {
-            if input.mask.as_ref().is_none_or(|m| m[v] != 0) {
-                set.insert(l);
+    let mut set: Vec<u32> = input
+        .labels
+        .par_iter()
+        .flat_map_iter(|labels| {
+            let mut s = std::collections::BTreeSet::new();
+            for (v, &l) in labels.iter().enumerate() {
+                if input.mask.as_ref().is_none_or(|m| m[v] != 0) {
+                    s.insert(l);
+                }
             }
-        }
-    }
-    set.into_iter().collect()
+            s
+        })
+        .collect();
+    set.sort_unstable();
+    set.dedup();
+    set
 }
 
 fn joint_error(diffs: &[f64], atlases: usize, width: usize, patch: usize, beta: f64) -> Vec<f64> {
@@ -564,16 +571,47 @@ impl<'a> FusionParts<'a> {
             .collect()
     }
 
+    /// The number of fused voxels in each z plane.
+    pub fn active_per_plane(&self) -> Vec<usize> {
+        let [nx, ny, nz] = self.input.size;
+        let plane = nx * ny;
+        (0..nz)
+            .into_par_iter()
+            .map(|z| {
+                (z * plane..(z + 1) * plane)
+                    .filter(|&v| self.list_at(v).is_some())
+                    .count()
+            })
+            .collect()
+    }
+
+    /// Per atlas label image, the index of each voxel's label in [`Self::label_set`] (or
+    /// `u32::MAX` for a label outside it) for the voxels `start..end`, atlas after atlas.
+    pub fn label_slots_range(&self, start: usize, end: usize) -> Vec<u32> {
+        let mut out = vec![u32::MAX; self.input.labels.len() * (end - start)];
+        if end > start {
+            out.par_chunks_mut(end - start)
+                .zip(self.input.labels.par_iter())
+                .for_each(|(o, l)| {
+                    o.par_iter_mut().zip(&l[start..end]).for_each(|(s, x)| {
+                        *s = self.set.binary_search(x).map_or(u32::MAX, |k| k as u32);
+                    });
+                });
+        }
+        out
+    }
+
     /// Empty accumulators for this fusion.
     pub fn accumulators(&self) -> Accumulators {
         let n = self.voxels;
+        let zeros = |k: usize| (0..k).map(|_| vec![0.0f32; n]).collect::<Vec<_>>();
         Accumulators {
-            intensity: vec![vec![0.0f32; n]; self.input.atlases[0].len()],
+            intensity: zeros(self.input.atlases[0].len()),
             count: vec![0u32; n],
-            posteriors: vec![vec![0.0f32; n]; self.set.len()],
+            posteriors: zeros(self.set.len()),
             weight_sum: vec![0.0f32; n],
             voting: if self.opts.voting_weights {
-                vec![vec![0.0f32; n]; self.input.atlases.len()]
+                zeros(self.input.atlases.len())
             } else {
                 Vec::new()
             },
@@ -756,9 +794,9 @@ impl FusionParts<'_> {
             None
         } else {
             let mut out = vec![0u32; n];
-            for (v, label) in out.iter_mut().enumerate() {
+            out.par_iter_mut().enumerate().for_each(|(v, label)| {
                 if input.mask.as_ref().is_some_and(|m| m[v] == 0) {
-                    continue;
+                    return;
                 }
                 let mut max = 0.0f64;
                 for (slot, &l) in set.iter().enumerate() {
@@ -777,31 +815,32 @@ impl FusionParts<'_> {
                         *label = l;
                     }
                 }
-            }
+            });
             Some(out)
         };
-        if opts.posteriors || opts.voting_weights {
-            for v in 0..n {
-                let sum = acc.weight_sum[v];
-                if sum < 0.1f32 {
-                    continue;
-                }
-                if opts.posteriors {
-                    for image in &mut acc.posteriors {
-                        image[v] /= sum;
+        let weight_sum = &acc.weight_sum;
+        let divide = |image: &mut Vec<f32>| {
+            image
+                .par_iter_mut()
+                .zip(weight_sum)
+                .for_each(|(value, &sum)| {
+                    if sum < 0.1f32 {
+                        return;
                     }
-                }
-                for image in &mut acc.voting {
-                    image[v] /= sum;
-                }
-            }
+                    *value /= sum;
+                });
+        };
+        if opts.posteriors {
+            acc.posteriors.iter_mut().for_each(divide);
         }
+        acc.voting.iter_mut().for_each(divide);
+        let count = &acc.count;
         for image in &mut acc.intensity {
-            for (value, &count) in image.iter_mut().zip(&acc.count) {
+            image.par_iter_mut().zip(count).for_each(|(value, &count)| {
                 if count > 0 {
                     *value /= count as f32;
                 }
-            }
+            });
         }
         let posteriors = if opts.posteriors {
             set.iter().copied().zip(acc.posteriors).collect()

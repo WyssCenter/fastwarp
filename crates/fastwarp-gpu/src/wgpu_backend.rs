@@ -47,6 +47,7 @@ use fastwarp_reg::linalg::{mat3_inverse, mat3_mul, mat3_mul_vec, Mat3, Vec3, IDE
 use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
 use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::volume::Volume;
+use rayon::prelude::*;
 
 use crate::device::{block_gpu, blocking_unavailable, BackendSelect, GpuContext, WEB};
 use crate::error::{GpuError, GpuResult};
@@ -540,6 +541,31 @@ impl WgpuBackend {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .peak_bytes()
+    }
+
+    /// Sets the counters of [`Self::stats`] back to zero.
+    pub fn reset_stats(&self) {
+        for c in [
+            &self.scalar_readbacks,
+            &self.field_downloads,
+            &self.uploads,
+            &self.submits,
+        ] {
+            c.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Turns profiling off and drops the profile collected so far.
+    pub fn reset_profile(&self) {
+        *self.profile.lock().unwrap_or_else(|p| p.into_inner()) = Profile::default();
+    }
+
+    /// Starts [`Self::peak_allocated_bytes`] again from the bytes the pool owns now.
+    pub fn reset_peak_allocated_bytes(&self) {
+        self.pool
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .reset_peak();
     }
 
     /// Frees every idle pooled buffer and the cached Gaussian taps, returning the bytes freed.
@@ -1623,6 +1649,35 @@ impl Backend for WgpuBackend {
     async fn download_field(&self, field: &GpuField) -> RegResult<VectorField> {
         let n = field.grid.num_voxels();
         self.field_downloads.fetch_add(1, Ordering::Relaxed);
+        if !WEB {
+            let mut vectors: Vec<Vec3> = vec![[0.0; 3]; n];
+            let out = &mut vectors;
+            self.ctx
+                .read_bytes_with_async(field.buf.buffer(), (3 * n * 4) as u64, move |bytes| {
+                    let owned: Vec<f32>;
+                    let data: &[f32] = match bytemuck::try_cast_slice(bytes) {
+                        Ok(d) => d,
+                        Err(_) => {
+                            owned = bytemuck::pod_collect_to_vec(bytes);
+                            &owned
+                        }
+                    };
+                    const CHUNK: usize = 1 << 14;
+                    out.par_chunks_mut(CHUNK).enumerate().for_each(|(c, part)| {
+                        for (k, v) in part.iter_mut().enumerate() {
+                            let i = c * CHUNK + k;
+                            *v = [
+                                f64::from(data[i]),
+                                f64::from(data[n + i]),
+                                f64::from(data[2 * n + i]),
+                            ];
+                        }
+                    });
+                })
+                .await
+                .map_err(gerr)?;
+            return VectorField::from_vec(field.grid, vectors);
+        }
         let data = self
             .ctx
             .read_f32_async(field.buf.buffer(), 3 * n)

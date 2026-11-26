@@ -34,6 +34,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::io::Write;
 use std::path::Path;
 
 use crate::error::{fmt_err, unsupported, RegError, Result};
@@ -1180,13 +1181,61 @@ fn contiguous_layout(addr: u64, size: u64) -> Vec<u8> {
     b
 }
 
-struct Writer {
+struct Writer<'a> {
     buf: Vec<u8>,
+    holes: Vec<(usize, &'a [f32])>,
+    skipped: usize,
     heap_addr: u64,
     next_string: u32,
 }
 
-impl Writer {
+/// Values per block in which [`WriteLayout::write_to`] converts an `F32AsF64` dataset.
+const F64_BLOCK: usize = 1 << 16;
+
+/// A file of [`write_layout`]: the metadata, and the `F32AsF64` datasets with the position in
+/// the metadata where each one goes, so the converted values are never all in memory at once.
+pub(crate) struct WriteLayout<'a> {
+    meta: Vec<u8>,
+    holes: Vec<(usize, &'a [f32])>,
+}
+
+impl WriteLayout<'_> {
+    /// Writes the file into `out`.
+    pub(crate) fn write_to<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
+        let mut at = 0;
+        let mut block = Vec::with_capacity(8 * F64_BLOCK);
+        for (pos, values) in &self.holes {
+            out.write_all(&self.meta[at..*pos])?;
+            for chunk in values.chunks(F64_BLOCK) {
+                block.clear();
+                for x in chunk {
+                    block.extend_from_slice(&f64::from(*x).to_le_bytes());
+                }
+                out.write_all(&block)?;
+            }
+            at = *pos;
+        }
+        out.write_all(&self.meta[at..])
+    }
+
+    /// The bytes of the file.
+    pub(crate) fn into_bytes(self) -> Result<Vec<u8>> {
+        if self.holes.is_empty() {
+            return Ok(self.meta);
+        }
+        let len = self.meta.len() + self.holes.iter().map(|(_, v)| v.len() * 8).sum::<usize>();
+        let mut out = Vec::with_capacity(len);
+        self.write_to(&mut out)
+            .map_err(|e| fmt_err(H5, e.to_string()))?;
+        Ok(out)
+    }
+}
+
+impl<'a> Writer<'a> {
+    fn pos(&self) -> u64 {
+        (self.buf.len() + self.skipped) as u64
+    }
+
     fn dataset(&mut self, space: Vec<u8>, ty: Vec<u8>, raw: &[u8]) -> u64 {
         self.dataset_with(space, ty, raw.len(), |buf| buf.extend_from_slice(raw))
     }
@@ -1199,11 +1248,15 @@ impl Writer {
         fill: impl FnOnce(&mut Vec<u8>),
     ) -> u64 {
         pad8(&mut self.buf);
-        let data_addr = self.buf.len() as u64;
+        let data_addr = self.pos();
         self.buf.reserve(len);
         fill(&mut self.buf);
         pad8(&mut self.buf);
-        let header_addr = self.buf.len() as u64;
+        self.header(space, ty, data_addr, len)
+    }
+
+    fn header(&mut self, space: Vec<u8>, ty: Vec<u8>, data_addr: u64, len: usize) -> u64 {
+        let header_addr = self.pos();
         let header = ohdr(&[
             (0x01, 1, space),
             (0x03, 1, ty),
@@ -1214,7 +1267,7 @@ impl Writer {
         header_addr
     }
 
-    fn node(&mut self, node: &Node<'_>) -> Result<u64> {
+    fn node(&mut self, node: &Node<'a>) -> Result<u64> {
         match node {
             Node::F64(v) => {
                 Ok(
@@ -1226,13 +1279,16 @@ impl Writer {
                 )
             }
             Node::F32AsF64(v) => {
-                Ok(
-                    self.dataset_with(dataspace(v.len() as u64), f64_type(), v.len() * 8, |buf| {
-                        for x in v.iter() {
-                            buf.extend_from_slice(&f64::from(*x).to_le_bytes());
-                        }
-                    }),
-                )
+                pad8(&mut self.buf);
+                let data_addr = self.pos();
+                self.holes.push((self.buf.len(), v));
+                self.skipped += v.len() * 8;
+                Ok(self.header(
+                    dataspace(v.len() as u64),
+                    f64_type(),
+                    data_addr,
+                    v.len() * 8,
+                ))
             }
             Node::Str(s) => {
                 self.next_string += 1;
@@ -1246,7 +1302,7 @@ impl Writer {
         }
     }
 
-    fn group(&mut self, members: &[(String, Node<'_>)]) -> Result<u64> {
+    fn group(&mut self, members: &[(String, Node<'a>)]) -> Result<u64> {
         let mut addrs = Vec::with_capacity(members.len());
         for (_, n) in members {
             addrs.push(self.node(n)?);
@@ -1272,14 +1328,21 @@ impl Writer {
             msgs.push((0x06, 0, body));
         }
         pad8(&mut self.buf);
-        let at = self.buf.len() as u64;
+        let at = self.pos();
         self.buf.extend_from_slice(&ohdr(&msgs));
         Ok(at)
     }
 }
 
 /// Serialises a tree of groups and datasets to the bytes of an HDF5 file.
+#[cfg(test)]
 pub(crate) fn write_bytes(root: &[(String, Node<'_>)]) -> Result<Vec<u8>> {
+    write_layout(root)?.into_bytes()
+}
+
+/// Serialises a tree of groups and datasets as an HDF5 file whose `F32AsF64` datasets are
+/// converted only when it is written ([`WriteLayout::write_to`]).
+pub(crate) fn write_layout<'a>(root: &[(String, Node<'a>)]) -> Result<WriteLayout<'a>> {
     let mut strings = Vec::new();
     collect_strings(root, &mut strings);
     let mut buf = vec![0u8; 48];
@@ -1315,13 +1378,15 @@ pub(crate) fn write_bytes(root: &[(String, Node<'_>)]) -> Result<Vec<u8>> {
     }
     let mut w = Writer {
         buf,
+        holes: Vec::new(),
+        skipped: 0,
         heap_addr,
         next_string: 0,
     };
     let root_addr = w.group(root)?;
-    let mut buf = w.buf;
-    pad8(&mut buf);
-    let eof = buf.len() as u64;
+    pad8(&mut w.buf);
+    let eof = w.pos();
+    let Writer { mut buf, holes, .. } = w;
     let mut sb = Vec::with_capacity(48);
     sb.extend_from_slice(&SIGNATURE);
     sb.extend_from_slice(&[2, 8, 8, 0]);
@@ -1332,7 +1397,7 @@ pub(crate) fn write_bytes(root: &[(String, Node<'_>)]) -> Result<Vec<u8>> {
     let sum = lookup3(&sb);
     sb.extend_from_slice(&sum.to_le_bytes());
     buf[..48].copy_from_slice(&sb);
-    Ok(buf)
+    Ok(WriteLayout { meta: buf, holes })
 }
 
 #[cfg(test)]

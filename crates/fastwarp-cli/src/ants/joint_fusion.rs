@@ -11,6 +11,7 @@ use std::sync::Arc;
 use fastwarp_gpu::{BackendSelect, GpuContext};
 use fastwarp_reg::jlf::{joint_fusion, JlfDevice, JlfInput, JlfOptions, PatchMetric, SearchRadius};
 use fastwarp_reg::{Grid, RegError, Volume};
+use rayon::prelude::*;
 
 use super::run::{failed, refused, warn};
 use super::{
@@ -599,31 +600,35 @@ impl Loader<'_> {
         Ok(self
             .volume(path, role, false)?
             .data()
-            .iter()
+            .par_iter()
             .map(|v| *v as f32)
             .collect())
     }
 
     fn labels(&mut self, path: &Path, role: &str, whole: bool) -> Result<Vec<u32>, CliError> {
-        self.volume(path, role, true)?
-            .data()
-            .iter()
-            .map(|v| {
-                as_label(*v, whole).ok_or_else(|| {
-                    let kind = if whole {
-                        "whole numbers"
-                    } else {
-                        "numbers (truncated to whole numbers)"
-                    };
-                    CliError::usage(format!(
-                        "{role} {}: the value {v} is not supported; its values must be {kind} \
-                         from 0 to {}",
-                        path.display(),
-                        u32::MAX
-                    ))
-                })
-            })
-            .collect()
+        let volume = self.volume(path, role, true)?;
+        let data = volume.data();
+        if let Some(i) = data
+            .par_iter()
+            .position_first(|v| as_label(*v, whole).is_none())
+        {
+            let kind = if whole {
+                "whole numbers"
+            } else {
+                "numbers (truncated to whole numbers)"
+            };
+            return Err(CliError::usage(format!(
+                "{role} {}: the value {} is not supported; its values must be {kind} \
+                 from 0 to {}",
+                path.display(),
+                data[i],
+                u32::MAX
+            )));
+        }
+        Ok(data
+            .par_iter()
+            .map(|v| as_label(*v, whole).unwrap_or(0))
+            .collect())
     }
 }
 

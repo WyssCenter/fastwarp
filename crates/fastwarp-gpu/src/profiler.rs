@@ -187,6 +187,16 @@ impl GpuContext {
     }
 
     async fn map_read_all_async(&self, buffer: &wgpu::Buffer, len: u64) -> GpuResult<Vec<u8>> {
+        self.map_read_with_async(buffer, len, |view| view.to_vec())
+            .await
+    }
+
+    async fn map_read_with_async<R>(
+        &self,
+        buffer: &wgpu::Buffer,
+        len: u64,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> GpuResult<R> {
         let slice = buffer.slice(..len);
         let (tx, rx) = crate::oneshot::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r));
@@ -212,9 +222,28 @@ impl GpuContext {
                 ));
             }
         }
-        let data = slice.get_mapped_range().map(|view| view.to_vec());
+        let data = slice.get_mapped_range().map(|view| read(&view));
         drop(mapping);
         data.map_err(|e| GpuError::Readback(e.to_string()))
+    }
+
+    /// Copies the first `len` bytes of `buffer` into a new staging buffer and hands the mapped
+    /// bytes to `read`, without a host copy of them.
+    pub async fn read_bytes_with_async<R>(
+        &self,
+        buffer: &wgpu::Buffer,
+        len: u64,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> GpuResult<R> {
+        let staging = self.staging_buffer_async(len).await?;
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("fastwarp-gpu readback"),
+            });
+        enc.copy_buffer_to_buffer(buffer, 0, &staging, 0, len);
+        self.queue.submit(Some(enc.finish()));
+        self.map_read_with_async(&staging, len, read).await
     }
 
     /// Creates a host-readable staging buffer of `len` bytes for [`Self::read_bytes_staged`]; an

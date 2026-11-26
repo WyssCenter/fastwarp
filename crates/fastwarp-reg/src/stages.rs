@@ -39,6 +39,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
+use rayon::prelude::*;
+
 use crate::apply::{apply_chain, Interpolation};
 use crate::backend::Backend;
 use crate::error::{invalid, RegError, Result};
@@ -61,7 +63,7 @@ use crate::transform::ants_io::{
     WARP_SUFFIX,
 };
 use crate::transform::field_nifti::write_field_nifti_to;
-use crate::transform::itk_h5::format_h5;
+use crate::transform::itk_h5::write_h5_to;
 use crate::transform::itk_mat::format_mat;
 use crate::transform::{
     AffineTransform, CompositePair, DisplacementField, ParametricTransform, TransformChain,
@@ -194,6 +196,7 @@ pub async fn run_linear_stages_async<E: LinearEngine>(
     let mut current = initial;
     let mut center = initial.center;
     let mut results = Vec::with_capacity(stages.len());
+    cache.plan_samples(fixed, moving, stages);
     for recipe in stages {
         let start = match recipe.kind {
             LinearKind::Rigid => ParametricTransform::euler3d([0.0; 6], center),
@@ -201,14 +204,22 @@ pub async fn run_linear_stages_async<E: LinearEngine>(
                 ParametricTransform::affine(&AffineTransform::new(IDENTITY3, [0.0; 3], center))
             }
         };
-        let stage = run_linear_stage_cached_async(
+        let stage = match run_linear_stage_cached_async(
             engine, recipe, fixed, moving, current, start, cache, cancel,
         )
-        .await?;
+        .await
+        {
+            Ok(stage) => stage,
+            Err(e) => {
+                cache.clear_samples();
+                return Err(e);
+            }
+        };
         current = AffineTransform::compose(&current, &stage.affine);
         center = stage.affine.center;
         results.push(stage);
     }
+    cache.clear_samples();
     let total = if results.is_empty() {
         initial
     } else {
@@ -416,25 +427,32 @@ fn field_at(chain: &TransformChain, index: usize) -> Result<&DisplacementField> 
 
 /// Writes the transforms of `out` under `prefix` in `layout` (ANTs naming, the prefix taken as
 /// text) and, with `write_warped`, `<prefix>_Warped.nii.gz`; returns the paths written, in the
-/// order composites, `0GenericAffine.mat`, warp, inverse warp, warped image.
+/// order composites, `0GenericAffine.mat`, warp, inverse warp, warped image. The files are
+/// written in parallel, each to a temporary name in its folder that is renamed when it is
+/// complete, so a failure leaves no truncated file; when one fails the others are still written
+/// and the first error in that order is returned.
 pub fn write_stage_outputs(
     prefix: &Path,
     out: &StagesOutput,
     layout: OutputLayout,
     write_warped: bool,
 ) -> Result<Vec<PathBuf>> {
-    let mut written = Vec::new();
+    let mut files = Vec::new();
     visit_stage_outputs(prefix, out, layout, write_warped, |path, content| {
-        let io = |source| RegError::Io {
-            path: path.clone(),
-            source,
-        };
-        let file = std::fs::File::create(&path).map_err(io)?;
-        content.write_to(&path, std::io::BufWriter::with_capacity(1 << 20, file))?;
-        written.push(path);
+        files.push((path, content));
         Ok(())
     })?;
-    Ok(written)
+    let written: Vec<Result<PathBuf>> = files
+        .into_par_iter()
+        .map(|(path, content)| write_complete(&path, content).map(|()| path))
+        .collect();
+    written.into_iter().collect()
+}
+
+/// Writes `content` to a temporary file next to `path` and renames it to `path` when it is
+/// complete; the temporary file is removed when writing fails.
+fn write_complete(path: &Path, content: StageContent<'_>) -> Result<()> {
+    crate::fs_write::write_complete(path, |out| content.write_to(path, out).map(drop))
 }
 
 /// One file of [`write_stage_outputs`], to be serialised into a writer.
@@ -460,7 +478,7 @@ impl StageContent<'_> {
         };
         match *self {
             StageContent::Composite(chain) => {
-                out.write_all(&format_h5(chain)?).map_err(io)?;
+                write_h5_to(chain, label, &mut out)?;
             }
             StageContent::Affine(total) => {
                 out.write_all(&format_mat(&[TransformElem::Affine(*total)])?)
@@ -482,7 +500,8 @@ impl StageContent<'_> {
 
 /// Calls `visit` for each file [`write_stage_outputs`] writes, in the same order, with its path
 /// (`prefix` with the ANTs suffix appended) and its content. Nothing is serialised until the
-/// visitor asks, so a visitor that writes and drops each file holds one file at a time.
+/// visitor asks, so a visitor that writes and drops each file before the next holds one file
+/// at a time ([`write_stage_outputs`] collects them and writes them in parallel).
 pub fn visit_stage_outputs<'a>(
     prefix: &Path,
     out: &'a StagesOutput,
