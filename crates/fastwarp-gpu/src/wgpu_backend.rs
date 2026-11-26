@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytemuck::Pod;
@@ -236,6 +236,7 @@ pub struct WgpuBackend {
     scalar_staging: Mutex<Option<wgpu::Buffer>>,
     partial_staging: Mutex<Option<wgpu::Buffer>>,
     trimmed_for: Mutex<Option<Grid>>,
+    invert_indirect_min_groups: AtomicU32,
 }
 
 fn dir_scaled(g: &Grid) -> Mat3 {
@@ -412,6 +413,7 @@ impl WgpuBackend {
             scalar_staging: Mutex::new(Some(scalar_staging)),
             partial_staging: Mutex::new(None),
             trimmed_for: Mutex::new(None),
+            invert_indirect_min_groups: AtomicU32::new(INVERT_INDIRECT_MIN_GROUPS),
         };
         backend.run_selftest().await?;
         Ok(backend)
@@ -606,6 +608,12 @@ impl WgpuBackend {
     /// waited for (timestamps bracket its commands), so wall-clock time grows. On wasm32, run one
     /// operation at a time while profiling: the timestamp read-back buffer and the uniform ring are
     /// shared while an operation waits.
+    #[doc(hidden)]
+    pub fn set_invert_indirect_min_groups(&self, groups: u32) {
+        self.invert_indirect_min_groups
+            .store(groups, Ordering::Relaxed);
+    }
+
     pub fn set_profiling(&self, enabled: bool) {
         let mut p = self.profile.lock().unwrap_or_else(|p| p.into_inner());
         p.enabled = enabled;
@@ -2167,7 +2175,7 @@ impl WgpuBackend {
                         _ => &update_rest,
                     };
                     self.dispatch(pass, &self.kernels.inv_begin, &begin, [1, 1, 1])?;
-                    if count >= INVERT_INDIRECT_MIN_GROUPS {
+                    if count >= self.invert_indirect_min_groups.load(Ordering::Relaxed) {
                         self.dispatch_indirect(
                             pass,
                             &self.kernels.inv_residual,
