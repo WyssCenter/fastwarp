@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use fastwarp_reg::linear::{LinearKind, LinearRecipe};
 use fastwarp_reg::pyramid::SigmaUnits;
-use fastwarp_reg::recipe::SynRecipe;
+use fastwarp_reg::recipe::{SynMetric, SynRecipe};
 use fastwarp_reg::register::{LinearPlan, WINSORIZE_LOWER, WINSORIZE_UPPER};
 use fastwarp_reg::stages::{InitialTransform, StagePlan};
 use fastwarp_reg::transform::{read_transform_file, AffineTransform, TransformElem};
@@ -25,6 +25,8 @@ use serde_json::{json, Map, Value};
 pub const GPU_MI_BINS: usize = 32;
 /// Largest CC radius of the GPU box-sum kernels.
 pub const GPU_CC_RADIUS_MAX: usize = 8;
+/// Fewest and most histogram bins of the GPU Mattes MI kernels of the SyN stage.
+pub const GPU_SYN_MI_BINS: std::ops::RangeInclusive<usize> = 5..=32;
 
 /// The stages of a cohort-form recipe.
 pub const STAGE_KEYS: &[&str] = &["rigid", "affine", "syn"];
@@ -62,6 +64,8 @@ pub const SYN_KEYS: &[&str] = &[
     "update_field_variance",
     "total_field_variance",
     "cc_radius",
+    "mi_bins",
+    "channel_metrics",
     "channel_weights",
     "iterations",
     "convergence_threshold",
@@ -196,6 +200,18 @@ impl Recipe {
         let last_factor = |s: &SynRecipe| s.shrink_factors.last().copied().unwrap_or(1);
         for (index, syn) in self.plan.syn.iter().enumerate() {
             let what = self.syn_name(index);
+            if !syn.channel_metrics.is_empty() && syn.channel_metrics.len() != channels {
+                return Err(format!(
+                    "{what}['channel_metrics'] has {} metrics for {channels} channel(s)",
+                    syn.channel_metrics.len()
+                ));
+            }
+            if syn.channel_weights.len() != channels {
+                return Err(format!(
+                    "{what}['channel_weights'] has {} weights for {channels} channel(s)",
+                    syn.channel_weights.len()
+                ));
+            }
             syn.validate().map_err(|e| format!("{what}: {e}"))?;
             if let Some(first) = self.plan.syn.first() {
                 if last_factor(syn) != last_factor(first) {
@@ -209,17 +225,19 @@ impl Recipe {
                     ));
                 }
             }
-            if syn.cc_radius > GPU_CC_RADIUS_MAX {
+            if syn.uses(SynMetric::Cc) && syn.cc_radius > GPU_CC_RADIUS_MAX {
                 return Err(format!(
                     "{what}['cc_radius']: the GPU kernels support 1 to {GPU_CC_RADIUS_MAX}, \
                      not {}",
                     syn.cc_radius
                 ));
             }
-            if syn.channel_weights.len() != channels {
+            if syn.uses(SynMetric::Mattes) && !GPU_SYN_MI_BINS.contains(&syn.mi_bins) {
                 return Err(format!(
-                    "{what}['channel_weights'] has {} weights for {channels} channel(s)",
-                    syn.channel_weights.len()
+                    "{what}['mi_bins']: the GPU kernels support {} to {}, not {}",
+                    GPU_SYN_MI_BINS.start(),
+                    GPU_SYN_MI_BINS.end(),
+                    syn.mi_bins
                 ));
             }
         }
@@ -301,6 +319,11 @@ impl Recipe {
             r.plan.syn = vec![syn];
         }
         r.check(channels)?;
+        for syn in &mut r.plan.syn {
+            if syn.channel_metrics.iter().all(|m| *m == SynMetric::Cc) {
+                syn.channel_metrics.clear();
+            }
+        }
         Ok(r)
     }
 
@@ -673,6 +696,8 @@ pub fn syn_to_json(r: &SynRecipe) -> Value {
         "update_field_variance": r.update_field_variance,
         "total_field_variance": r.total_field_variance,
         "cc_radius": r.cc_radius,
+        "mi_bins": r.mi_bins,
+        "channel_metrics": r.metrics().iter().map(|m| m.name()).collect::<Vec<_>>(),
         "channel_weights": r.channel_weights,
         "iterations": r.iterations,
         "convergence_threshold": r.convergence_threshold,
@@ -821,6 +846,17 @@ fn syn_from_json(m: &Map<String, Value>, r: &mut SynRecipe, what: &str) -> Resul
     )?;
     set_f64(m, what, "total_field_variance", &mut r.total_field_variance)?;
     set_usize(m, what, "cc_radius", &mut r.cc_radius)?;
+    set_usize(m, what, "mi_bins", &mut r.mi_bins)?;
+    if let Some(v) = m.get("channel_metrics") {
+        r.channel_metrics = list_of(what, "channel_metrics", v)?
+            .iter()
+            .map(|x| match x.as_str() {
+                Some("cc") => Ok(SynMetric::Cc),
+                Some("mi") => Ok(SynMetric::Mattes),
+                _ => Err(field_err(what, "channel_metrics", "'cc' or 'mi'", x)),
+            })
+            .collect::<Result<_, _>>()?;
+    }
     set_f64s(m, what, "channel_weights", &mut r.channel_weights)?;
     set_u32s(m, what, "iterations", &mut r.iterations)?;
     set_f64(
@@ -847,6 +883,81 @@ mod tests {
             let r = Recipe::cohort(channels);
             let back = Recipe::from_json(&r.to_json(), channels).unwrap();
             assert_eq!(back.to_json(), r.to_json());
+        }
+    }
+
+    #[test]
+    fn syn_channels_take_cc_or_mi() {
+        let r = Recipe::from_json(
+            &json!({"syn": {"channel_metrics": ["mi", "cc"], "mi_bins": 16,
+                            "channel_weights": [0.5, 0.5]}}),
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            r.plan.syn[0].metrics(),
+            vec![SynMetric::Mattes, SynMetric::Cc]
+        );
+        assert_eq!(r.plan.syn[0].mi_bins, 16);
+        assert_eq!(r.to_json()["syn"]["channel_metrics"], json!(["mi", "cc"]));
+        let back = Recipe::from_json(&r.to_json(), 2).unwrap();
+        assert_eq!(back.to_json(), r.to_json());
+        assert_eq!(
+            Recipe::cohort(3).to_json()["syn"]["channel_metrics"],
+            json!(["cc", "cc", "cc"])
+        );
+        let stages = Recipe::from_json(
+            &json!({"stages": [{"transform": "syn", "channel_metrics": ["mi"]}]}),
+            1,
+        )
+        .unwrap();
+        assert_eq!(stages.plan.syn[0].metrics(), vec![SynMetric::Mattes]);
+        assert!(Recipe::from_json(&json!({"syn": {"mi_bins": 64}}), 1).is_ok());
+        for radius in [0, 9] {
+            let mi_only = json!({"syn": {"channel_metrics": ["mi"], "cc_radius": radius}});
+            assert!(Recipe::from_json(&mi_only, 1).is_ok(), "{radius}");
+            let cc = json!({"syn": {"cc_radius": radius}});
+            assert!(Recipe::from_json(&cc, 1).is_err(), "{radius}");
+        }
+        for (v, channels, message) in [
+            (
+                json!({"syn": {"channel_metrics": ["mattes"]}}),
+                1,
+                "recipe['syn']['channel_metrics']: expected 'cc' or 'mi', got \"mattes\"",
+            ),
+            (
+                json!({"syn": {"channel_metrics": "mi"}}),
+                1,
+                "expected a list, got a string",
+            ),
+            (
+                json!({"syn": {"channel_metrics": ["mi"]}}),
+                2,
+                "recipe['syn']['channel_metrics'] has 1 metrics for 2 channel(s)",
+            ),
+            (
+                json!({"syn": {"channel_metrics": ["mi", "mi"], "channel_weights": [1, 1]}}),
+                1,
+                "recipe['syn']['channel_metrics'] has 2 metrics for 1 channel(s)",
+            ),
+            (
+                json!({"syn": {"channel_metrics": ["mi"], "mi_bins": 64}}),
+                1,
+                "recipe['syn']['mi_bins']: the GPU kernels support 5 to 32, not 64",
+            ),
+            (
+                json!({"syn": {"channel_metrics": ["mi"], "mi_bins": 4}}),
+                1,
+                "at least five histogram bins",
+            ),
+            (
+                json!({"stages": [{"transform": "rigid", "channel_metrics": ["mi"]}]}),
+                1,
+                "unknown key 'channel_metrics'",
+            ),
+        ] {
+            let e = Recipe::from_json(&v, channels).unwrap_err();
+            assert!(e.contains(message), "{e}");
         }
     }
 

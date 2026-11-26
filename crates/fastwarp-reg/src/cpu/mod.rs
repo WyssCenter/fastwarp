@@ -194,7 +194,7 @@ impl CpuBackend {
         moving: &Volume<f64>,
         bins: usize,
     ) -> Result<MetricPair<VectorField>> {
-        mi_pair(fixed, moving, None, bins)
+        mi_pair(fixed, moving, None, None, bins)
     }
 
     #[doc(hidden)]
@@ -202,19 +202,19 @@ impl CpuBackend {
         &self,
         fixed: &Volume<f64>,
         moving: &Volume<f64>,
-        fixed_mask: &Volume<f64>,
-        moving_mask: &Volume<f64>,
+        fixed_mask: Option<&Volume<f64>>,
+        moving_mask: Option<&Volume<f64>>,
         bins: usize,
     ) -> Result<MetricPair<VectorField>> {
         for (what, mask) in [("fixed", fixed_mask), ("moving", moving_mask)] {
-            if mask.grid() != fixed.grid() {
+            if mask.is_some_and(|m| m.grid() != fixed.grid()) {
                 return Err(invalid(
                     "mattes",
                     format!("the {what} mask is not on the grid of the images"),
                 ));
             }
         }
-        mi_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins)
+        mi_pair(fixed, moving, fixed_mask, moving_mask, bins)
     }
 
     pub(crate) fn mi_value_derivative_pair_with_norms(
@@ -232,8 +232,8 @@ impl CpuBackend {
         &self,
         fixed: &Volume<f64>,
         moving: &Volume<f64>,
-        fixed_mask: &Volume<f64>,
-        moving_mask: &Volume<f64>,
+        fixed_mask: Option<&Volume<f64>>,
+        moving_mask: Option<&Volume<f64>>,
         bins: usize,
     ) -> Result<(MetricPair<VectorField>, [f64; 2])> {
         let pair =
@@ -353,7 +353,8 @@ impl CpuBackend {
 fn mi_pair(
     fixed: &Volume<f64>,
     moving: &Volume<f64>,
-    masks: Option<(&Volume<f64>, &Volume<f64>)>,
+    fm: Option<&Volume<f64>>,
+    mm: Option<&Volume<f64>>,
     bins: usize,
 ) -> Result<MetricPair<VectorField>> {
     let grid = *fixed.grid();
@@ -377,7 +378,6 @@ fn mi_pair(
         )?;
         Ok((e.value, VectorField::from_vec(grid, e.derivative)?))
     };
-    let (fm, mm) = masks.map_or((None, None), |(f, m)| (Some(f), Some(m)));
     let first = run(fixed, moving, fm, mm)?;
     let second = run(moving, fixed, mm, fm)?;
     Ok((first, second))
@@ -500,8 +500,8 @@ impl Backend for CpuBackend {
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
-        fixed_mask: &Self::Image,
-        moving_mask: &Self::Image,
+        fixed_mask: Option<&Self::Image>,
+        moving_mask: Option<&Self::Image>,
         bins: usize,
     ) -> Result<MetricPair<Self::Field>> {
         CpuBackend::mi_value_derivative_pair_masked(
@@ -527,8 +527,8 @@ impl Backend for CpuBackend {
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
-        fixed_mask: &Self::Image,
-        moving_mask: &Self::Image,
+        fixed_mask: Option<&Self::Image>,
+        moving_mask: Option<&Self::Image>,
         bins: usize,
     ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
         CpuBackend::mi_value_derivative_pair_masked_with_norms(

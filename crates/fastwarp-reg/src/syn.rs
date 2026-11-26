@@ -37,12 +37,14 @@
 //! 1. every channel's smoothed full-resolution fixed image is resampled onto the level grid
 //!    through `F^-1`, and the moving image through `affine(M^-1(x))` (after earlier SyN stages
 //!    `affine(W(M^-1(x)))`, see [`SynStart`]);
-//! 2. the ANTs CC metric runs on those two images (identity transforms, so its derivative is a
-//!    per-voxel image-space gradient), once with the fixed-side image as "fixed" and once with the
-//!    roles swapped; with masks, the fixed mask is resampled through `F^-1` and the moving mask
-//!    through the same map as the moving image (nearest neighbour), and the metric uses only the
-//!    voxels inside both; several channels combine as ITK's multi-metric
-//!    `(sum |d_j| / J) sum w_j d_j / |d_j|`; the value is the first metric's;
+//! 2. each channel's metric (ANTs CC, or Mattes MI with dense sampling, whose histogram ranges
+//!    are measured anew on the two resampled images) runs on those two images (identity
+//!    transforms, so its derivative is a per-voxel image-space gradient), once with the
+//!    fixed-side image as "fixed" and once with the roles swapped; with masks, the fixed mask is
+//!    resampled through `F^-1` and the moving mask through the same map as the moving image
+//!    (nearest neighbour); CC uses only the voxels inside both, MI as well and measures each
+//!    intensity range over the voxels inside the image's own mask; several channels combine as
+//!    ITK's multi-metric `(sum |d_j| / J) sum w_j d_j / |d_j|`; the value is the first metric's;
 //! 3. each gradient is Gaussian-smoothed (update variance) and scaled so its largest voxel step is
 //!    the gradient step;
 //! 4. `F <- F + u_F(x + F(x))` (likewise `M`), optionally smoothed with the total-field variance;
@@ -59,7 +61,7 @@
 use std::borrow::Cow;
 use std::sync::atomic::AtomicBool;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, MetricPair};
 use crate::convergence::WindowConvergenceMonitor;
 use crate::error::{check_cancel, invalid, Result};
 use crate::exec::block_ready;
@@ -69,7 +71,7 @@ use crate::linear::SmoothCache;
 use crate::pyramid::{
     level_virtual_grid, shrink_factors_per_dimension, smooth_for_level_cow, SigmaUnits,
 };
-use crate::recipe::SynRecipe;
+use crate::recipe::{SynMetric, SynRecipe};
 use crate::transform::{AffineTransform, CompositePair, DisplacementField};
 use crate::volume::Volume;
 
@@ -296,41 +298,89 @@ impl<B: Backend> SmoothedSide<B> {
     }
 }
 
+async fn mattes_pair<B: Backend>(
+    backend: &B,
+    fixed: &B::Image,
+    moving: &B::Image,
+    masks: Option<MaskPair<'_, B::Image>>,
+    bins: usize,
+    single: bool,
+) -> Result<(MetricPair<B::Field>, Option<[f64; 2]>)> {
+    Ok(match (single, masks) {
+        (true, None) => (
+            backend
+                .mi_value_derivative_pair(fixed, moving, bins)
+                .await?,
+            None,
+        ),
+        (true, Some((fm, mm))) => (
+            backend
+                .mi_value_derivative_pair_masked(fixed, moving, fm, mm, bins)
+                .await?,
+            None,
+        ),
+        (false, None) => {
+            let (pair, norms) = backend
+                .mi_value_derivative_pair_with_norms(fixed, moving, bins)
+                .await?;
+            (pair, Some(norms))
+        }
+        (false, Some((fm, mm))) => {
+            let (pair, norms) = backend
+                .mi_value_derivative_pair_masked_with_norms(fixed, moving, fm, mm, bins)
+                .await?;
+            (pair, Some(norms))
+        }
+    })
+}
+
 async fn side_updates<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,
     fixed_mid: &[B::Image],
     moving_mid: &[B::Image],
-    valid: Option<&B::Image>,
+    masks: &LevelMasks<B>,
 ) -> Result<(SideUpdate<B>, SideUpdate<B>)> {
     let channels = fixed_mid.len();
     let sum: f64 = recipe.channel_weights.iter().sum();
     let normalised: Vec<f64> = recipe.channel_weights.iter().map(|w| w / sum).collect();
     let mut fixed_side = SideAccumulator::<B>::new(channels);
     let mut moving_side = SideAccumulator::<B>::new(channels);
+    let valid = masks.valid.as_ref();
     for c in 0..channels {
         let (fixed, moving, radius) = (&fixed_mid[c], &moving_mid[c], recipe.cc_radius);
         let (((fixed_value, fixed_derivative), (moving_value, moving_derivative)), norms) =
-            match (channels == 1, valid) {
-                (true, None) => (
+            match (recipe.metric(c), channels == 1, valid) {
+                (SynMetric::Mattes, single, _) => {
+                    mattes_pair(
+                        backend,
+                        fixed,
+                        moving,
+                        masks.mattes(),
+                        recipe.mi_bins,
+                        single,
+                    )
+                    .await?
+                }
+                (SynMetric::Cc, true, None) => (
                     backend
                         .cc_value_derivative_pair(fixed, moving, radius)
                         .await?,
                     None,
                 ),
-                (true, Some(valid)) => (
+                (SynMetric::Cc, true, Some(valid)) => (
                     backend
                         .cc_value_derivative_pair_masked(fixed, moving, valid, radius)
                         .await?,
                     None,
                 ),
-                (false, None) => {
+                (SynMetric::Cc, false, None) => {
                     let (pair, norms) = backend
                         .cc_value_derivative_pair_with_norms(fixed, moving, radius)
                         .await?;
                     (pair, Some(norms))
                 }
-                (false, Some(valid)) => {
+                (SynMetric::Cc, false, Some(valid)) => {
                     let (pair, norms) = backend
                         .cc_value_derivative_pair_masked_with_norms(fixed, moving, valid, radius)
                         .await?;
@@ -394,6 +444,34 @@ async fn update_total_field<B: Backend>(
     Ok((new_field, new_inverse, stats_inverse, stats_field))
 }
 
+/// The fixed and the moving mask of an MI channel; `None` for a mask that was not given.
+type MaskPair<'a, I> = (Option<&'a I>, Option<&'a I>);
+
+/// The masks of one iteration on the level grid: `valid`, the voxels inside both masks (for CC);
+/// `fixed` and `moving`, each given mask on its own (for MI).
+struct LevelMasks<B: Backend> {
+    valid: Option<B::Image>,
+    fixed: Option<B::Image>,
+    moving: Option<B::Image>,
+}
+
+impl<B: Backend> LevelMasks<B> {
+    fn none() -> Self {
+        Self {
+            valid: None,
+            fixed: None,
+            moving: None,
+        }
+    }
+
+    fn mattes(&self) -> Option<MaskPair<'_, B::Image>> {
+        if self.fixed.is_none() && self.moving.is_none() {
+            return None;
+        }
+        Some((self.fixed.as_ref(), self.moving.as_ref()))
+    }
+}
+
 struct StageMasks<B: Backend> {
     fixed: Option<B::Image>,
     moving: Option<B::Image>,
@@ -417,6 +495,60 @@ impl<B: Backend> StageMasks<B> {
             )),
             None => Ok(None),
         }
+    }
+
+    fn given(&self) -> bool {
+        self.fixed.is_some() || self.moving.is_some()
+    }
+
+    /// The masks of one iteration on the level grid, as ITK resamples them onto the virtual
+    /// domain in `ComputeMetricGradientField`: the voxels inside both when `cc`, each given mask
+    /// on its own when `mattes`.
+    async fn resolve(
+        &self,
+        backend: &B,
+        state: &State<B>,
+        initial: &AffineTransform,
+        prior: Option<&B::Field>,
+        cc: bool,
+        mattes: bool,
+    ) -> Result<LevelMasks<B>> {
+        if !self.given() {
+            return Ok(LevelMasks::none());
+        }
+        let valid = if cc {
+            self.validity(backend, state, initial, prior).await?
+        } else {
+            None
+        };
+        if !mattes {
+            return Ok(LevelMasks {
+                valid,
+                fixed: None,
+                moving: None,
+            });
+        }
+        let fixed = match &self.fixed {
+            Some(m) => Some(
+                backend
+                    .warp_mask_through_field(m, &state.f2m_inv, None, None, None)
+                    .await?,
+            ),
+            None => None,
+        };
+        let moving = match &self.moving {
+            Some(m) => Some(
+                backend
+                    .warp_mask_through_field(m, &state.m2m_inv, prior, Some(initial), None)
+                    .await?,
+            ),
+            None => None,
+        };
+        Ok(LevelMasks {
+            valid,
+            fixed,
+            moving,
+        })
     }
 
     /// The voxels of the level grid inside both masks, as ITK resamples the masks onto the
@@ -749,6 +881,7 @@ async fn syn_fields<B: Backend>(
                 }
             }
         };
+        let mattes = recipe.uses(SynMetric::Mattes);
         let mut monitor = WindowConvergenceMonitor::new(recipe.convergence_window);
         let mut converged = false;
         let mut trace = Vec::new();
@@ -776,12 +909,19 @@ async fn syn_fields<B: Backend>(
                         .await?,
                 );
             }
-            let valid = masks
-                .validity(backend, &st, initial, prior.as_ref())
+            let level_masks = masks
+                .resolve(
+                    backend,
+                    &st,
+                    initial,
+                    prior.as_ref(),
+                    recipe.uses(SynMetric::Cc),
+                    mattes,
+                )
                 .await?;
             let (fixed_side, moving_side) =
-                side_updates(backend, recipe, &fixed_mid, &moving_mid, valid.as_ref()).await?;
-            drop(valid);
+                side_updates(backend, recipe, &fixed_mid, &moving_mid, &level_masks).await?;
+            drop(level_masks);
             let State {
                 f2m,
                 f2m_inv,
@@ -1046,5 +1186,114 @@ mod tests {
         same_bits(&from, &waited.unwrap());
         let e = run_syn_from(&YieldingCpu, &recipe, &channels, start, &options).unwrap_err();
         assert!(not_ready(&e), "{e}");
+    }
+
+    fn mattes_recipe(metrics: Vec<SynMetric>) -> SynRecipe {
+        SynRecipe {
+            gradient_step: 0.2,
+            iterations: vec![20, 10],
+            shrink_factors: vec![2, 1],
+            smoothing_sigmas: vec![1.0, 0.0],
+            channel_weights: vec![1.0 / metrics.len() as f64; metrics.len()],
+            channel_metrics: metrics,
+            ..SynRecipe::cohort()
+        }
+    }
+
+    fn inverted(v: &Volume<f64>) -> Volume<f64> {
+        Volume::from_vec(*v.grid(), v.data().iter().map(|x| 2.0 - 1.5 * x).collect()).unwrap()
+    }
+
+    fn centre_shift(r: &SynResult, grid: &Grid) -> f64 {
+        let c = grid.index_to_point([5.5, 5.5, 5.0]);
+        let p = r.pair.forward.apply(c);
+        p[0] - c[0]
+    }
+
+    #[test]
+    fn mattes_syn_follows_a_shift_between_images_of_inverted_contrast() {
+        let grid = Grid::new([12, 12, 11], [2.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let channels = [SynChannel {
+            fixed: blob(grid, 0.0),
+            moving: inverted(&blob(grid, 1.5)),
+        }];
+        let recipe = mattes_recipe(vec![SynMetric::Mattes]);
+        let initial = AffineTransform::identity();
+        let r = run_syn(
+            &CpuBackend,
+            &recipe,
+            &channels,
+            &initial,
+            &SynOptions::default(),
+        )
+        .unwrap();
+        let shift = centre_shift(&r, &grid);
+        let first = r.levels[0].iterations[0].energy;
+        let last = r.levels[1].iterations.last().unwrap().energy;
+        eprintln!("centre shift {shift:.3} mm of 3 mm; energy {first:.4} -> {last:.4}");
+        assert!(first < 0.0 && last < first, "{first} {last}");
+        assert!((shift - 3.0).abs() < 1.5, "{shift}");
+    }
+
+    #[test]
+    fn masks_of_ones_leave_a_mattes_run_unchanged_and_mixed_channels_run_with_masks() {
+        let grid = Grid::new([12, 12, 11], [2.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let channels = [
+            SynChannel {
+                fixed: blob(grid, 0.0),
+                moving: blob(grid, 1.5),
+            },
+            SynChannel {
+                fixed: blob(grid, 0.0),
+                moving: inverted(&blob(grid, 1.5)),
+            },
+        ];
+        let initial = AffineTransform::identity();
+        let options = SynOptions::default();
+        let ones = crate::mask::MaskVolume::new(grid, vec![1.0; grid.num_voxels()]).unwrap();
+        let mattes = mattes_recipe(vec![SynMetric::Mattes]);
+        let plain = run_syn(&CpuBackend, &mattes, &channels[1..], &initial, &options).unwrap();
+        for (fixed, moving) in [(true, false), (false, true), (true, true)] {
+            let masked = SynRecipe {
+                fixed_mask: fixed.then(|| ones.clone()),
+                moving_mask: moving.then(|| ones.clone()),
+                ..mattes.clone()
+            };
+            let r = run_syn(&CpuBackend, &masked, &channels[1..], &initial, &options).unwrap();
+            same_bits(&plain, &r);
+        }
+        let half = crate::mask::MaskVolume::new(
+            grid,
+            (0..grid.num_voxels())
+                .map(|idx| f64::from(u8::from(grid.ijk(idx)[2] < 8)))
+                .collect(),
+        )
+        .unwrap();
+        let mixed = mattes_recipe(vec![SynMetric::Cc, SynMetric::Mattes]);
+        let open = run_syn(&CpuBackend, &mixed, &channels, &initial, &options).unwrap();
+        let masked = SynRecipe {
+            fixed_mask: Some(half.clone()),
+            moving_mask: Some(half),
+            ..mixed.clone()
+        };
+        let closed = run_syn(&CpuBackend, &masked, &channels, &initial, &options).unwrap();
+        for r in [&open, &closed] {
+            assert!(r.warp.data().iter().all(|v| v.is_finite()));
+            assert!(
+                (centre_shift(r, &grid) - 3.0).abs() < 1.5,
+                "{}",
+                centre_shift(r, &grid)
+            );
+        }
+        assert_ne!(format!("{:?}", open.warp), format!("{:?}", closed.warp));
+        let (waited, pending) = drive(run_syn_async(
+            &YieldingCpu,
+            &masked,
+            &channels,
+            &initial,
+            &options,
+        ));
+        assert!(pending > 0);
+        same_bits(&closed, &waited.unwrap());
     }
 }

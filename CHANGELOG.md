@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: SyN stages can use Mattes mutual information, for images of different contrast. A recipe
+  names the metric of each SyN channel in `channel_metrics` (`"cc"` or `"mi"`, with `mi_bins`
+  histogram bins, 5 to 32), and channels may mix the two as in `antsRegistration`.
+  `fastwarp ants-registration` accepts `MI[fixed,moving,weight,bins]` (dense) in SyN stages, and
+  `fastwarp.ants.registration` runs ANTsPy's default `syn_metric="mattes"`, so
+  `registration(fixed, moving)` works, as well as `antsRegistrationSyNQuick[s]`, `[sr]` and
+  `[so]`. The GPU checks the new kernels against the CPU when it starts; a device that fails the
+  check runs everything else and refuses only SyN stages with MI, with the reason.
 - New: when the browser demo cannot use WebGPU, it says why for the device it runs on (iOS
   version, Android version and GPU, browser), and when a run fails, makes no progress for three
   minutes or ended because the browser closed the page, it says so and offers a diagnostic report

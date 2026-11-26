@@ -52,7 +52,8 @@ the CPU.
    a given affine instead.
 4. **Rigid, then Affine,** on the GPU: {term}`Mattes mutual information` on the first image of
    each side.
-5. **SyN,** on the GPU: {term}`cross-correlation` on every image, starting from the affine.
+5. **SyN,** on the GPU: {term}`cross-correlation` on every image (or, per image, the metric the
+   recipe's `channel_metrics` names), starting from the affine.
 6. **Write.** The first moving image is warped onto the registration grid (the `warp_s` step),
    and the files are written.
 
@@ -140,7 +141,7 @@ Each entry of `levels` is a tuple `(level, grid_size, iterations, converged, ene
 | `grid_size` | `list[int]` | Voxels per axis of the level's grid. |
 | `iterations` | `int` | Iterations the level ran. |
 | `converged` | `bool` | `True` when the convergence test stopped the level before its iteration limit. |
-| `energy` | `float` | The metric value of the last iteration, the negative cross-correlation of the first channel (lower is better); 0.0 when the level ran no iteration. |
+| `energy` | `float` | The metric value of the last iteration, the negative cross-correlation (or mutual information) of the first channel (lower is better); 0.0 when the level ran no iteration. |
 
 ## Several channels
 
@@ -200,8 +201,10 @@ The file names are placeholders for your own images. A mask can be an `ANTsImage
   image, with nearest-neighbour interpolation. A voxel counts only where both masks are inside:
   the cross-correlation windows sum only these voxels, a voxel outside has no metric value and
   no gradient, and the metric value is the mean over the voxels inside. This is what ITK's
-  `SyNImageRegistrationMethod` and ANTs' neighbourhood cross-correlation do with masks. With
-  several channels the masks apply to every channel.
+  `SyNImageRegistrationMethod` and ANTs' neighbourhood cross-correlation do with masks. A
+  mutual-information channel also counts only the voxels inside both masks, and measures the
+  intensity range of each image over the voxels inside its own mask, as ITK's Mattes metric does.
+  With several channels the masks apply to every channel.
 - Make a mask generous, a few millimetres larger than the lesion: the gradient of the voxels
   next to it still reads the lesion's edge. Do not make it so large that a coarse level keeps no
   voxel inside both masks; that run fails with {class}`~fastwarp.RegistrationError` (ANTs warns

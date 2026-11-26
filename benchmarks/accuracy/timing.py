@@ -23,6 +23,8 @@ from typing import Any
 
 import numpy as np
 
+from . import recipes
+
 _RUNNING = re.compile(r"^\s*\*\*\* Running (\S+) registration")
 _STAGE = re.compile(r"^\s*Elapsed time \(stage (\d+)\):\s*(\S+)\s*$")
 _TOTAL = re.compile(r"^\s*Total elapsed time:\s*(\S+)\s*$")
@@ -231,7 +233,7 @@ def registration_rows(
     for path, rec in read_records(work.glob(f"*/{recipe_name}/*/*/run.json")):
         if rec.get("status") != "ok" or rec.get("kind", "registration") != "registration":
             continue
-        if recipe is not None and rec.get("recipe") != recipe:
+        if recipe is not None and not recipes.same_recipe(rec.get("recipe"), recipe):
             continue
         engine = rec.get("engine")
         if engine not in ("fastwarp", "ants"):

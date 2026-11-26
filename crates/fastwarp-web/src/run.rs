@@ -140,6 +140,7 @@ pub fn check_limits(
         .map(|s| SynStageCapacity {
             shrink_factors: &s.shrink_factors,
             mask_dims: &[],
+            mattes: s.uses(fastwarp_reg::recipe::SynMetric::Mattes),
         })
         .collect();
     let refuse = |need: u64| {
@@ -183,6 +184,22 @@ pub fn check_limits(
         planned = planned.max(syn.level_total_bytes);
     }
     Ok(planned)
+}
+
+/// Refuses before any work a plan whose SyN stages use Mattes MI on a device whose dense MI
+/// kernels failed their known-answer check (`failure`, the reason).
+pub fn check_mi_available(plan: &StagePlan, failure: Option<&str>) -> Result<(), RunError> {
+    let mattes = plan
+        .syn
+        .iter()
+        .any(|s| s.uses(fastwarp_reg::recipe::SynMetric::Mattes));
+    match failure {
+        Some(why) if mattes => Err(RunError::Limit(format!(
+            "This GPU cannot run SyN stages with Mattes mutual information: its dense MI kernels \
+             failed the known-answer check ({why})."
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// Turns an engine error into what the page shows; GPU memory and a lost device suggest the
@@ -230,6 +247,8 @@ pub struct Job {
     pub options: Options,
     pub plan: StagePlan,
     pub limits: DeviceLimits,
+    /// Why the device's dense Mattes MI kernels failed their known-answer check, if they did.
+    pub mi_unavailable: Option<String>,
     pub adapter: Value,
     pub zip_time: Option<[u16; 6]>,
 }
@@ -345,6 +364,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
         options,
         plan,
         limits,
+        mi_unavailable,
         adapter,
         zip_time,
     } = job;
@@ -362,6 +382,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     let fixed_grid = *fixed.grid();
     let moving_grid = *moving.grid();
     let planned = check_limits(&plan, &fixed_grid, &moving_grid, grid_choice, &limits)?;
+    check_mi_available(&plan, mi_unavailable.as_deref())?;
     if cancel.load(Ordering::SeqCst) {
         return Err(RunError::Cancelled);
     }
@@ -608,6 +629,7 @@ mod tests {
             options: Options { grid },
             plan,
             limits: LIMITS,
+            mi_unavailable: None,
             adapter: json!({"name": "CPU reference"}),
             zip_time: Some([2026, 11, 22, 9, 30, 0]),
         }
@@ -837,6 +859,41 @@ mod tests {
         };
         let e = check_limits(&default_plan(), &mni, &mni, GridChoice::OneMm, &roomy).unwrap_err();
         assert!(e.to_string().contains("maxBufferSize"), "{e}");
+    }
+
+    #[test]
+    fn mattes_on_a_device_that_failed_its_check_is_refused_before_any_work() {
+        let mut plan = default_plan();
+        assert!(check_mi_available(&plan, Some("mismatch")).is_ok());
+        plan.syn[0].channel_metrics = vec![fastwarp_reg::recipe::SynMetric::Mattes];
+        assert!(check_mi_available(&plan, None).is_ok());
+        let e = check_mi_available(&plan, Some("mismatch")).unwrap_err();
+        assert_eq!(e.kind(), "GpuLimit");
+        assert!(e.to_string().contains("mismatch"), "{e}");
+    }
+
+    #[test]
+    fn a_mattes_job_on_a_device_that_failed_its_check_stops_before_any_stage() {
+        let mut plan = small_plan();
+        plan.syn[0].channel_metrics = vec![fastwarp_reg::recipe::SynMetric::Mattes];
+        let mut j = job(plan, GridChoice::TwoMm);
+        j.mi_unavailable = Some("forced for the test".into());
+        let seen: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+        let report = |p: &Progress| seen.lock().unwrap().push(p.phase);
+        let e = ready(run_job(
+            &CpuBackend,
+            &CpuLinearEngine,
+            j,
+            &AtomicBool::new(false),
+            &report,
+            &|| None,
+        ))
+        .unwrap_err();
+        assert_eq!(e.kind(), "GpuLimit");
+        assert!(e.to_string().contains("forced for the test"), "{e}");
+        let seen = seen.into_inner().unwrap();
+        assert!(seen.contains(&"read"), "{seen:?}");
+        assert!(seen.iter().all(|p| *p == "read"), "{seen:?}");
     }
 
     #[test]

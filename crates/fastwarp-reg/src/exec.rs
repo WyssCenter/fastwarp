@@ -164,8 +164,8 @@ pub(crate) mod testing {
             &self,
             fixed: &Self::Image,
             moving: &Self::Image,
-            fixed_mask: &Self::Image,
-            moving_mask: &Self::Image,
+            fixed_mask: Option<&Self::Image>,
+            moving_mask: Option<&Self::Image>,
             bins: usize,
         ) -> Result<MetricPair<Self::Field>> {
             yield_once().await;
