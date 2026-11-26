@@ -91,6 +91,10 @@ def test_recipes_are_copies_and_bad_inputs_are_refused():
     two["syn"]["channel_weights"] = [0.5, 0.5]
     with pytest.raises(ValueError, match="one channel"):
         recipes.ants_argv(two, "/f", "/m", "/o/")
+    mi = recipes.recipe("cohort")
+    mi["syn"]["channel_metrics"] = ["mi"]
+    with pytest.raises(ValueError, match="SyN on CC"):
+        recipes.ants_argv(mi, "/f", "/m", "/o/")
 
 
 def _ds(n: int, protocol: str = "pairwise") -> datasets.Dataset:

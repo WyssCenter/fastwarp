@@ -32,7 +32,9 @@ _SYN = {
     "update_field_variance": 3.0,
     "total_field_variance": 0.0,
     "cc_radius": 4,
+    "channel_metrics": ["cc"],
     "channel_weights": [1.0],
+    "mi_bins": 32,
     "iterations": [100, 70, 50, 20],
     "convergence_threshold": 1e-06,
     "convergence_window": 10,
@@ -129,6 +131,8 @@ def ants_argv(
     weights = rec["syn"]["channel_weights"]
     if len(weights) != 1:
         raise ValueError("the benchmark registers one channel (T1w)")
+    if rec["syn"]["channel_metrics"] != ["cc"]:
+        raise ValueError("the benchmark runs SyN on CC")
     argv = _head(fixed, moving, out_prefix, None)
     for name, transform in (("rigid", "Rigid"), ("affine", "Affine")):
         argv += _linear_stage(transform, rec[name], fixed, moving)
