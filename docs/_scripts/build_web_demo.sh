@@ -55,7 +55,10 @@ rustup target add --toolchain "$toolchain" wasm32-unknown-unknown
 bindgen_version="$(awk '/^name = "wasm-bindgen"/ { getline; gsub(/version = |"|\r/, ""); print; exit }' Cargo.lock)"
 tools="$target_dir/web-tools"
 bindgen="$tools/bin/wasm-bindgen"
-if ! "$bindgen" --version 2>/dev/null | grep -F "wasm-bindgen $bindgen_version" >/dev/null; then
+if command -v wasm-bindgen >/dev/null 2>&1 \
+    && wasm-bindgen --version | grep -F "wasm-bindgen $bindgen_version" >/dev/null; then
+    bindgen="$(command -v wasm-bindgen)"
+elif ! "$bindgen" --version 2>/dev/null | grep -F "wasm-bindgen $bindgen_version" >/dev/null; then
     step "wasm-bindgen-cli $bindgen_version"
     cargo install --locked --root "$tools" --version "$bindgen_version" wasm-bindgen-cli
 fi

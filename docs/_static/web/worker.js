@@ -36,6 +36,7 @@ const SPEC_LIMITS = {
 
 function readDebug() {
   try {
+    if (!["127.0.0.1", "localhost", "[::1]"].includes(self.location.hostname)) throw new Error("not loopback");
     const p = new URLSearchParams(self.location.search);
     const fault = p.get("fault");
     const limits = p.get("limits");

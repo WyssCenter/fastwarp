@@ -10,9 +10,13 @@ use serde_json::{json, Value};
 
 /// The source file of a panic without the directories of the machine that built the module:
 /// `wgpu-30.0.1/src/backend/webgpu.rs` for a crate from the registry, `crates/fastwarp-web/src/web.rs`
-/// for a workspace file, `library/core/src/option.rs` for the standard library.
+/// for a workspace file, `checkouts/<repository>/<revision>/...` for a git dependency,
+/// `library/core/src/option.rs` for the standard library.
 pub fn short_path(file: &str) -> String {
     let unix = file.replace('\\', "/");
+    if let Some(i) = unix.find("/git/checkouts/") {
+        return unix[i + "/git/".len()..].to_string();
+    }
     if let Some(i) = unix.find("/registry/src/") {
         let rest = &unix[i + "/registry/src/".len()..];
         return rest.split_once('/').map_or(rest, |(_, r)| r).to_string();
@@ -89,6 +93,10 @@ mod tests {
         assert_eq!(
             short_path("/rustc/abc123/library/core/src/option.rs"),
             "library/core/src/option.rs"
+        );
+        assert_eq!(
+            short_path("/home/docs/.cargo/git/checkouts/wgpu-1a2b3c/0abc123/wgpu/src/lib.rs"),
+            "checkouts/wgpu-1a2b3c/0abc123/wgpu/src/lib.rs"
         );
         assert_eq!(short_path("/somewhere/else/main.rs"), "main.rs");
     }

@@ -342,6 +342,7 @@ pub async fn register(
     keep(&STAGE, None);
     keep(&PLAN, None);
     keep(&GPU_STATE, None);
+    FAILED_ALLOC.store(0, Ordering::Relaxed);
     let fixed = fixed.to_vec();
     let moving = moving.to_vec();
     let result = run(fixed, moving, &options_json).await;

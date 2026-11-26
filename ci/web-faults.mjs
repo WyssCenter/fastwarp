@@ -36,6 +36,7 @@ function options(argv) {
     else throw new Error(`unknown argument ${a}\n${USAGE}`);
   }
   if (!out.root || !out.chrome) throw new Error(USAGE);
+  if (!["all", "start", "faults"].includes(out.suite)) throw new Error(`unknown suite ${out.suite}\n${USAGE}`);
   return out;
 }
 
@@ -150,6 +151,15 @@ const RESULT = `(() => {
   return { title: document.title, message: document.getElementById("fw-message")?.textContent ?? "", status: box?.dataset.status ?? null, json };
 })()`;
 
+const ADAPTER = `(async () => {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) return "none";
+  const i = adapter.info ?? {};
+  const name = [i.vendor, i.architecture, i.device, i.description].filter(Boolean).join(" ") || "unnamed";
+  const fallback = i.isFallbackAdapter ?? adapter.isFallbackAdapter ?? false;
+  return \`\${name}, maxBufferSize \${adapter.limits.maxBufferSize}, fallback \${fallback}\`;
+})()`;
+
 const crashed = ["RuntimeError", "WorkerError"];
 const GPU_ERRORS = ["GPUValidationError", "GPUInternalError", "GPUOutOfMemoryError"];
 
@@ -255,6 +265,13 @@ const CASES = [
     ],
   },
   {
+    name: "public",
+    query: "autorun=info&fault=nogpu&limits=64&stall=5",
+    public: true,
+    result: "ready",
+    checks: (r) => [[(r.selftest?.attempts ?? 0) >= 1, "a page that is not on 127.0.0.1 ignores the test parameters"], ...gpuClean(r)],
+  },
+  {
     name: "nogpu",
     query: "fault=nogpu",
     kinds: ["NoWebGPU"],
@@ -322,6 +339,9 @@ async function main() {
   const opt = options(process.argv.slice(2));
   const server = await serve(opt.root);
   const origin = `http://127.0.0.1:${server.address().port}`;
+  const publicOrigin = `http://fastwarp.test:${server.address().port}`;
+  const unknown = [...(opt.only ?? [])].filter((name) => !CASES.some((c) => c.name === name));
+  if (unknown.length) throw new Error(`unknown case(s) ${unknown.join(", ")}; cases: ${CASES.map((c) => c.name).join(", ")}`);
   const profile = mkdtempSync(join(tmpdir(), "fastwarp-web-faults-"));
   const flags = [
     "--headless=new",
@@ -334,9 +354,12 @@ async function main() {
     "--remote-debugging-pipe",
     `--user-data-dir=${profile}`,
     "--enable-unsafe-webgpu",
+    "--host-resolver-rules=MAP fastwarp.test 127.0.0.1",
+    `--unsafely-treat-insecure-origin-as-secure=${publicOrigin}`,
   ];
   if (opt.swiftshader) {
     flags.push("--use-webgpu-adapter=swiftshader", "--enable-unsafe-swiftshader");
+    if (process.platform === "linux") flags.push("--enable-features=Vulkan", "--use-angle=swiftshader");
   }
   if (process.platform === "linux" && process.env.CI) flags.push("--no-sandbox");
   flags.push("about:blank");
@@ -349,6 +372,7 @@ async function main() {
   });
   const cdp = new Cdp(chrome.stdio[3], chrome.stdio[4]);
   let failed = 0;
+  let ran = 0;
   try {
     const { product } = await cdp.send("Browser.getVersion");
     console.log(`${product}, ${opt.swiftshader ? "SwiftShader" : "the system's GPU"}, ${origin}`);
@@ -356,15 +380,21 @@ async function main() {
     const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
     await cdp.send("Page.enable", {}, sessionId);
     await cdp.send("Runtime.enable", {}, sessionId);
+    await cdp.send("Page.navigate", { url: `${origin}/blank` }, sessionId);
+    await sleep(300);
+    const probe = await cdp.send("Runtime.evaluate", { expression: ADAPTER, awaitPromise: true, returnByValue: true }, sessionId);
+    console.log(`WebGPU adapter: ${probe.result.value}`);
     for (const c of CASES) {
       if (opt.only && !opt.only.has(c.name)) continue;
       if (opt.suite !== "all" && (c.suite ?? "faults") !== opt.suite) continue;
-      await cdp.send("Page.navigate", { url: `${origin}/blank` }, sessionId);
+      const at = c.public ? publicOrigin : origin;
+      ran += 1;
+      await cdp.send("Page.navigate", { url: `${at}/blank` }, sessionId);
       await sleep(300);
       await cdp.send("Runtime.evaluate", { expression: "localStorage.clear(); sessionStorage.clear();" }, sessionId);
       cdp.console.length = 0;
       const go = c.result ? runResult : runCase;
-      const { seconds, failures, state } = await go(cdp, sessionId, origin, c, opt.timeout);
+      const { seconds, failures, state } = await go(cdp, sessionId, at, c, opt.timeout);
       if (failures.length === 0) {
         const extra = state.mail ? `, e-mail link ${state.mail.length} characters` : "";
         console.log(`PASS ${c.name} (${seconds} s${extra})`);
@@ -389,6 +419,10 @@ async function main() {
     } catch (err) {
       console.log(`could not remove the Chrome profile ${profile}: ${err.message}`);
     }
+  }
+  if (ran === 0) {
+    console.log("no case ran: check --suite and --only");
+    process.exit(1);
   }
   if (failed) {
     console.log(`${failed} case(s) failed. Chrome's last output:\n${chromeLog.join("").slice(-3000)}`);

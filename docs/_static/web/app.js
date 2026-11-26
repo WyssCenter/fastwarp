@@ -34,11 +34,14 @@ const BROWSERS =
   "later on Android, Firefox 141 or later on Windows, and Safari 26 or later on macOS, iOS and " +
   "iPadOS.";
 
-const STALL_MS = Math.max(5, Number(params.get("stall")) || 180) * 1000;
+const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
 const DEBUG_KEYS = ["fault", "fault_at", "limits", "stall", "plan"];
-const debugParams = Object.fromEntries(DEBUG_KEYS.filter((k) => params.has(k)).map((k) => [k, params.get(k)]));
+const debugParams = LOOPBACK
+  ? Object.fromEntries(DEBUG_KEYS.filter((k) => params.has(k)).map((k) => [k, params.get(k)]))
+  : {};
 const debugQuery = new URLSearchParams(debugParams).toString();
-const pageGpu = params.get("fault") === "nogpu" ? null : navigator.gpu;
+const STALL_MS = Math.max(5, Number(debugParams.stall) || 180) * 1000;
+const pageGpu = debugParams.fault === "nogpu" ? null : navigator.gpu;
 
 const PHASES = {
   gpu: ["Opening the GPU", 0.0, 0.02],
@@ -526,7 +529,7 @@ function onProgress(p, memory) {
     log(p.levels ? `${name}, level ${p.level} of ${p.levels}${p.grid ? ` (${p.grid.join(" x ")})` : ""}` : name);
     if (run && run.timeline.length < 60) run.timeline.push([seconds(now - run.started), p.phase, p.levels ? p.level : null]);
     crumb();
-    if (params.get("fault") === "kill" && p.phase === (params.get("fault_at") || "rigid")) {
+    if (debugParams.fault === "kill" && p.phase === (debugParams.fault_at || "rigid")) {
       history.replaceState(null, "", location.pathname);
       location.reload();
     }
@@ -855,7 +858,7 @@ async function run() {
   state.beatTimer = setInterval(crumb, 10000);
   crumb();
   state.worker.postMessage(
-    { type: "run", fixed: buffers[0], moving: buffers[1], options: params.get("plan") === "short" ? { grid, plan: "short" } : { grid } },
+    { type: "run", fixed: buffers[0], moving: buffers[1], options: debugParams.plan === "short" ? { grid, plan: "short" } : { grid } },
     buffers,
   );
 }
