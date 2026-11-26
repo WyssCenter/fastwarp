@@ -22,7 +22,7 @@
 // dense sampling: the minimum and maximum of each image, merged from the workgroup partials). See
 // `docs/THIRD_PARTY_PORTS.md`.
 
-const BIG: f32 = 3.40282347e38;
+const BIG: f32 = 0x1.fffffep+127f;
 
 struct RangeFinalU {
     count: u32,
