@@ -212,7 +212,8 @@ def register_syn(
     Notes
     -----
     The call releases Python's global interpreter lock while it runs, so other Python threads keep
-    running. With the default outputs the files are ``<out_prefix>Composite.h5`` (warps the moving
+    running; it also reads the image arrays without the lock, so they must not be changed until it
+    returns. With the default outputs the files are ``<out_prefix>Composite.h5`` (warps the moving
     image onto the fixed image), ``<out_prefix>InverseComposite.h5`` (the inverse) and
     ``<out_prefix>0GenericAffine.mat`` (the affine part).
     """
