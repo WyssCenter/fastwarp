@@ -63,6 +63,26 @@ def recipe(name: str) -> dict[str, dict[str, Any]]:
     return copy.deepcopy(RECIPES[name])
 
 
+def normalized(rec: Any) -> Any:
+    """``rec`` with the SyN keys FastWarp added after a record was written (``channel_metrics``,
+    ``channel_weights``, ``mi_bins``) filled with their defaults, so that a stored record of the
+    same recipe compares equal."""
+    if not isinstance(rec, dict) or not isinstance(rec.get("syn"), dict):
+        return rec
+    out = copy.deepcopy(rec)
+    syn = out["syn"]
+    n = len(syn.get("channel_weights") or syn.get("channel_metrics") or [1.0])
+    syn.setdefault("channel_metrics", ["cc"] * n)
+    syn.setdefault("channel_weights", [1.0 / n] * n)
+    syn.setdefault("mi_bins", 32)
+    return out
+
+
+def same_recipe(a: Any, b: Any) -> bool:
+    """Whether two recipes are the same once :func:`normalized`."""
+    return normalized(a) == normalized(b)
+
+
 def _num(v: float | int) -> str:
     f = float(v)
     return str(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)

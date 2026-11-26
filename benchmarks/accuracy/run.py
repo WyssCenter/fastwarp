@@ -179,9 +179,14 @@ def same_config(record: dict[str, Any] | None, rec: dict | None, iso_mm: float |
     """Whether a ``run.json`` was made with ``rec`` and ``iso_mm`` (``None`` matches any)."""
     if record is None:
         return False
-    if rec is not None and record.get("recipe") != rec:
+    if rec is not None and not recipes.same_recipe(record.get("recipe"), rec):
         return False
     return iso_mm is None or record.get("iso_mm") == iso_mm
+
+
+def pair_stale(meta: dict[str, Any], rec: dict, iso_mm: float) -> bool:
+    """Whether a ``pair.json`` was made for another recipe or grid than ``rec`` at ``iso_mm``."""
+    return not recipes.same_recipe(meta.get("recipe"), rec) or meta.get("iso_mm") != iso_mm
 
 
 def engine_done(folder: Path, rec: dict | None = None, iso_mm: float | None = None) -> bool:
@@ -615,7 +620,7 @@ def run_fastwarp(
     record["finished"] = _now()
     record["info"] = info
     record["timings"] = timing.fastwarp_registration_timings(info)
-    record["recipe_matches"] = info.get("recipe") == rec
+    record["recipe_matches"] = recipes.same_recipe(info.get("recipe"), rec)
     record["status"] = "ok" if record["recipe_matches"] else "failed"
     if not record["recipe_matches"]:
         record["error"] = "FastWarp reports a recipe other than the one requested"
@@ -721,7 +726,7 @@ def run(
                     else:
                         todo.append(engine)
                 pair_meta = _read_json(folder / "pair.json")
-                stale = pair_meta.get("recipe") != rec or pair_meta.get("iso_mm") != iso_mm
+                stale = pair_stale(pair_meta, rec, iso_mm)
                 if not todo and not stale:
                     continue
                 try:

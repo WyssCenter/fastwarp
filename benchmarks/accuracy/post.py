@@ -88,6 +88,17 @@ def config(rec: dict[str, Any], iso_mm: float, gzip: bool = False) -> dict[str, 
     }
 
 
+def same_config(a: dict[str, Any] | None, b: dict[str, Any]) -> bool:
+    """Whether two post-processing configs are the same, their recipes compared once
+    :func:`recipes.normalized`."""
+    if not isinstance(a, dict):
+        return False
+    return {**a, "recipe": recipes.normalized(a.get("recipe"))} == {
+        **b,
+        "recipe": recipes.normalized(b.get("recipe")),
+    }
+
+
 def source_stamp(folder: Path, engine: str) -> str | None:
     """When the registration whose composites are post-processed finished (its ``run.json``)."""
     return _read_json(folder / engine / "run.json").get("finished")
@@ -105,7 +116,11 @@ def post_done(folder: Path, cfg: dict[str, Any]) -> bool:
     """Whether a pair folder holds a successful ``post.json`` of ``cfg``, made from the
     registration that is there now."""
     rec = _read_json(folder / "post.json")
-    return rec.get("status") == "ok" and rec.get("config") == cfg and same_source(folder, rec, cfg)
+    return (
+        rec.get("status") == "ok"
+        and same_config(rec.get("config"), cfg)
+        and same_source(folder, rec, cfg)
+    )
 
 
 def source_engine(folder: Path, rec: dict[str, Any], iso_mm: float) -> str | None:
@@ -406,7 +421,7 @@ def run_post(
             for i, (fixed_id, moving_id) in enumerate(selected, 1):
                 folder = work / ds.key / recipe_name / pair_id(fixed_id, moving_id)
                 old = _read_json(folder / "post.json")
-                same = old.get("config") == cfg and same_source(folder, old, cfg)
+                same = same_config(old.get("config"), cfg) and same_source(folder, old, cfg)
                 if post_done(folder, cfg) or (
                     same and old.get("status") in ("failed", "skipped") and not retry_failed
                 ):
@@ -464,7 +479,7 @@ def rows(
         if rec.get("status") != "ok":
             continue
         cfg = rec.get("config") or {}
-        if recipe is not None and cfg.get("recipe") != recipe:
+        if recipe is not None and not recipes.same_recipe(cfg.get("recipe"), recipe):
             continue
         fp = timing.fingerprint(rec.get("environment"))
         for step in STEPS:
