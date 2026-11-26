@@ -20,7 +20,8 @@
 //
 // Portions derived from ITK `itkMattesMutualInformationImageToImageMetricv4GetValueAndDerivativeThreader.hxx`
 // (`ProcessPoint`: moving range test, moving Parzen window term and bin) and
-// `itkMattesMutualInformationImageToImageMetricv4.hxx` (`ComputeSingleFixedImageParzenWindowIndex`). See
+// `itkMattesMutualInformationImageToImageMetricv4.hxx` (`ComputeSingleFixedImageParzenWindowIndex`, here as
+// the count of the host's `f32` bin thresholds an intensity reaches). See
 // `docs/THIRD_PARTY_PORTS.md`.
 
 struct DenseMiU {
@@ -32,6 +33,7 @@ struct DenseMiU {
     o1: vec4<f32>,
     o2: vec4<f32>,
     sp: vec4<f32>,
+    fthr: array<vec4<f32>, 7>,
 }
 
 struct DensePoint {
@@ -46,6 +48,15 @@ struct DensePoint {
 
 fn finite(v: f32) -> bool {
     return (bitcast<u32>(v) & 0x7f800000u) != 0x7f800000u;
+}
+
+fn fixed_bin(v: f32) -> u32 {
+    var b = 2u;
+    for (var k = 0u; k < 7u; k = k + 1u) {
+        let c = select(vec4<u32>(0u), vec4<u32>(1u), vec4<f32>(v) >= u.fthr[k]);
+        b = b + c.x + c.y + c.z + c.w;
+    }
+    return b;
 }
 
 fn dense_point(i: u32) -> DensePoint {
@@ -65,7 +76,7 @@ fn dense_point(i: u32) -> DensePoint {
     let top = i32(u.cfg.x) - 3;
     let term = mv / u.mrng.z - u.mrng.w;
     q.ok = true;
-    q.fbin = u32(clamp(i32(fv / u.frng.z - u.frng.w), 2, top));
+    q.fbin = fixed_bin(fv);
     q.term = term;
     q.mbin = clamp(i32(term), 2, top);
     return q;

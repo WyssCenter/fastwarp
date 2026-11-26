@@ -10,7 +10,7 @@ use fastwarp_reg::cpu::CpuBackend;
 use fastwarp_reg::linalg::{Mat3, Vec3};
 use fastwarp_reg::metric::mi::{MattesMi, MiDenseInputs};
 use fastwarp_reg::transform::DisplacementField;
-use fastwarp_reg::{Grid, MaskVolume, TransformChain, TransformElem, Volume};
+use fastwarp_reg::{Grid, TransformChain, TransformElem, Volume};
 
 struct Fixture {
     fields: HashMap<String, Vec<f64>>,
@@ -72,10 +72,10 @@ impl Fixture {
         Volume::from_vec(self.grid(role), self.get(role).to_vec()).unwrap()
     }
 
-    fn mask(&self, role: &str) -> Option<MaskVolume> {
+    fn mask(&self, role: &str) -> Option<Volume<f64>> {
         let key = format!("{role}_mask");
         self.has(&key)
-            .then(|| MaskVolume::new(self.grid(role), self.get(&key).to_vec()).unwrap())
+            .then(|| Volume::from_vec(self.grid(role), self.get(&key).to_vec()).unwrap())
     }
 
     fn moving_transform(&self) -> TransformChain {
@@ -174,51 +174,33 @@ fn dense_mattes_matches_itk_on_the_virtual_grid() {
     check_dense("virtual_b32_masked");
 }
 
-fn binary(v: &[f64], grid: Grid) -> Volume<f64> {
-    Volume::from_vec(grid, v.to_vec()).unwrap()
+#[test]
+fn dense_mattes_matches_itk_with_swapped_images_and_masks() {
+    check_dense("virtual_b32_masked_swapped");
 }
 
 #[test]
-fn the_cpu_backend_pair_matches_itk_and_swaps_images_and_masks() {
+fn the_cpu_backend_pair_matches_itk_in_both_directions() {
     let cpu = CpuBackend;
     let plain = Fixture::load("virtual_b32");
     let (fixed, moving) = (plain.image("fixed"), plain.image("moving"));
-    let ((v1, d1), (v2, d2)) = cpu.mi_value_derivative_pair(&fixed, &moving, 32).unwrap();
+    let ((v1, d1), _) = cpu.mi_value_derivative_pair(&fixed, &moving, 32).unwrap();
     assert_matches("pair virtual_b32", v1, None, d1.data(), &plain);
     let masked = Fixture::load("virtual_b32_masked");
-    let grid = *fixed.grid();
-    let fm = binary(masked.get("fixed_mask"), grid);
-    let mm = binary(masked.get("moving_mask"), grid);
+    let swapped = Fixture::load("virtual_b32_masked_swapped");
+    let (fm, mm) = (
+        masked.mask("fixed").unwrap(),
+        masked.mask("moving").unwrap(),
+    );
     let ((w1, e1), (w2, e2)) = cpu
         .mi_value_derivative_pair_masked(&fixed, &moving, &fm, &mm, 32)
         .unwrap();
     assert_matches("pair virtual_b32_masked", w1, None, e1.data(), &masked);
-    let identity = TransformChain::new();
-    let swapped =
-        |a: &Volume<f64>, b: &Volume<f64>, ma: Option<&MaskVolume>, mb: Option<&MaskVolume>| {
-            MattesMi { bins: 32 }
-                .evaluate_dense(
-                    &MiDenseInputs {
-                        virtual_grid: &grid,
-                        fixed: a,
-                        moving: b,
-                        fixed_transform: &identity,
-                        moving_transform: &identity,
-                        fixed_mask: ma,
-                        moving_mask: mb,
-                    },
-                    true,
-                )
-                .unwrap()
-        };
-    let s = swapped(&moving, &fixed, None, None);
-    assert_eq!(v2.to_bits(), s.value.to_bits());
-    assert_eq!(d2.data(), &s.derivative[..]);
-    let (fmv, mmv) = (
-        MaskVolume::from_volume(fm.clone()),
-        MaskVolume::from_volume(mm.clone()),
+    assert_matches(
+        "pair virtual_b32_masked, second direction",
+        w2,
+        None,
+        e2.data(),
+        &swapped,
     );
-    let s = swapped(&moving, &fixed, Some(&mmv), Some(&fmv));
-    assert_eq!(w2.to_bits(), s.value.to_bits());
-    assert_eq!(e2.data(), &s.derivative[..]);
 }

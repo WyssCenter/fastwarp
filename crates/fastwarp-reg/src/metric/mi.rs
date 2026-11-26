@@ -51,7 +51,7 @@ use crate::error::{invalid, Result};
 use crate::grid::Grid;
 use crate::interp::{central_difference_at_point, linear_at_point};
 use crate::linalg::Vec3;
-use crate::mask::MaskVolume;
+use crate::mask::nearest_voxel;
 use crate::metric::cc::NO_VOXEL_IN_MASKS;
 use crate::transform::{LinearMovingTransform, TransformChain};
 use crate::volume::Volume;
@@ -147,15 +147,28 @@ fn finite_range(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
         })
 }
 
-fn masked_range(image: &Volume<f64>, mask: Option<&MaskVolume>) -> Option<(f64, f64)> {
+/// The error of an image without a finite voxel (inside its mask, when `masked`) to measure
+/// its intensity range on.
+pub fn empty_range_message(role: &str, masked: bool) -> String {
+    if masked {
+        format!("no finite {role}-image voxel lies inside the {role} mask")
+    } else {
+        format!("the {role} image has no finite voxel")
+    }
+}
+
+fn mask_inside(mask: &Volume<f64>, p: Vec3) -> bool {
+    nearest_voxel(mask.grid(), p).is_some_and(|i| mask.data()[i] != 0.0)
+}
+
+fn masked_range(image: &Volume<f64>, mask: Option<&Volume<f64>>) -> Option<(f64, f64)> {
     let grid = image.grid();
     let data = image.data();
     match mask {
         None => finite_range(data.iter().copied()),
         Some(m) => finite_range((0..data.len()).filter_map(|idx| {
             let [i, j, k] = grid.ijk(idx);
-            m.is_inside(grid.index_to_point([i as f64, j as f64, k as f64]))
-                .then_some(data[idx])
+            mask_inside(m, grid.index_to_point([i as f64, j as f64, k as f64])).then_some(data[idx])
         })),
     }
 }
@@ -266,20 +279,16 @@ impl MiBinning {
     pub fn dense(
         fixed: &Volume<f64>,
         moving: &Volume<f64>,
-        fixed_mask: Option<&MaskVolume>,
-        moving_mask: Option<&MaskVolume>,
+        fixed_mask: Option<&Volume<f64>>,
+        moving_mask: Option<&Volume<f64>>,
         bins: usize,
     ) -> Result<Self> {
-        let fixed_range = masked_range(fixed, fixed_mask).ok_or_else(|| {
-            invalid(
-                "mattes",
-                "no finite fixed-image voxel lies inside the fixed mask",
-            )
-        })?;
+        let fixed_range = masked_range(fixed, fixed_mask)
+            .ok_or_else(|| invalid("mattes", empty_range_message("fixed", fixed_mask.is_some())))?;
         let moving_range = masked_range(moving, moving_mask).ok_or_else(|| {
             invalid(
                 "mattes",
-                "no finite moving-image voxel lies inside the moving mask",
+                empty_range_message("moving", moving_mask.is_some()),
             )
         })?;
         Self::from_ranges(bins, fixed_range, moving_range)
@@ -516,12 +525,13 @@ pub struct MiDenseInputs<'a> {
     pub fixed_transform: &'a TransformChain,
     /// Virtual point to moving image point.
     pub moving_transform: &'a TransformChain,
-    /// The fixed-image mask, tested at the mapped fixed point and over the fixed voxels for the
-    /// fixed intensity range.
-    pub fixed_mask: Option<&'a MaskVolume>,
-    /// The moving-image mask, tested at the mapped moving point and over the moving voxels for
-    /// the moving intensity range.
-    pub moving_mask: Option<&'a MaskVolume>,
+    /// The fixed-image mask (a voxel is inside where it is not zero, looked up at the nearest
+    /// voxel as [`crate::mask::MaskVolume::is_inside`] does), tested at the mapped fixed point and over the
+    /// fixed voxels for the fixed intensity range.
+    pub fixed_mask: Option<&'a Volume<f64>>,
+    /// The moving-image mask, tested likewise at the mapped moving point and over the moving
+    /// voxels for the moving intensity range.
+    pub moving_mask: Option<&'a Volume<f64>>,
 }
 
 /// Result of a dense evaluation.
@@ -557,12 +567,12 @@ fn dense_point(
     let [i, j, k] = grid.ijk(idx);
     let p = grid.index_to_point([i as f64, j as f64, k as f64]);
     let fp = inp.fixed_transform.apply(p);
-    if inp.fixed_mask.is_some_and(|m| !m.is_inside(fp)) {
+    if inp.fixed_mask.is_some_and(|m| !mask_inside(m, fp)) {
         return None;
     }
     let fv = linear_at_point(inp.fixed, fp)?;
     let mp = inp.moving_transform.apply(p);
-    if inp.moving_mask.is_some_and(|m| !m.is_inside(mp)) {
+    if inp.moving_mask.is_some_and(|m| !mask_inside(m, mp)) {
         return None;
     }
     let mv = linear_at_point(inp.moving, mp)?;
@@ -600,17 +610,15 @@ impl MattesMi {
         let bins = self.bins;
         let binning =
             MiBinning::dense(inp.fixed, inp.moving, inp.fixed_mask, inp.moving_mask, bins)?;
-        let points: Vec<Option<DensePoint>> = (0..inp.virtual_grid.num_voxels())
+        let n = inp.virtual_grid.num_voxels();
+        let partials: Vec<(Vec<f64>, Vec<f64>, usize)> = (0..n.div_ceil(SAMPLE_CHUNK))
             .into_par_iter()
-            .map(|idx| dense_point(&binning, inp, idx, want_derivative))
-            .collect();
-        let partials: Vec<(Vec<f64>, Vec<f64>, usize)> = points
-            .par_chunks(SAMPLE_CHUNK)
-            .map(|chunk| {
+            .map(|c| {
                 let mut joint = vec![0.0f64; bins * bins];
                 let mut fixed_marginal = vec![0.0f64; bins];
                 let mut valid = 0usize;
-                for p in chunk.iter().flatten() {
+                let chunk = (c * SAMPLE_CHUNK)..((c + 1) * SAMPLE_CHUNK).min(n);
+                for p in chunk.filter_map(|idx| dense_point(&binning, inp, idx, false)) {
                     fixed_marginal[p.fixed_bin] += 1.0;
                     for pdf_moving in (p.moving_bin - 1)..=(p.moving_bin + 2) {
                         joint[p.fixed_bin * bins + pdf_moving] +=
@@ -645,9 +653,9 @@ impl MattesMi {
             want_derivative,
         )?;
         let derivative = if want_derivative {
-            points
-                .par_iter()
-                .map(|p| match p {
+            (0..n)
+                .into_par_iter()
+                .map(|idx| match dense_point(&binning, inp, idx, true) {
                     Some(p) => {
                         let mut s = 0.0;
                         for pdf_moving in (p.moving_bin - 1)..=(p.moving_bin + 2) {

@@ -17,7 +17,7 @@ use crate::field_ops::{
 };
 use crate::grid::Grid;
 use crate::interp::linear_at_point;
-use crate::mask::{nearest_voxel, MaskVolume};
+use crate::mask::nearest_voxel;
 use crate::metric::cc::{CcInputs, CcMetric};
 use crate::metric::mi::{MattesMi, MiDenseInputs};
 use crate::transform::{AffineTransform, TransformChain};
@@ -214,11 +214,7 @@ impl CpuBackend {
                 ));
             }
         }
-        let masks = (
-            MaskVolume::from_volume(fixed_mask.clone()),
-            MaskVolume::from_volume(moving_mask.clone()),
-        );
-        mi_pair(fixed, moving, Some((&masks.0, &masks.1)), bins)
+        mi_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins)
     }
 
     pub(crate) fn mi_value_derivative_pair_with_norms(
@@ -357,7 +353,7 @@ impl CpuBackend {
 fn mi_pair(
     fixed: &Volume<f64>,
     moving: &Volume<f64>,
-    masks: Option<(&MaskVolume, &MaskVolume)>,
+    masks: Option<(&Volume<f64>, &Volume<f64>)>,
     bins: usize,
 ) -> Result<MetricPair<VectorField>> {
     let grid = *fixed.grid();

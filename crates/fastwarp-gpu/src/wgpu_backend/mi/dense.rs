@@ -37,9 +37,10 @@ use bytemuck::{Pod, Zeroable};
 use fastwarp_reg::backend::MetricPair;
 use fastwarp_reg::error::{RegError, Result as RegResult};
 use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
-use fastwarp_reg::metric::mi::{finish_histogram, MiBinning};
+use fastwarp_reg::metric::mi::{empty_range_message, finish_histogram, MiBinning};
 
 use super::{MergeU, BINS, MAX_STRIPES, STRIDE};
+use crate::capacity::mattes_chunk;
 use crate::device::GpuContext;
 use crate::error::GpuResult;
 use crate::syn_kernels::CcFinalU;
@@ -56,7 +57,7 @@ const HIST: &str = include_str!("../../shaders/mi_dense_hist.wgsl");
 const DERIV: &str = include_str!("../../shaders/mi_dense_deriv.wgsl");
 const MERGE: &str = include_str!("../../shaders/mi_dense_merge.wgsl");
 
-const CHUNK: u32 = 4096;
+const THRESHOLDS: usize = BINS - 4;
 
 type Direction<'a> = (
     &'a GpuImage,
@@ -74,6 +75,7 @@ struct DenseMiU {
     mrng: [f32; 4],
     o: [[f32; 4]; 3],
     sp: [f32; 4],
+    fthr: [[f32; 4]; THRESHOLDS / 4],
 }
 
 #[repr(C)]
@@ -152,10 +154,10 @@ impl DenseMiKernels {
     }
 }
 
-fn uniform(grid_u: &CcFinalU, bins: u32, binning: &MiBinning) -> DenseMiU {
+fn uniform(grid_u: &CcFinalU, bins: u32, chunk: u32, binning: &MiBinning) -> DenseMiU {
     DenseMiU {
         dims: grid_u.dims,
-        cfg: [bins, CHUNK, 0, 0],
+        cfg: [bins, chunk, 0, 0],
         frng: [
             binning.fixed_min as f32,
             binning.fixed_max as f32,
@@ -170,7 +172,53 @@ fn uniform(grid_u: &CcFinalU, bins: u32, binning: &MiBinning) -> DenseMiU {
         ],
         o: grid_u.o,
         sp: grid_u.sp,
+        fthr: fixed_thresholds(binning),
     }
+}
+
+fn order_key(x: f32) -> u32 {
+    let bits = x.to_bits();
+    if bits >> 31 == 1 {
+        !bits
+    } else {
+        bits | 0x8000_0000
+    }
+}
+
+fn from_order_key(key: u32) -> f32 {
+    f32::from_bits(if key >> 31 == 1 {
+        key & 0x7fff_ffff
+    } else {
+        !key
+    })
+}
+
+/// The smallest `f32` intensity whose fixed-axis bin (`MiBinning::fixed_bin`, in `f64`) is at
+/// least `k`, for `k` from 3 to `bins - 3`; the remaining slots are `+inf`. Each threshold is a
+/// binary search over the `f32` values in their order (at most 32 bin evaluations). The kernels
+/// count the thresholds an intensity reaches, so an `f32` image gets the bins of the `f64`
+/// formula exactly.
+fn fixed_thresholds(binning: &MiBinning) -> [[f32; 4]; THRESHOLDS / 4] {
+    let mut out = [f32::INFINITY; THRESHOLDS];
+    let bin = |key: u32| binning.fixed_bin(f64::from(from_order_key(key)));
+    for (slot, k) in out.iter_mut().zip(3..=binning.bins - 3) {
+        let mut lo = order_key(f32::NEG_INFINITY);
+        let mut hi = order_key(f32::INFINITY);
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if bin(mid) >= k {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        *slot = from_order_key(hi);
+    }
+    let mut packed = [[0.0f32; 4]; THRESHOLDS / 4];
+    for (i, v) in out.iter().enumerate() {
+        packed[i / 4][i % 4] = *v;
+    }
+    packed
 }
 
 fn decode(raw: &[u32], bins: usize) -> (Vec<f64>, Vec<f64>, usize) {
@@ -208,14 +256,9 @@ impl WgpuBackend {
         }
         let k = &self.mi_kernels.dense;
         let n = grid.num_voxels() as u64;
-        let groups = u32::try_from(n.div_ceil(u64::from(CHUNK)))
+        let chunk = u32::try_from(mattes_chunk(n))
             .map_err(|_| bad("the grid has too many voxels for the Mattes histogram"))?;
-        if groups > self.max_groups {
-            return Err(bad(format!(
-                "{n} voxels need {groups} histogram workgroups, more than the device's {}",
-                self.max_groups
-            )));
-        }
+        let groups = n.div_ceil(u64::from(chunk)) as u32;
         let per_stripe = groups.div_ceil(MAX_STRIPES);
         let stripes = groups.div_ceil(per_stripe);
         let merge = MergeU {
@@ -234,7 +277,7 @@ impl WgpuBackend {
             Some((fm, mm)) => (&k.range_masked, vec![fm.buf.buffer(), mm.buf.buffer()]),
             None => (&k.range, Vec::new()),
         };
-        let base = uniform(&geometry, bins as u32, &placeholder);
+        let base = uniform(&geometry, bins as u32, chunk, &placeholder);
         self.run_pass("mi_dense_range", |pass| {
             let mut buffers = vec![
                 fixed.buf.buffer(),
@@ -260,14 +303,10 @@ impl WgpuBackend {
         let fixed_range = (f64::from(r[0]), f64::from(r[1]));
         let moving_range = (f64::from(r[2]), f64::from(r[3]));
         if fixed_range.0 > fixed_range.1 {
-            return Err(bad_metric(
-                "no finite fixed-image voxel lies inside the fixed mask",
-            ));
+            return Err(bad_metric(&empty_range_message("fixed", masks.is_some())));
         }
         if moving_range.0 > moving_range.1 {
-            return Err(bad_metric(
-                "no finite moving-image voxel lies inside the moving mask",
-            ));
+            return Err(bad_metric(&empty_range_message("moving", masks.is_some())));
         }
         let binnings = [
             MiBinning::from_ranges(bins, fixed_range, moving_range)?,
@@ -311,7 +350,7 @@ impl WgpuBackend {
                     pass,
                     hist_kernel,
                     &refs,
-                    &uniform(&geometry, bins as u32, binning),
+                    &uniform(&geometry, bins as u32, chunk, binning),
                     [groups, 1, 1],
                 )?;
                 self.launch(
@@ -386,7 +425,7 @@ impl WgpuBackend {
                     pass,
                     deriv_kernel,
                     &refs,
-                    &uniform(&geometry, bins as u32, binning),
+                    &uniform(&geometry, bins as u32, chunk, binning),
                     g3,
                 )?;
             }
@@ -431,5 +470,46 @@ fn bad_metric(message: &str) -> RegError {
     RegError::Invalid {
         what: "mattes",
         message: message.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_thresholds_reproduce_the_cpu_bins_with_an_edge_at_zero_and_stay_fast() {
+        let start = std::time::Instant::now();
+        for (bins, fixed) in [
+            (32, (-1024.0, 3072.0)),
+            (32, (-1.0, 1.0)),
+            (12, (0.0, 1000.0)),
+        ] {
+            let binning = MiBinning::from_ranges(bins, fixed, (0.0, 1.0)).unwrap();
+            let thresholds: Vec<f32> = fixed_thresholds(&binning).into_iter().flatten().collect();
+            for (i, t) in thresholds.iter().enumerate() {
+                let k = i + 3;
+                if k > bins - 3 {
+                    assert_eq!(*t, f32::INFINITY);
+                    continue;
+                }
+                assert!(
+                    binning.fixed_bin(f64::from(*t)) >= k,
+                    "{bins} {fixed:?} {k}"
+                );
+                assert!(
+                    binning.fixed_bin(f64::from(t.next_down())) < k,
+                    "{bins} {fixed:?} {k}"
+                );
+            }
+            for v in [-1024.0f32, -0.5, 0.0, 0.25, 3.0, 250.0, 3072.0] {
+                let gpu = 2 + thresholds.iter().filter(|t| v >= **t).count();
+                assert_eq!(gpu, binning.fixed_bin(f64::from(v)), "{v}");
+            }
+        }
+        let ct = MiBinning::from_ranges(32, (-1024.0, 3072.0), (0.0, 1.0)).unwrap();
+        let edge = fixed_thresholds(&ct)[1][2];
+        assert!(edge.abs() < 1e-3, "{edge}");
+        assert!(start.elapsed().as_secs_f64() < 1.0, "{:?}", start.elapsed());
     }
 }

@@ -100,6 +100,11 @@ def half_space(grid, axis, below):
     return (grid.points()[..., axis] < below).astype(np.uint8)
 
 
+def masked_range(values, mask=None):
+    inside = values if mask is None else values[mask != 0]
+    return float(inside.min()), float(inside.max())
+
+
 def to_image(values, grid, kind):
     image = itk.image_from_array(np.ascontiguousarray(values), ttype=kind)
     return grid.place(image)
@@ -208,12 +213,22 @@ def main():
         "field": np.zeros(fixed_grid.size[::-1] + (3,)),
     }
     write("virtual_b32", {**same, "bins": 32})
+    virtual_masks = {
+        "fixed_mask": ball(fixed_grid, (0.3, -0.2, 0.1), 3.4),
+        "moving_mask": half_space(fixed_grid, 0, 0.2),
+    }
+    for role in ("fixed", "moving"):
+        if masked_range(same[role], virtual_masks[f"{role}_mask"]) == masked_range(same[role]):
+            raise SystemExit(f"the {role} mask does not change the {role} intensity range")
+    write("virtual_b32_masked", {**same, **virtual_masks, "bins": 32})
     write(
-        "virtual_b32_masked",
+        "virtual_b32_masked_swapped",
         {
             **same,
-            "fixed_mask": ball(fixed_grid, (0.3, -0.2, 0.1), 3.4),
-            "moving_mask": half_space(fixed_grid, 1, 1.9),
+            "fixed": same["moving"],
+            "moving": same["fixed"],
+            "fixed_mask": virtual_masks["moving_mask"],
+            "moving_mask": virtual_masks["fixed_mask"],
             "bins": 32,
         },
     )
