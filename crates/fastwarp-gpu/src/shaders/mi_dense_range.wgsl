@@ -22,7 +22,7 @@
 // dense sampling: the minimum and maximum of each image, here per workgroup in `f32`). See
 // `docs/THIRD_PARTY_PORTS.md`.
 
-const BIG: f32 = 3.40282347e38;
+const BIG: f32 = 0x1.fffffep+127f;
 
 @group(0) @binding(2) var<storage, read_write> range_parts: array<vec4<f32>>;
 
