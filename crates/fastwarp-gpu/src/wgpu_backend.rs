@@ -472,6 +472,13 @@ impl WgpuBackend {
                         GpuError::Verification(format!("known-answer chunked MI run failed: {e}"))
                     })?,
             );
+            results.extend(
+                parity::check_mi_dense_async(self, case)
+                    .await
+                    .map_err(|e| {
+                        GpuError::Verification(format!("known-answer dense MI run failed: {e}"))
+                    })?,
+            );
             let failures: Vec<String> =
                 results.iter().filter(|r| !r.ok).map(|r| r.line()).collect();
             if failures.is_empty() {

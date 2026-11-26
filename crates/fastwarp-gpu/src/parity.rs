@@ -47,6 +47,10 @@ pub mod tol {
     pub const MI_VALUE: f64 = 1e-5;
     /// Mattes MI derivative, `L2` relative over the parameters.
     pub const MI_DERIVATIVE: f64 = 5e-4;
+    /// Dense Mattes MI value of the SyN stage, relative.
+    pub const MI_DENSE_VALUE: f64 = 1e-5;
+    /// Dense Mattes MI derivative of the SyN stage, voxels at least one voxel inside every face.
+    pub const MI_DENSE_DERIVATIVE: f64 = 1e-3;
 }
 
 /// Geometry and content of one parity case.
@@ -833,6 +837,106 @@ async fn check_mi_with(
             ok: drel <= tol::MI_DERIVATIVE,
             note: format!("{} parameters", cd.len()),
         });
+    }
+    Ok(out)
+}
+
+/// Runs the dense Mattes mutual-information kernels of the SyN stage (both directions, without
+/// and with masks) on `case` against the CPU reference, on images whose values are `f32`;
+/// an error on wasm32 (use [`check_mi_dense_async`]).
+pub fn check_mi_dense(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
+    block_reg("parity::check_mi_dense", check_mi_dense_async(gpu, case))
+}
+
+/// Async [`check_mi_dense`].
+pub async fn check_mi_dense_async(gpu: &WgpuBackend, case: &Case) -> RegResult<Vec<OpResult>> {
+    let grid = case.grid()?;
+    let f32_values = |v: Volume<f64>, contrast: bool| -> RegResult<Volume<f64>> {
+        let data = v
+            .data()
+            .iter()
+            .map(|x| {
+                let y = if contrast { 2.0 - 1.5 * x * x } else { *x };
+                f64::from(y as f32)
+            })
+            .collect();
+        Volume::from_vec(grid, data)
+    };
+    let fixed = f32_values(image(&grid, case.seed + 41, 0.15), false)?;
+    let moving = f32_values(image(&grid, case.seed + 42, 0.15), true)?;
+    let [nx, ny, _] = grid.size();
+    let half = |keep: &dyn Fn(usize, usize) -> bool| -> RegResult<Volume<f64>> {
+        let data = (0..grid.num_voxels())
+            .map(|idx| {
+                let [i, j, _] = grid.ijk(idx);
+                f64::from(u8::from(keep(i, j)))
+            })
+            .collect();
+        Volume::from_vec(grid, data)
+    };
+    let fixed_mask = half(&|i, _| i + 3 < nx)?;
+    let moving_mask = half(&|_, j| j > ny / 4)?;
+    let cpu = CpuBackend;
+    let g_fix = gpu.upload_image(&fixed).await?;
+    let g_mov = gpu.upload_image(&moving).await?;
+    let g_fm = gpu.upload_image(&fixed_mask).await?;
+    let g_mm = gpu.upload_image(&moving_mask).await?;
+    let n = grid.num_voxels();
+    let interior: Vec<usize> = (0..n).filter(|i| is_interior(&grid, *i, 1)).collect();
+    let pick = |f: &VectorField| -> Vec<f64> {
+        interior
+            .iter()
+            .flat_map(|i| f.data()[*i].iter().copied())
+            .collect()
+    };
+    let mut out = Vec::new();
+    for masked in [false, true] {
+        let label = if masked {
+            "mi dense masked"
+        } else {
+            "mi dense"
+        };
+        let (gpu_pair, cpu_pair) = if masked {
+            (
+                gpu.mi_value_derivative_pair_masked(&g_fix, &g_mov, &g_fm, &g_mm, 32)
+                    .await
+                    .map_err(|e| mismatch(label, e))?,
+                cpu.mi_value_derivative_pair_masked(
+                    &fixed,
+                    &moving,
+                    &fixed_mask,
+                    &moving_mask,
+                    32,
+                )?,
+            )
+        } else {
+            (
+                gpu.mi_value_derivative_pair(&g_fix, &g_mov, 32)
+                    .await
+                    .map_err(|e| mismatch(label, e))?,
+                cpu.mi_value_derivative_pair(&fixed, &moving, 32)?,
+            )
+        };
+        let ((gv1, gd1), (gv2, gd2)) = gpu_pair;
+        let ((cv1, cd1), (cv2, cd2)) = cpu_pair;
+        for (direction, gv, gd, cv, cd) in [
+            ("forward", gv1, gd1, cv1, cd1),
+            ("backward", gv2, gd2, cv2, cd2),
+        ] {
+            out.push(scalar(
+                &format!("{label} {direction} value"),
+                gv,
+                cv,
+                tol::MI_DENSE_VALUE,
+            ));
+            out.push(compare(
+                &format!("{label} {direction} derivative"),
+                &pick(&gpu.download_field(&gd).await?),
+                &pick(&cd),
+                tol::MI_DENSE_DERIVATIVE,
+                format!("{} interior voxels", interior.len()),
+            ));
+        }
     }
     Ok(out)
 }

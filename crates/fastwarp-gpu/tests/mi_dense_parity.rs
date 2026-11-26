@@ -4,7 +4,7 @@
 
 mod common;
 
-use fastwarp_gpu::parity::{image, Case};
+use fastwarp_gpu::parity::{check_mi_dense, image, Case};
 use fastwarp_gpu::{GpuField, WgpuBackend};
 use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
@@ -436,4 +436,20 @@ fn the_mattes_pair_matches_itk_on_the_virtual_grid_in_both_directions() {
         true,
         1e-3,
     );
+}
+
+#[test]
+fn the_dense_mattes_known_answer_check_passes_on_the_self_test_and_an_oblique_case() {
+    let Some(b) = common::backend() else { return };
+    for case in [
+        Case::selftest_mi(),
+        Case::awkward([29, 23, 19], [1.2, 1.6, 2.0], true, 3),
+    ] {
+        let results = check_mi_dense(&b, &case).unwrap();
+        assert_eq!(results.len(), 8);
+        for r in &results {
+            eprintln!("{}", r.line());
+        }
+        assert!(results.iter().all(|r| r.ok));
+    }
 }

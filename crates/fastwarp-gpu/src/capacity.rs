@@ -63,10 +63,10 @@ const MATTES_MAX_STRIPES: u64 = 64;
 const SYN_REDUCTION_GROUP: u64 = 256;
 const SYN_REDUCTION_MAX_GROUPS_X: u64 = 32768;
 
-/// Bytes the device self-test of `WgpuBackend::new` leaves idle in the buffer pool (631,952 on
+/// Bytes the device self-test of `WgpuBackend::new` leaves idle in the buffer pool (846,096 on
 /// the adapter measured; `tests/syn_parity.rs` checks the bound). Each buffer is below
 /// [`RETAIN_FLOOR_BYTES`], so no level transition frees them.
-pub const SELFTEST_POOL_BYTES: u64 = 640 << 10;
+pub const SELFTEST_POOL_BYTES: u64 = 896 << 10;
 
 /// Environment override of the device memory budget, in mebibytes.
 pub const MEMORY_BUDGET_ENV: &str = "FASTWARP_GPU_MEMORY_BUDGET_MB";
@@ -1440,7 +1440,7 @@ mod tests {
             .to_string();
         assert_eq!(
             text,
-            "the SyN stage on the registration grid [197, 233, 189] needs 1676739820 bytes of device \
+            "the SyN stage on the registration grid [197, 233, 189] needs 1677001964 bytes of device \
              memory, but the budget is 1073741824 bytes"
         );
     }

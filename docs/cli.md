@@ -308,7 +308,7 @@ fastwarp register FIXED MOVING -o PREFIX [--channel FIXED MOVING]... [--iso-mm M
 
 Registers MOVING to FIXED: {term}`centre of mass`, Rigid and Affine
 ({term}`Mattes mutual information`, first channel), then {term}`SyN` ({term}`cross-correlation`,
-every channel), or the start and stages a [stage-list recipe](guide/recipes.md#stage-lists)
+every channel, or the metrics of the recipe's `channel_metrics`), or the start and stages a [stage-list recipe](guide/recipes.md#stage-lists)
 names. This is {func}`fastwarp.register_syn`; see [Normalization](guide/normalization.md) and
 [Output files](guide/outputs.md).
 
@@ -574,7 +574,7 @@ Supported:
 | `-o` | `PREFIX` or `[PREFIX,warped,inverseWarped]`; the prefix is text, as in ANTs |
 | `-r` | `[fixed,moving,1]` (centres of intensity mass, on the images of the first metric), `Identity`, one affine file (`.mat`, `.txt`) or `[file,1]` for its inverse |
 | `-t` | `Rigid[step]` and `Affine[step]` stages, any number, then any number of `SyN[step,<3>,<0>]` stages ending with the same shrink factor; `SyN` alone is allowed |
-| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stages: one or more `CC[fixed,moving,weight,radius]` with the same radius, 1 to 8 (each metric is a channel); every SyN stage has the same images in the same order |
+| `-m` | Rigid and Affine stages: one `MI[fixed,moving,weight,32,Regular,percentage]` (or `Mattes[...]`); SyN stages: one or more `CC[fixed,moving,weight,radius]` (radius 1 to 8) or `MI[fixed,moving,weight,bins]` (or `Mattes[...]`, 5 to 32 bins, dense: no sampling strategy or `None`), in any mix, all CC metrics with one radius and all MI metrics with one number of bins (each metric is a channel); every SyN stage has the same images in the same order |
 | `-c`, `-f`, `-s` | `MxN` or `[MxN,threshold,window]` (window at least 2), shrink factors, sigmas in `vox` (default) or `mm`; one value per level |
 | `-x` | `[fixedMask,movingMask]` or `fixedMask` (`NULL`, `NA`, `NONE` mean no mask), once for all stages or once per stage; a moving mask on SyN stages only; across the SyN stages, one fixed and one moving mask file (each SyN stage takes that file or `NULL`) |
 | `-w` | `[lower,upper]`; without it the images are rescaled to [0, 1] as ANTs does |
@@ -594,12 +594,12 @@ mass of other images than the first metric's; the transforms `Translation`, `Sim
 `CompositeAffine`, `BSpline`, `BSplineSyN`, `GaussianDisplacementField`,
 `BSplineDisplacementField`, `TimeVaryingVelocityField`, `TimeVaryingBSplineVelocityField`,
 `Exponential`, `BSplineExponential`; a linear stage after a SyN stage; SyN stages with
-other CC images than the first SyN stage's or that end with different shrink factors; two
-different fixed-mask files or two different moving-mask files across the SyN stages; MI in
-a SyN stage (the default of ANTsPy's `SyN`, `SyNRA`, `SyNOnly`: use `CC`), CC in a Rigid or
+other metric images than the first SyN stage's or that end with different shrink factors; two
+different fixed-mask files or two different moving-mask files across the SyN stages; CC in a Rigid or
 Affine stage, `MeanSquares`, `Demons`, `GC` and the point-set metrics; MI with bins other than
-32, with dense sampling (no strategy or `None`, as in `MI[f,m,1,32]`) or `Random` sampling; CC
-with a sampling strategy, a radius above 8 or different radii;
+32, with dense sampling (no strategy or `None`, as in `MI[f,m,1,32]`) or `Random` sampling in a
+linear stage; in a SyN stage, a metric with `Regular` or `Random` sampling, CC with a radius above
+8 or different radii, MI with fewer than 5 or more than 32 bins or different numbers of bins;
 `useGradientFilter` 1; two metrics in a linear stage; linear stages on other images than the
 first SyN metric's; a moving mask on a Rigid or Affine stage (`-x [fixed,moving]` given once
 reaches every stage, so with linear stages give `-x` once per stage); `-g` with a restriction;

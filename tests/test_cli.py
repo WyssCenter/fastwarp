@@ -575,7 +575,7 @@ def test_two_syn_stages_with_switches_match_the_python_api(ants, registered):
 @needs_gpu
 def test_fits_checks_the_stages_of_the_recipe(ants, registered, monkeypatch):
     d, files, _, _ = registered
-    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "1")
+    monkeypatch.setenv("FASTWARP_GPU_MEMORY_BUDGET_MB", "2")
     linear = d / "linear.json"
     linear.write_text(json.dumps({"stages": [{"transform": "rigid"}]}))
     common = ("fits", files["fixed"], files["moving"], "--iso-mm", str(SPACING))

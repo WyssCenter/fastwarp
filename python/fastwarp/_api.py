@@ -113,7 +113,8 @@ def register_syn(
     mutual information on the first image of each side), then a SyN stage (symmetric normalization,
     the deformable registration of ANTs; neighbourhood cross-correlation on every image), on an
     isotropic grid of ``iso_mm`` millimetres built from the first fixed image. A stage-list
-    ``recipe`` can choose another start and other stages.
+    ``recipe`` can choose another start and other stages, and the recipe's ``channel_metrics``
+    Mattes mutual information for SyN channels of different contrast.
 
     Parameters
     ----------

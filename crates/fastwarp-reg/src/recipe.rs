@@ -22,6 +22,30 @@ pub const COHORT_TOTAL_FIELD_VARIANCE: f64 = 0.0;
 pub const COHORT_CC_RADIUS: usize = 4;
 /// Metric weight of each channel of the multispectral recipe.
 pub const COHORT_MULTISPECTRAL_WEIGHT: f64 = 0.5;
+/// Histogram bins of `MI[...,bins]` in a SyN stage, as `antsRegistrationSyNQuick.sh` and ANTsPy
+/// use them.
+pub const DEFAULT_MI_BINS: usize = 32;
+
+/// The metric of one SyN channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SynMetric {
+    /// ANTs neighbourhood cross-correlation, `CC[fixed,moving,weight,radius]` with
+    /// [`SynRecipe::cc_radius`].
+    Cc,
+    /// Mattes mutual information with dense sampling, `MI[fixed,moving,weight,bins]` with
+    /// [`SynRecipe::mi_bins`].
+    Mattes,
+}
+
+impl SynMetric {
+    /// The name in a recipe and in `antsRegistration` arguments: `"cc"` or `"mi"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            SynMetric::Cc => "cc",
+            SynMetric::Mattes => "mi",
+        }
+    }
+}
 
 /// Parameters of one `antsRegistration` SyN stage.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,9 +56,13 @@ pub struct SynRecipe {
     pub update_field_variance: f64,
     /// Third argument: Gaussian variance of the total field (squared voxels, 0 = none).
     pub total_field_variance: f64,
-    /// `CC[...,weight,radius]` radius.
+    /// `CC[...,weight,radius]` radius of every CC channel.
     pub cc_radius: usize,
-    /// One `CC` weight per channel (ignored by ITK when there is a single metric).
+    /// `MI[...,weight,bins]` histogram bins of every Mattes channel.
+    pub mi_bins: usize,
+    /// The metric of each channel; empty: CC for every channel.
+    pub channel_metrics: Vec<SynMetric>,
+    /// One metric weight per channel (ignored by ITK when there is a single metric).
     pub channel_weights: Vec<f64>,
     /// `--convergence [iterations,threshold,window]`: iterations per level.
     pub iterations: Vec<u32>,
@@ -50,7 +78,7 @@ pub struct SynRecipe {
     pub sigma_units: SigmaUnits,
     /// Fixed-image mask (`--masks [fixed,...]`), on any grid; its non-zero voxels are inside.
     /// Every iteration it is resampled onto the level grid through the fixed-side transform
-    /// (nearest neighbour), and the CC metric of every channel uses only the voxels inside it.
+    /// (nearest neighbour), and the metric of every channel uses only the voxels inside it.
     /// `None` uses the whole level grid.
     pub fixed_mask: Option<MaskVolume>,
     /// Moving-image mask (`--masks [...,moving]`), on any grid, resampled through the
@@ -68,6 +96,8 @@ impl SynRecipe {
             update_field_variance: COHORT_UPDATE_FIELD_VARIANCE,
             total_field_variance: COHORT_TOTAL_FIELD_VARIANCE,
             cc_radius: COHORT_CC_RADIUS,
+            mi_bins: DEFAULT_MI_BINS,
+            channel_metrics: Vec::new(),
             channel_weights: vec![1.0],
             iterations: vec![100, 70, 50, 20],
             convergence_threshold: 1e-6,
@@ -115,6 +145,26 @@ impl SynRecipe {
     /// Number of resolution levels.
     pub fn levels(&self) -> usize {
         self.iterations.len()
+    }
+
+    /// The metric of channel `channel`.
+    pub fn metric(&self, channel: usize) -> SynMetric {
+        self.channel_metrics
+            .get(channel)
+            .copied()
+            .unwrap_or(SynMetric::Cc)
+    }
+
+    /// The metric of every channel, one per weight.
+    pub fn metrics(&self) -> Vec<SynMetric> {
+        (0..self.channel_weights.len())
+            .map(|c| self.metric(c))
+            .collect()
+    }
+
+    /// Whether some channel uses `metric`.
+    pub fn uses(&self, metric: SynMetric) -> bool {
+        (0..self.channel_weights.len()).any(|c| self.metric(c) == metric)
     }
 
     /// Checks that the per-level vectors agree and every value is usable.
@@ -172,6 +222,20 @@ impl SynRecipe {
         if self.cc_radius == 0 {
             return Err(invalid("syn recipe", "CC radius must be positive"));
         }
+        if !self.channel_metrics.is_empty()
+            && self.channel_metrics.len() != self.channel_weights.len()
+        {
+            return Err(invalid(
+                "syn recipe",
+                "channel metrics must have one entry per channel weight",
+            ));
+        }
+        if self.uses(SynMetric::Mattes) && self.mi_bins < 5 {
+            return Err(invalid(
+                "syn recipe",
+                "MI needs at least five histogram bins",
+            ));
+        }
         for (mask, name) in [(&self.fixed_mask, "fixed"), (&self.moving_mask, "moving")] {
             if mask.as_ref().is_some_and(|m| !m.has_inside()) {
                 return Err(invalid(
@@ -194,9 +258,12 @@ impl SynRecipe {
                 self.gradient_step, self.update_field_variance, self.total_field_variance
             ),
         ];
-        for ((fixed, moving), w) in channels.iter().zip(&self.channel_weights) {
+        for (c, ((fixed, moving), w)) in channels.iter().zip(&self.channel_weights).enumerate() {
             v.push("--metric".to_string());
-            v.push(format!("CC[{fixed},{moving},{w},{}]", self.cc_radius));
+            v.push(match self.metric(c) {
+                SynMetric::Cc => format!("CC[{fixed},{moving},{w},{}]", self.cc_radius),
+                SynMetric::Mattes => format!("MI[{fixed},{moving},{w},{}]", self.mi_bins),
+            });
         }
         v.push("--convergence".to_string());
         v.push(format!(
@@ -260,6 +327,27 @@ mod tests {
         assert_eq!(args[5], "CC[/t2.nii.gz,/m2.nii.gz,0.5,4]");
         assert_eq!(args[6], "--convergence");
         assert_eq!(args.len(), 12);
+    }
+
+    #[test]
+    fn mixed_channels_render_their_own_metrics() {
+        let mut r = SynRecipe::cohort_multispectral();
+        r.channel_metrics = vec![SynMetric::Cc, SynMetric::Mattes];
+        assert!(r.validate().is_ok());
+        let args = r.to_ants_args(&[("/t.nii.gz", "/m.nii.gz"), ("/t2.nii.gz", "/m2.nii.gz")]);
+        assert_eq!(args[3], "CC[/t.nii.gz,/m.nii.gz,0.5,4]");
+        assert_eq!(args[5], "MI[/t2.nii.gz,/m2.nii.gz,0.5,32]");
+        assert_eq!(r.metrics(), vec![SynMetric::Cc, SynMetric::Mattes]);
+        assert!(r.uses(SynMetric::Mattes) && r.uses(SynMetric::Cc));
+        assert_eq!(SynRecipe::cohort().metrics(), vec![SynMetric::Cc]);
+        r.channel_metrics.pop();
+        assert!(r.validate().is_err());
+        r.channel_metrics = vec![SynMetric::Mattes; 2];
+        r.mi_bins = 4;
+        assert!(r.validate().is_err());
+        r.mi_bins = 5;
+        assert!(r.validate().is_ok());
+        assert!(!r.uses(SynMetric::Cc));
     }
 
     #[test]

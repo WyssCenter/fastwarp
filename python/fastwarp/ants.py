@@ -324,50 +324,45 @@ def _check_type(t: str) -> dict[str, Any] | None:
         raise _unsupported(_REG, "type_of_transform", t, "FastWarp has no Translation transform")
     if sub in ("b", "br", "bo"):
         raise _unsupported(_REG, "type_of_transform", t, "FastWarp has no BSplineSyN transform")
-    if script["quick"] and sub in ("s", "sr", "so"):
-        raise _unsupported(
-            _REG,
-            "type_of_transform",
-            t,
-            "its SyN stage uses Mattes mutual information, which FastWarp's SyN stage does not "
-            "have (it uses CC); use 'antsRegistrationSyN[" + sub + "]' or 'SyNCC'",
-        )
     return script
+
+
+_SYN_PARAM = {
+    "cc": (
+        1,
+        8,
+        "with syn_metric='CC' it is the CC radius, and the GPU CC kernels support radius 1 to 8",
+    ),
+    "mi": (
+        5,
+        32,
+        "with syn_metric='mattes' it is the number of histogram bins, and the GPU "
+        "Mattes kernels support 5 to 32 bins",
+    ),
+}
+
+
+def _syn_kind(name: Any) -> str | None:
+    """``"cc"`` or ``"mi"`` for an ANTs SyN metric name FastWarp runs, else ``None``."""
+    low = str(name).lower()
+    return "mi" if low in ("mattes", "mi") else "cc" if low == "cc" else None
 
 
 def _syn_metric_check(a: dict[str, Any]) -> None:
     metric = a["syn_metric"]
     name = str(metric).lower()
-    if name in ("mattes", "mi"):
-        raise _unsupported(
-            _REG,
-            "syn_metric",
-            metric,
-            "FastWarp's SyN stage has no Mattes mutual information metric (type_of_transform="
-            f"{a['type_of_transform']!r} uses syn_metric for its SyN stage); use "
-            "type_of_transform='SyNCC', or syn_metric='CC' with syn_sampling (the CC radius) "
-            "from 1 to 8",
-        )
     if name in ("meansquares", "demons", "gc"):
-        raise _unsupported(_REG, "syn_metric", metric, "FastWarp's SyN stage uses CC only")
-    if name != "cc":
+        raise _unsupported(_REG, "syn_metric", metric, "FastWarp's SyN stage uses CC or mattes")
+    kind = _syn_kind(metric)
+    if kind is None:
         raise ValueError(
             f"fastwarp.ants.registration: syn_metric={metric!r} is not an ANTs metric (CC, "
             "mattes, meansquares, demons)"
         )
-    radius = a["syn_sampling"]
-    if (
-        isinstance(radius, bool)
-        or not isinstance(radius, (int, np.integer))
-        or not 1 <= radius <= 8
-    ):
-        raise _unsupported(
-            _REG,
-            "syn_sampling",
-            radius,
-            "with syn_metric='CC' it is the CC radius, and the GPU CC kernels support radius 1 "
-            "to 8",
-        )
+    lo, hi, why = _SYN_PARAM[kind]
+    value = a["syn_sampling"]
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not lo <= value <= hi:
+        raise _unsupported(_REG, "syn_sampling", value, why)
 
 
 def _aff_metric_check(a: dict[str, Any], t: str) -> None:
@@ -399,20 +394,21 @@ def _aff_metric_check(a: dict[str, Any], t: str) -> None:
             )
 
 
-def _extras_check(a: dict[str, Any], ants: Any, radius: int) -> None:
+def _extras_check(a: dict[str, Any], ants: Any, main: tuple[str, int]) -> None:
     extras = a["multivariate_extras"]
     if not isinstance(extras, (list, tuple)) or not extras:
         raise _unsupported(
             _REG,
             "multivariate_extras",
             extras,
-            "FastWarp's SyN stage takes one or more extra CC metrics",
+            "FastWarp's SyN stage takes one or more extra CC or mattes metrics",
         )
+    params = {main[0]: main[1]}
     for i, extra in enumerate(extras):
-        _extra_check(a, ants, radius, i, extra)
+        _extra_check(a, ants, params, i, extra)
 
 
-def _extra_check(a: dict[str, Any], ants: Any, radius: int, i: int, extra: Any) -> None:
+def _extra_check(a: dict[str, Any], ants: Any, params: dict[str, int], i: int, extra: Any) -> None:
     if not isinstance(extra, (list, tuple)) or len(extra) != 5:
         raise ValueError(
             "fastwarp.ants.registration: multivariate_extras holds (metric, fixed, moving, "
@@ -420,14 +416,20 @@ def _extra_check(a: dict[str, Any], ants: Any, radius: int, i: int, extra: Any) 
         )
     name, f2, m2, weight, r = extra
     where = f"multivariate_extras[{i}]"
-    if str(name).lower() != "cc":
-        raise _unsupported(_REG, f"{where}[0]", name, "FastWarp's SyN stage uses CC only")
-    if isinstance(r, bool) or not isinstance(r, (int, np.integer)) or r != radius:
+    kind = _syn_kind(name)
+    if kind is None:
+        raise _unsupported(_REG, f"{where}[0]", name, "FastWarp's SyN stage uses CC or mattes only")
+    lo, hi, _ = _SYN_PARAM[kind]
+    if isinstance(r, bool) or not isinstance(r, (int, np.integer)) or not lo <= r <= hi:
+        what = "the CC radius, 1 to 8" if kind == "cc" else "the number of mattes bins, 5 to 32"
+        raise _unsupported(_REG, f"{where}[4]", r, f"it is {what} on the GPU")
+    if params.setdefault(kind, int(r)) != r:
+        what = "one CC radius" if kind == "cc" else "one number of mattes bins"
         raise _unsupported(
             _REG,
             f"{where}[4]",
             r,
-            f"FastWarp's SyN stage uses one CC radius for all channels ({radius} here)",
+            f"FastWarp's SyN stage uses {what} for all channels ({params[kind]} here)",
         )
     for img, what in ((f2, f"{where}[1]"), (m2, f"{where}[2]")):
         if not ants.is_image(img):
@@ -709,10 +711,14 @@ def _script_argv(
         rigid_conv = affine_conv = "[1000x500x250x0,1e-6,10]"
     else:
         rigid_conv = affine_conv = "[1000x500x250x100,1e-6,10]"
-    syn_conv = "[100x70x50x20,1e-6,10]"
+    if script["quick"]:
+        syn_conv = "[50x0,1e-6,10]" if sub == "sr" else "[100x70x50x0,1e-6,10]"
+        syn_metric = f"MI[{f},{m},1,32]"
+    else:
+        syn_conv = "[50x20,1e-6,10]" if sub == "sr" else "[100x70x50x20,1e-6,10]"
+        syn_metric = f"CC[{f},{m},1,2]"
     syn_shrink, syn_sigmas = "8x4x2x1", "3x2x1x0vox"
     if sub == "sr":
-        syn_conv = "[50x20,1e-6,10]"
         syn_shrink, syn_sigmas = "2x1", "1x0vox"
     rigid = [
         "--transform",
@@ -738,7 +744,7 @@ def _script_argv(
         "--smoothing-sigmas",
         "3x2x1x0vox",
     ]
-    syn = ["--transform", "SyN[0.2,3,0]", "--metric", f"CC[{f},{m},1,2]"]
+    syn = ["--transform", "SyN[0.2,3,0]", "--metric", syn_metric]
     if a["multivariate_extras"] is not None:
         for i, (name, _f2, _m2, weight, radius) in enumerate(a["multivariate_extras"]):
             syn += ["--metric", _extra_metric(names, i, name, weight, radius)]
@@ -878,8 +884,13 @@ def _validate(ants: Any, a: dict[str, Any]) -> tuple[str, dict[str, Any] | None]
             "FastWarp has no histogram matching",
         )
     if a["multivariate_extras"] is not None and _uses_extras(t, script):
-        radius = a["syn_sampling"] if t == "SyNOnly" else 2
-        _extras_check(a, ants, radius)
+        if t == "SyNOnly":
+            main = (_syn_kind(a["syn_metric"]) or "cc", int(a["syn_sampling"]))
+        elif script is not None and script["quick"]:
+            main = ("mi", 32)
+        else:
+            main = ("cc", 2)
+        _extras_check(a, ants, main)
     seed = a["random_seed"]
     if seed is not None and not (isinstance(seed, (int, np.integer)) and 0 <= seed < 2**32):
         raise ValueError(
@@ -928,11 +939,12 @@ def _warn_ignored(t: str, script: dict[str, Any] | None, a: dict[str, Any]) -> N
     for name, default in _DEFAULTS.items():
         if name not in used and not _same(a[name], default):
             _ignored(_REG, name, a[name], why)
-    if script is not None and script["radius_given"] is not None and not script["quick"]:
+    if script is not None and script["radius_given"] is not None:
+        used_instead = "MI with 32 bins" if script["quick"] else "radius 2"
         warnings.warn(
-            f"fastwarp.ants.registration: the CC radius {script['radius_given']} in "
-            f"type_of_transform={t!r} has no effect: ANTsPy 0.6.3 uses radius 2 there (ANTsPy "
-            "ignores it too).",
+            f"fastwarp.ants.registration: the metric parameter {script['radius_given']} in "
+            f"type_of_transform={t!r} has no effect: ANTsPy 0.6.3 uses {used_instead} there "
+            "(ANTsPy ignores it too).",
             UserWarning,
             stacklevel=3,
         )
@@ -1053,11 +1065,9 @@ def registration(
     type_of_transform : str, default "SyN"
         The stages, by ANTsPy's name. FastWarp runs ``Rigid``, ``Affine``, ``AffineFast``,
         ``BOLDAffine``, ``QuickRigid``, ``DenseRigid``, ``BOLDRigid``, ``SyNCC``, ``SyNabp``,
-        ``antsRegistrationSyN[r|a|s|sr|so]``, ``antsRegistrationSyNQuick[r|a]``, and ``SyN``,
+        ``antsRegistrationSyN[r|a|s|sr|so]``, ``antsRegistrationSyNQuick[r|a|s|sr|so]``, ``SyN``,
         ``SyNRA``, ``SyNOnly``, ``SyNAggro``, ``SyNLessAggro``, ``ElasticSyN``, ``SyNBold`` and
-        ``SyNBoldAff`` with ``syn_metric="CC"``. The others raise
-        :class:`UnsupportedArgument`. The default ``"SyN"`` uses Mattes mutual information in its
-        SyN stage, which FastWarp does not have: pass ``"SyNCC"``, or ``syn_metric="CC"``.
+        ``SyNBoldAff``. The others raise :class:`UnsupportedArgument`.
     initial_transform : str or list of str, optional
         ``"Identity"``, or one file holding one affine transform (``.mat``, ``.txt``, or an
         ``.h5`` such as the ``Composite.h5`` of a linear run), optionally as ``"[file,1]"`` for
@@ -1088,9 +1098,11 @@ def registration(
     aff_random_sampling_rate : float, default 0.2
         Fraction of the voxels the linear metric samples, on a regular grid.
     syn_metric : str, default "mattes"
-        ``"CC"`` only (``"mattes"``, the default, is refused).
+        ``"mattes"`` (or ``"MI"``, Mattes mutual information with dense sampling) or ``"CC"``;
+        ``"meansquares"`` and ``"demons"`` are not supported.
     syn_sampling : int, default 32
-        With ``syn_metric="CC"``, the CC radius, 1 to 8.
+        With ``syn_metric="mattes"`` the histogram bins, 5 to 32; with ``syn_metric="CC"`` the
+        CC radius, 1 to 8.
     reg_iterations : sequence of int, default (40, 20, 0)
         SyN iterations per level (1 to 10 levels); the shrink factors and sigmas follow from the
         number of levels as in ANTsPy.
@@ -1102,9 +1114,11 @@ def registration(
     verbose : bool, default False
         Print the ``antsRegistration`` arguments and FastWarp's report of the run.
     multivariate_extras : list of tuple, optional
-        One or more ``("CC", fixed2, moving2, weight, radius)`` with the main CC radius, each a
-        further channel, for ``SyNOnly`` and
-        ``antsRegistrationSyN[s|sr|so]``. Each ``fixed2`` must be on ``fixed``'s grid.
+        One or more ``("CC", fixed2, moving2, weight, radius)`` or
+        ``("mattes", fixed2, moving2, weight, bins)``, each a further channel, for ``SyNOnly``,
+        ``antsRegistrationSyN[s|sr|so]`` and ``antsRegistrationSyNQuick[s|sr|so]``; all CC
+        channels share one radius and all mattes channels one number of bins. Each ``fixed2``
+        must be on ``fixed``'s grid.
     restrict_transformation : sequence of float, optional
         All ones only (no restriction).
     smoothing_in_mm : bool, default False
