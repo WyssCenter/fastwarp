@@ -154,10 +154,13 @@ impl DenseMiKernels {
     }
 }
 
-fn uniform(grid_u: &CcFinalU, bins: u32, chunk: u32, binning: &MiBinning) -> DenseMiU {
+const ABSENT_FIXED: u32 = 1;
+const ABSENT_MOVING: u32 = 2;
+
+fn uniform(grid_u: &CcFinalU, bins: u32, chunk: u32, absent: u32, binning: &MiBinning) -> DenseMiU {
     DenseMiU {
         dims: grid_u.dims,
-        cfg: [bins, chunk, 0, 0],
+        cfg: [bins, chunk, absent, 0],
         frng: [
             binning.fixed_min as f32,
             binning.fixed_max as f32,
@@ -232,29 +235,47 @@ fn decode(raw: &[u32], bins: usize) -> (Vec<f64>, Vec<f64>, usize) {
 }
 
 impl WgpuBackend {
-    /// Both directions of the dense Mattes metric of `fixed` and `moving`, with the
-    /// `(fixed, moving)` masks when given, and with the squared-norm reductions of both derivatives
-    /// when `norms` is set.
+    /// Both directions of the dense Mattes metric of `fixed` and `moving`, with the fixed and
+    /// the moving mask when given (a mask that is not given has every voxel inside), and with the
+    /// squared-norm reductions of both derivatives when `norms` is set.
     pub(in crate::wgpu_backend) async fn mi_dense_pair(
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
-        masks: Option<(&GpuImage, &GpuImage)>,
+        fixed_mask: Option<&GpuImage>,
+        moving_mask: Option<&GpuImage>,
         bins: usize,
         norms: bool,
     ) -> RegResult<(MetricPair<GpuField>, Option<[f64; 2]>)> {
+        if let Some(why) = &self.mi_dense_failure {
+            return Err(bad(format!(
+                "the dense Mattes MI kernels are not available on this device, so SyN stages with \
+                 MI cannot run on its GPU: {why}"
+            )));
+        }
         let grid = fixed.grid;
         self.require_same_grid("mattes", &grid, &moving.grid)?;
-        if let Some((fm, mm)) = masks {
-            self.require_same_grid("mattes", &grid, &fm.grid)?;
-            self.require_same_grid("mattes", &grid, &mm.grid)?;
+        for mask in [fixed_mask, moving_mask].into_iter().flatten() {
+            self.require_same_grid("mattes", &grid, &mask.grid)?;
         }
+        let (masks, absent) = match (fixed_mask, moving_mask) {
+            (None, None) => (None, 0),
+            (Some(f), Some(m)) => (Some((f, m)), 0),
+            (Some(f), None) => (Some((f, f)), ABSENT_MOVING),
+            (None, Some(m)) => (Some((m, m)), ABSENT_FIXED),
+        };
+        let swapped = ((absent & ABSENT_FIXED) << 1) | ((absent & ABSENT_MOVING) >> 1);
+        let flags = [absent, swapped];
         if !(5..=BINS).contains(&bins) {
             return Err(bad(format!(
                 "the GPU Mattes metric supports 5 to {BINS} histogram bins, not {bins}"
             )));
         }
-        let k = &self.mi_kernels.dense;
+        let k = self
+            .mi_kernels
+            .dense
+            .as_ref()
+            .map_err(|e| bad(format!("the dense Mattes MI kernels did not compile: {e}")))?;
         let n = grid.num_voxels() as u64;
         let chunk = u32::try_from(mattes_chunk(n))
             .map_err(|_| bad("the grid has too many voxels for the Mattes histogram"))?;
@@ -277,7 +298,7 @@ impl WgpuBackend {
             Some((fm, mm)) => (&k.range_masked, vec![fm.buf.buffer(), mm.buf.buffer()]),
             None => (&k.range, Vec::new()),
         };
-        let base = uniform(&geometry, bins as u32, chunk, &placeholder);
+        let base = uniform(&geometry, bins as u32, chunk, absent, &placeholder);
         self.run_pass("mi_dense_range", |pass| {
             let mut buffers = vec![
                 fixed.buf.buffer(),
@@ -350,7 +371,7 @@ impl WgpuBackend {
                     pass,
                     hist_kernel,
                     &refs,
-                    &uniform(&geometry, bins as u32, chunk, binning),
+                    &uniform(&geometry, bins as u32, chunk, flags[d], binning),
                     [groups, 1, 1],
                 )?;
                 self.launch(
@@ -425,7 +446,7 @@ impl WgpuBackend {
                     pass,
                     deriv_kernel,
                     &refs,
-                    &uniform(&geometry, bins as u32, chunk, binning),
+                    &uniform(&geometry, bins as u32, chunk, flags[d], binning),
                     g3,
                 )?;
             }

@@ -140,6 +140,7 @@ pub fn check_limits(
         .map(|s| SynStageCapacity {
             shrink_factors: &s.shrink_factors,
             mask_dims: &[],
+            mattes: s.uses(fastwarp_reg::recipe::SynMetric::Mattes),
         })
         .collect();
     let refuse = |need: u64| {

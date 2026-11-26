@@ -42,6 +42,10 @@ const MOVING_IMAGE_BYTES_PER_VOXEL: u64 = 4;
 const MASK_BYTES_PER_VOXEL: u64 = 13;
 /// A mask stays on its own grid for the whole stage, one `f32` per voxel.
 const MASK_IMAGE_BYTES_PER_VOXEL: u64 = 4;
+/// What masks add per voxel of a level when the stage has a Mattes MI channel: the fixed and the
+/// moving mask resampled on their own for it, besides the image of valid voxels of CC
+/// (`syn.rs`, `StageMasks::resolve`).
+const MATTES_MASK_BYTES_PER_VOXEL: u64 = 8;
 /// What a SyN stage after another one holds besides its own working set: the collapsed forward
 /// field of the earlier SyN stages, for the whole stage (`syn.rs`, `syn_fields`). Its inverse
 /// stays on the host until the stage ends; it is uploaded after the stage's four fields have
@@ -488,19 +492,29 @@ pub fn plan_capacity_syn(
     shrink_factors: &[u32],
     caps: &CapacityCaps,
 ) -> Result<CapacityPlan, CapacityError> {
-    plan_capacity_syn_masked(grid_dims, moving_dims, channels, shrink_factors, &[], caps)
+    plan_capacity_syn_masked(
+        grid_dims,
+        moving_dims,
+        channels,
+        shrink_factors,
+        &[],
+        false,
+        caps,
+    )
 }
 
 /// Like [`plan_capacity_syn`] for a SyN stage with masks: `mask_dims` holds the grid size of
 /// each mask given (the fixed mask, the moving mask, or both). Each mask stays on its own grid
 /// for the whole stage, and every level adds the image of valid voxels and the extra window
-/// plane of the masked metric.
+/// plane of the masked metric, and with `mattes` (a Mattes MI channel) the two masks resampled on
+/// their own.
 pub fn plan_capacity_syn_masked(
     grid_dims: [usize; 3],
     moving_dims: [usize; 3],
     channels: usize,
     shrink_factors: &[u32],
     mask_dims: &[[usize; 3]],
+    mattes: bool,
     caps: &CapacityCaps,
 ) -> Result<CapacityPlan, CapacityError> {
     let voxels = voxel_count(grid_dims);
@@ -518,7 +532,12 @@ pub fn plan_capacity_syn_masked(
         .max(mattes_partials_bytes(voxels));
     let per_voxel = LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS - LEVEL_BYTES_PER_VOXEL_PER_CHANNEL
         + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL.saturating_mul(channels - 1)
-        + if masked { MASK_BYTES_PER_VOXEL } else { 0 };
+        + if masked { MASK_BYTES_PER_VOXEL } else { 0 }
+        + if masked && mattes {
+            MATTES_MASK_BYTES_PER_VOXEL
+        } else {
+            0
+        };
     let moving_excess = moving_voxels
         .saturating_sub(voxels)
         .saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL)
@@ -599,6 +618,8 @@ pub struct SynStageCapacity<'a> {
     pub shrink_factors: &'a [u32],
     /// The grid size of each mask the stage uses (none, the fixed mask, the moving mask or both).
     pub mask_dims: &'a [[usize; 3]],
+    /// Whether a channel of the stage uses Mattes MI.
+    pub mattes: bool,
 }
 
 /// Like [`plan_capacity_syn_masked`] for SyN stages run one after the other, as
@@ -629,6 +650,7 @@ pub fn plan_capacity_syn_stages(
             channels,
             stage.shrink_factors,
             stage.mask_dims,
+            stage.mattes,
             &unbudgeted,
         )
     };
@@ -829,8 +851,9 @@ mod tests {
         let stage = |shrink_factors, mask_dims| SynStageCapacity {
             shrink_factors,
             mask_dims,
+            mattes: false,
         };
-        let one = plan_capacity_syn_masked(dims, dims, 2, full, &[], &caps).unwrap();
+        let one = plan_capacity_syn_masked(dims, dims, 2, full, &[], false, &caps).unwrap();
         let alone =
             plan_capacity_syn_stages(dims, dims, 2, &[stage(full, &[][..])], &caps).unwrap();
         assert_eq!(alone, one);
@@ -851,7 +874,8 @@ mod tests {
             &caps,
         )
         .unwrap();
-        let fine_masked = plan_capacity_syn_masked(dims, dims, 2, fine, &mask, &caps).unwrap();
+        let fine_masked =
+            plan_capacity_syn_masked(dims, dims, 2, fine, &mask, false, &caps).unwrap();
         assert_eq!(
             masked_second.level_total_bytes,
             (fine_masked.level_total_bytes + 12 * n).max(one.level_total_bytes)
@@ -864,13 +888,14 @@ mod tests {
             &caps,
         )
         .unwrap();
-        let full_masked = plan_capacity_syn_masked(dims, dims, 2, full, &mask, &caps).unwrap();
+        let full_masked =
+            plan_capacity_syn_masked(dims, dims, 2, full, &mask, false, &caps).unwrap();
         assert!(masked_first.level_total_bytes >= full_masked.level_total_bytes);
         let tight = CapacityCaps {
             memory_budget: twice.level_total_bytes - 1,
             ..caps
         };
-        assert!(plan_capacity_syn_masked(dims, dims, 2, full, &[], &tight).is_ok());
+        assert!(plan_capacity_syn_masked(dims, dims, 2, full, &[], false, &tight).is_ok());
         match plan_capacity_syn_stages(
             dims,
             dims,
@@ -1488,5 +1513,19 @@ mod tests {
             assert!(mattes_partials_bytes(n) <= 128 << 20, "{n}");
             assert!(mattes_histogram_bytes(n) < 40_000_000, "{n}");
         }
+    }
+
+    #[test]
+    fn masks_with_a_mattes_channel_add_the_two_resampled_masks() {
+        let dims = [64; 3];
+        let n = 64u64.pow(3);
+        let mask = [[64; 3], [64; 3]];
+        let caps = arc();
+        let cc = plan_capacity_syn_masked(dims, dims, 2, &[1], &mask, false, &caps).unwrap();
+        let mi = plan_capacity_syn_masked(dims, dims, 2, &[1], &mask, true, &caps).unwrap();
+        assert_eq!(mi.level_total_bytes - cc.level_total_bytes, n * 8);
+        let open = plan_capacity_syn_masked(dims, dims, 2, &[1], &[], true, &caps).unwrap();
+        let open_cc = plan_capacity_syn_masked(dims, dims, 2, &[1], &[], false, &caps).unwrap();
+        assert_eq!(open, open_cc);
     }
 }

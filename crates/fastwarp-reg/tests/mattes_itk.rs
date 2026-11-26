@@ -193,7 +193,7 @@ fn the_cpu_backend_pair_matches_itk_in_both_directions() {
         masked.mask("moving").unwrap(),
     );
     let ((w1, e1), (w2, e2)) = cpu
-        .mi_value_derivative_pair_masked(&fixed, &moving, &fm, &mm, 32)
+        .mi_value_derivative_pair_masked(&fixed, &moving, Some(&fm), Some(&mm), 32)
         .unwrap();
     assert_matches("pair virtual_b32_masked", w1, None, e1.data(), &masked);
     assert_matches(

@@ -219,7 +219,7 @@ impl SynRecipe {
                 "convergence window must be at least 2",
             ));
         }
-        if self.cc_radius == 0 {
+        if self.uses(SynMetric::Cc) && self.cc_radius == 0 {
             return Err(invalid("syn recipe", "CC radius must be positive"));
         }
         if !self.channel_metrics.is_empty()

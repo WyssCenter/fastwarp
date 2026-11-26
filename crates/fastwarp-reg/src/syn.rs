@@ -302,7 +302,7 @@ async fn mattes_pair<B: Backend>(
     backend: &B,
     fixed: &B::Image,
     moving: &B::Image,
-    masks: Option<(&B::Image, &B::Image)>,
+    masks: Option<MaskPair<'_, B::Image>>,
     bins: usize,
     single: bool,
 ) -> Result<(MetricPair<B::Field>, Option<[f64; 2]>)> {
@@ -340,7 +340,6 @@ async fn side_updates<B: Backend>(
     fixed_mid: &[B::Image],
     moving_mid: &[B::Image],
     masks: &LevelMasks<B>,
-    ones: Option<&B::Image>,
 ) -> Result<(SideUpdate<B>, SideUpdate<B>)> {
     let channels = fixed_mid.len();
     let sum: f64 = recipe.channel_weights.iter().sum();
@@ -357,7 +356,7 @@ async fn side_updates<B: Backend>(
                         backend,
                         fixed,
                         moving,
-                        masks.mattes(ones),
+                        masks.mattes(),
                         recipe.mi_bins,
                         single,
                     )
@@ -445,6 +444,9 @@ async fn update_total_field<B: Backend>(
     Ok((new_field, new_inverse, stats_inverse, stats_field))
 }
 
+/// The fixed and the moving mask of an MI channel; `None` for a mask that was not given.
+type MaskPair<'a, I> = (Option<&'a I>, Option<&'a I>);
+
 /// The masks of one iteration on the level grid: `valid`, the voxels inside both masks (for CC);
 /// `fixed` and `moving`, each given mask on its own (for MI).
 struct LevelMasks<B: Backend> {
@@ -462,14 +464,11 @@ impl<B: Backend> LevelMasks<B> {
         }
     }
 
-    fn mattes<'a>(&'a self, ones: Option<&'a B::Image>) -> Option<(&'a B::Image, &'a B::Image)> {
+    fn mattes(&self) -> Option<MaskPair<'_, B::Image>> {
         if self.fixed.is_none() && self.moving.is_none() {
             return None;
         }
-        Some((
-            self.fixed.as_ref().or(ones)?,
-            self.moving.as_ref().or(ones)?,
-        ))
+        Some((self.fixed.as_ref(), self.moving.as_ref()))
     }
 }
 
@@ -883,15 +882,6 @@ async fn syn_fields<B: Backend>(
             }
         };
         let mattes = recipe.uses(SynMetric::Mattes);
-        let ones = if mattes && masks.given() && (masks.fixed.is_none() || masks.moving.is_none()) {
-            Some(
-                backend
-                    .upload_image_owned(Volume::from_vec(grid, vec![1.0; grid.num_voxels()])?)
-                    .await?,
-            )
-        } else {
-            None
-        };
         let mut monitor = WindowConvergenceMonitor::new(recipe.convergence_window);
         let mut converged = false;
         let mut trace = Vec::new();
@@ -929,15 +919,8 @@ async fn syn_fields<B: Backend>(
                     mattes,
                 )
                 .await?;
-            let (fixed_side, moving_side) = side_updates(
-                backend,
-                recipe,
-                &fixed_mid,
-                &moving_mid,
-                &level_masks,
-                ones.as_ref(),
-            )
-            .await?;
+            let (fixed_side, moving_side) =
+                side_updates(backend, recipe, &fixed_mid, &moving_mid, &level_masks).await?;
             drop(level_masks);
             let State {
                 f2m,

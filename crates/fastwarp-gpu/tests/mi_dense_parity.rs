@@ -173,9 +173,10 @@ fn the_mattes_pair_matches_the_cpu_in_both_directions() {
             block_on(b.upload_image(&mm)).unwrap(),
         );
         let ((v1, d1), (v2, d2)) =
-            block_on(b.mi_value_derivative_pair_masked(&ga, &gb, &gfm, &gmm, 32)).unwrap();
+            block_on(b.mi_value_derivative_pair_masked(&ga, &gb, Some(&gfm), Some(&gmm), 32))
+                .unwrap();
         let ((c1, e1), (c2, e2)) = cpu
-            .mi_value_derivative_pair_masked(&fa, &fb, &fm, &mm, 32)
+            .mi_value_derivative_pair_masked(&fa, &fb, Some(&fm), Some(&mm), 32)
             .unwrap();
         let (g1, g2) = (download(&b, &d1), download(&b, &d2));
         for (idx, (a, c)) in g1.data().iter().zip(g2.data()).enumerate() {
@@ -204,7 +205,8 @@ fn the_mattes_pair_is_bit_identical_across_runs_and_with_norms() {
         let run = || {
             let before = b.stats().scalar_readbacks;
             let ((v1, d1), (v2, d2)) = if masked {
-                block_on(b.mi_value_derivative_pair_masked(&ga, &gb, &gfm, &gmm, 32)).unwrap()
+                block_on(b.mi_value_derivative_pair_masked(&ga, &gb, Some(&gfm), Some(&gmm), 32))
+                    .unwrap()
             } else {
                 block_on(b.mi_value_derivative_pair(&ga, &gb, 32)).unwrap()
             };
@@ -218,8 +220,14 @@ fn the_mattes_pair_is_bit_identical_across_runs_and_with_norms() {
         assert_eq!(bits(&first.3), bits(&second.3));
         let before = b.stats().scalar_readbacks;
         let (((w1, e1), (w2, e2)), [n1, n2]) = if masked {
-            block_on(b.mi_value_derivative_pair_masked_with_norms(&ga, &gb, &gfm, &gmm, 32))
-                .unwrap()
+            block_on(b.mi_value_derivative_pair_masked_with_norms(
+                &ga,
+                &gb,
+                Some(&gfm),
+                Some(&gmm),
+                32,
+            ))
+            .unwrap()
         } else {
             block_on(b.mi_value_derivative_pair_with_norms(&ga, &gb, 32)).unwrap()
         };
@@ -245,7 +253,8 @@ fn all_ones_masks_give_the_unmasked_pair_and_empty_or_wide_inputs_are_refused() 
     let zeros = up(&Volume::zeros(grid));
     let ((v1, d1), (v2, d2)) = block_on(b.mi_value_derivative_pair(&ga, &gb, 32)).unwrap();
     let ((w1, e1), (w2, e2)) =
-        block_on(b.mi_value_derivative_pair_masked(&ga, &gb, &ones, &ones, 32)).unwrap();
+        block_on(b.mi_value_derivative_pair_masked(&ga, &gb, Some(&ones), Some(&ones), 32))
+            .unwrap();
     assert_eq!(bits(&[v1, v2]), bits(&[w1, w2]));
     assert_eq!(
         bits(&flat(&download(&b, &d1))),
@@ -255,18 +264,32 @@ fn all_ones_masks_give_the_unmasked_pair_and_empty_or_wide_inputs_are_refused() 
         bits(&flat(&download(&b, &d2))),
         bits(&flat(&download(&b, &e2)))
     );
+    for (fixed_mask, moving_mask) in [(Some(&ones), None), (None, Some(&ones)), (None, None)] {
+        let ((u1, f1), (u2, f2)) =
+            block_on(b.mi_value_derivative_pair_masked(&ga, &gb, fixed_mask, moving_mask, 32))
+                .unwrap();
+        assert_eq!(bits(&[v1, v2]), bits(&[u1, u2]));
+        assert_eq!(
+            bits(&flat(&download(&b, &d1))),
+            bits(&flat(&download(&b, &f1)))
+        );
+        assert_eq!(
+            bits(&flat(&download(&b, &d2))),
+            bits(&flat(&download(&b, &f2)))
+        );
+    }
     let (fm, _) = masks(&grid);
     let disjoint = Volume::from_vec(grid, fm.data().iter().map(|v| 1.0 - v).collect()).unwrap();
     let (gfm, gdis) = (up(&fm), up(&disjoint));
-    let err = block_on(b.mi_value_derivative_pair_masked(&ga, &gb, &gfm, &gdis, 32))
+    let err = block_on(b.mi_value_derivative_pair_masked(&ga, &gb, Some(&gfm), Some(&gdis), 32))
         .err()
         .expect("disjoint masks are refused");
     assert!(err.to_string().contains(NO_VOXEL_IN_MASKS), "{err}");
     let cpu_err = CpuBackend
-        .mi_value_derivative_pair_masked(&fa, &fb, &fm, &disjoint, 32)
+        .mi_value_derivative_pair_masked(&fa, &fb, Some(&fm), Some(&disjoint), 32)
         .expect_err("the CPU refuses disjoint masks");
     assert!(cpu_err.to_string().contains(NO_VOXEL_IN_MASKS), "{cpu_err}");
-    let err = block_on(b.mi_value_derivative_pair_masked(&ga, &gb, &zeros, &ones, 32))
+    let err = block_on(b.mi_value_derivative_pair_masked(&ga, &gb, Some(&zeros), None, 32))
         .err()
         .expect("an empty fixed mask is refused");
     assert!(err.to_string().contains("fixed mask"), "{err}");
@@ -417,7 +440,7 @@ fn the_mattes_pair_matches_itk_on_the_virtual_grid_in_both_directions() {
         up(&masked.volume("moving_mask")),
     );
     let ((w1, e1), (w2, e2)) =
-        block_on(b.mi_value_derivative_pair_masked(&ga, &gb, &gfm, &gmm, 32)).unwrap();
+        block_on(b.mi_value_derivative_pair_masked(&ga, &gb, Some(&gfm), Some(&gmm), 32)).unwrap();
     compare_on(
         "itk virtual_b32_masked (voxels off the z faces)",
         w1,
@@ -446,10 +469,30 @@ fn the_dense_mattes_known_answer_check_passes_on_the_self_test_and_an_oblique_ca
         Case::awkward([29, 23, 19], [1.2, 1.6, 2.0], true, 3),
     ] {
         let results = check_mi_dense(&b, &case).unwrap();
-        assert_eq!(results.len(), 8);
+        assert_eq!(results.len(), 12);
         for r in &results {
             eprintln!("{}", r.line());
         }
         assert!(results.iter().all(|r| r.ok));
     }
+}
+
+#[test]
+fn a_device_without_the_dense_mattes_kernels_keeps_cc() {
+    let Some(mut b) = common::backend() else {
+        return;
+    };
+    assert!(b.selftest_record().mi_dense_failure.is_none());
+    let grid = cases()[1];
+    let (fa, fb) = (f32_image(&grid, 3, false), f32_image(&grid, 4, true));
+    let (ga, gb) = (
+        block_on(b.upload_image(&fa)).unwrap(),
+        block_on(b.upload_image(&fb)).unwrap(),
+    );
+    b.disable_dense_mi("forced for the test");
+    let err = block_on(b.mi_value_derivative_pair(&ga, &gb, 32))
+        .err()
+        .expect("the dense Mattes kernels are off");
+    assert!(err.to_string().contains("forced for the test"), "{err}");
+    assert!(block_on(b.cc_value_derivative_pair(&ga, &gb, 2)).is_ok());
 }

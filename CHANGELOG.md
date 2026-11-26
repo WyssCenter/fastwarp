@@ -8,7 +8,8 @@
   `fastwarp ants-registration` accepts `MI[fixed,moving,weight,bins]` (dense) in SyN stages, and
   `fastwarp.ants.registration` runs ANTsPy's default `syn_metric="mattes"`, so
   `registration(fixed, moving)` works, as well as `antsRegistrationSyNQuick[s]`, `[sr]` and
-  `[so]`. The GPU checks the new kernels against the CPU when it starts.
+  `[so]`. The GPU checks the new kernels against the CPU when it starts; a device that fails the
+  check runs everything else and refuses only SyN stages with MI, with the reason.
 - New: when the browser demo cannot use WebGPU, it says why for the device it runs on (iOS
   version, Android version and GPU, browser), and when a run fails, makes no progress for three
   minutes or ended because the browser closed the page, it says so and offers a diagnostic report

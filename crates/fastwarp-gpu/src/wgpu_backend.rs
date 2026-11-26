@@ -199,6 +199,9 @@ pub struct SelfTestRecord {
     pub lines: Vec<String>,
     /// Mismatch lines of the failed first attempt, when a retry was needed.
     pub first_attempt_failures: Vec<String>,
+    /// Why the dense Mattes kernels of the SyN stage failed their check and are unavailable on
+    /// this device (every other operation still runs); `None` when they passed.
+    pub mi_dense_failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -237,6 +240,7 @@ pub struct WgpuBackend {
     partial_staging: Mutex<Option<wgpu::Buffer>>,
     trimmed_for: Mutex<Option<Grid>>,
     invert_indirect_min_groups: AtomicU32,
+    mi_dense_failure: Option<String>,
 }
 
 fn dir_scaled(g: &Grid) -> Mat3 {
@@ -414,6 +418,7 @@ impl WgpuBackend {
             partial_staging: Mutex::new(None),
             trimmed_for: Mutex::new(None),
             invert_indirect_min_groups: AtomicU32::new(INVERT_INDIRECT_MIN_GROUPS),
+            mi_dense_failure: None,
         };
         backend.run_selftest().await?;
         Ok(backend)
@@ -422,13 +427,17 @@ impl WgpuBackend {
     async fn run_selftest(&mut self) -> GpuResult<()> {
         let syn = self.selftest_syn(&parity::Case::selftest()).await?;
         let mi = self.selftest_mi(&parity::Case::selftest_mi()).await?;
+        let dense = self.selftest_mi_dense(&parity::Case::selftest_mi()).await?;
+        let mi_dense_failure = self.mi_dense_failure.clone();
         let mut rec = self.selftest.lock().unwrap_or_else(|p| p.into_inner());
         *rec = SelfTestRecord {
-            attempts: syn.attempts.max(mi.attempts),
+            attempts: syn.attempts.max(mi.attempts).max(dense.attempts),
             syn_attempts: syn.attempts,
-            mi_attempts: mi.attempts,
-            lines: [syn.lines, mi.lines].concat(),
-            first_attempt_failures: [syn.first_failures, mi.first_failures].concat(),
+            mi_attempts: mi.attempts.max(dense.attempts),
+            lines: [syn.lines, mi.lines, dense.lines].concat(),
+            first_attempt_failures: [syn.first_failures, mi.first_failures, dense.first_failures]
+                .concat(),
+            mi_dense_failure,
         };
         Ok(())
     }
@@ -472,13 +481,6 @@ impl WgpuBackend {
                         GpuError::Verification(format!("known-answer chunked MI run failed: {e}"))
                     })?,
             );
-            results.extend(
-                parity::check_mi_dense_async(self, case)
-                    .await
-                    .map_err(|e| {
-                        GpuError::Verification(format!("known-answer dense MI run failed: {e}"))
-                    })?,
-            );
             let failures: Vec<String> =
                 results.iter().filter(|r| !r.ok).map(|r| r.line()).collect();
             if failures.is_empty() {
@@ -497,6 +499,60 @@ impl WgpuBackend {
             self.mi_kernels = mi::MiKernels::new(&self.ctx).await?;
         }
         Ok(FamilyCheck::default())
+    }
+
+    /// The known-answer check of the dense Mattes kernels of the SyN stage. A device that fails
+    /// it keeps every other operation; only [`Backend::mi_value_derivative_pair`] and its
+    /// variants refuse to run, with the reason.
+    async fn selftest_mi_dense(&mut self, case: &parity::Case) -> GpuResult<FamilyCheck> {
+        let mut first = Vec::new();
+        let mut failures = Vec::new();
+        for attempt in 1..=SELFTEST_ATTEMPTS {
+            if let Some(e) = self.mi_kernels.dense_compile_error() {
+                failures = vec![format!("the kernels did not compile: {e}")];
+                if attempt == 1 {
+                    first = failures.clone();
+                }
+                if attempt < SELFTEST_ATTEMPTS {
+                    self.mi_kernels.recompile_dense(&self.ctx).await;
+                }
+                continue;
+            }
+            failures = match parity::check_mi_dense_async(self, case).await {
+                Ok(results) => {
+                    let failed: Vec<String> =
+                        results.iter().filter(|r| !r.ok).map(|r| r.line()).collect();
+                    if failed.is_empty() {
+                        return Ok(FamilyCheck::passed(
+                            attempt,
+                            results.iter().map(|r| r.line()).collect(),
+                            first,
+                        ));
+                    }
+                    failed
+                }
+                Err(e) => vec![format!("known-answer dense MI run failed: {e}")],
+            };
+            if attempt == 1 {
+                first = failures.clone();
+            }
+            if attempt < SELFTEST_ATTEMPTS {
+                self.mi_kernels.recompile_dense(&self.ctx).await;
+            }
+        }
+        self.mi_dense_failure = Some(self.selftest_failed("dense MI", &failures).to_string());
+        Ok(FamilyCheck {
+            attempts: SELFTEST_ATTEMPTS,
+            lines: failures,
+            first_failures: first,
+        })
+    }
+
+    /// Makes the dense Mattes kernels unavailable as a failed known-answer check does, with
+    /// `why` as the reason.
+    #[doc(hidden)]
+    pub fn disable_dense_mi(&mut self, why: &str) {
+        self.mi_dense_failure = Some(why.to_string());
     }
 
     fn selftest_failed(&self, family: &str, failures: &[String]) -> GpuError {
@@ -1908,7 +1964,7 @@ impl Backend for WgpuBackend {
         bins: usize,
     ) -> RegResult<MetricPair<GpuField>> {
         Ok(self
-            .mi_dense_pair(fixed, moving, None, bins, false)
+            .mi_dense_pair(fixed, moving, None, None, bins, false)
             .await?
             .0)
     }
@@ -1917,12 +1973,12 @@ impl Backend for WgpuBackend {
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
-        fixed_mask: &GpuImage,
-        moving_mask: &GpuImage,
+        fixed_mask: Option<&GpuImage>,
+        moving_mask: Option<&GpuImage>,
         bins: usize,
     ) -> RegResult<MetricPair<GpuField>> {
         Ok(self
-            .mi_dense_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins, false)
+            .mi_dense_pair(fixed, moving, fixed_mask, moving_mask, bins, false)
             .await?
             .0)
     }
@@ -1933,7 +1989,10 @@ impl Backend for WgpuBackend {
         moving: &GpuImage,
         bins: usize,
     ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
-        match self.mi_dense_pair(fixed, moving, None, bins, true).await? {
+        match self
+            .mi_dense_pair(fixed, moving, None, None, bins, true)
+            .await?
+        {
             (pair, Some(norms)) => Ok((pair, norms)),
             _ => Err(bad("the Mattes pair produced no norms")),
         }
@@ -1943,12 +2002,12 @@ impl Backend for WgpuBackend {
         &self,
         fixed: &GpuImage,
         moving: &GpuImage,
-        fixed_mask: &GpuImage,
-        moving_mask: &GpuImage,
+        fixed_mask: Option<&GpuImage>,
+        moving_mask: Option<&GpuImage>,
         bins: usize,
     ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
         match self
-            .mi_dense_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins, true)
+            .mi_dense_pair(fixed, moving, fixed_mask, moving_mask, bins, true)
             .await?
         {
             (pair, Some(norms)) => Ok((pair, norms)),

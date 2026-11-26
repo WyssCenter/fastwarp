@@ -256,8 +256,8 @@ scaled to the same size.
 | `gradient_step` | `float` | `0.1` | Step size of each update of the deformation. Greater than 0. |
 | `update_field_variance` | `float` | `3.0` | Variance of the Gaussian that smooths each update, in voxels². 0 or more. |
 | `total_field_variance` | `float` | `0.0` | Variance of the Gaussian that smooths the total deformation, in voxels². 0 (the default) means no smoothing. |
-| `cc_radius` | `int` | `4` | Radius of the cross-correlation window, in voxels: the window is `2 * cc_radius + 1` voxels wide. 1 to 8: the GPU kernels support no larger radius. |
-| `mi_bins` | `int` | `32` | Histogram bins of every `"mi"` channel. 5 to 32: the GPU kernels support no more. |
+| `cc_radius` | `int` | `4` | Radius of the cross-correlation window of every `"cc"` channel, in voxels: the window is `2 * cc_radius + 1` voxels wide. 1 to 8: the GPU kernels support no larger radius. Checked only when a channel uses CC. |
+| `mi_bins` | `int` | `32` | Histogram bins of every `"mi"` channel. 5 to 32: the GPU kernels support no more. Checked only when a channel uses MI. |
 | `channel_metrics` | `list[str]` | `["cc"]` for each channel | Metric of each channel, `"cc"` or `"mi"`. One entry per channel. |
 | `channel_weights` | `list[float]` | `[1.0]`, or `1 / channels` each (`[0.5, 0.5]` for two) | Weight of each channel's metric. One weight per channel, each 0 or more, with a positive sum. |
 | `iterations` | `list[int]` | `[100, 70, 50, 20]` | As for the linear stages. |

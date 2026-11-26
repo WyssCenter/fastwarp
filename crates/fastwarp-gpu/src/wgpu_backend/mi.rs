@@ -101,7 +101,7 @@ pub(super) struct MiKernels {
     deriv: wgpu::ComputePipeline,
     merge: wgpu::ComputePipeline,
     merge_final: wgpu::ComputePipeline,
-    dense: dense::DenseMiKernels,
+    dense: Result<dense::DenseMiKernels, String>,
 }
 
 impl MiKernels {
@@ -120,8 +120,22 @@ impl MiKernels {
             merge_final: ctx
                 .compile_async("k_mi_merge_final", MERGE_FINAL, "k_mi_merge_final")
                 .await?,
-            dense: dense::DenseMiKernels::new(ctx).await?,
+            dense: dense::DenseMiKernels::new(ctx)
+                .await
+                .map_err(|e| e.to_string()),
         })
+    }
+
+    /// Compiles the dense kernels again.
+    pub(super) async fn recompile_dense(&mut self, ctx: &GpuContext) {
+        self.dense = dense::DenseMiKernels::new(ctx)
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    /// Why the dense kernels did not compile, if they did not.
+    pub(super) fn dense_compile_error(&self) -> Option<&str> {
+        self.dense.as_ref().err().map(String::as_str)
     }
 }
 

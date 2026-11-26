@@ -225,7 +225,7 @@ impl Recipe {
                     ));
                 }
             }
-            if syn.cc_radius > GPU_CC_RADIUS_MAX {
+            if syn.uses(SynMetric::Cc) && syn.cc_radius > GPU_CC_RADIUS_MAX {
                 return Err(format!(
                     "{what}['cc_radius']: the GPU kernels support 1 to {GPU_CC_RADIUS_MAX}, \
                      not {}",
@@ -913,6 +913,12 @@ mod tests {
         .unwrap();
         assert_eq!(stages.plan.syn[0].metrics(), vec![SynMetric::Mattes]);
         assert!(Recipe::from_json(&json!({"syn": {"mi_bins": 64}}), 1).is_ok());
+        for radius in [0, 9] {
+            let mi_only = json!({"syn": {"channel_metrics": ["mi"], "cc_radius": radius}});
+            assert!(Recipe::from_json(&mi_only, 1).is_ok(), "{radius}");
+            let cc = json!({"syn": {"cc_radius": radius}});
+            assert!(Recipe::from_json(&cc, 1).is_err(), "{radius}");
+        }
         for (v, channels, message) in [
             (
                 json!({"syn": {"channel_metrics": ["mattes"]}}),

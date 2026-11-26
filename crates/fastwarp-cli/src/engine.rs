@@ -19,6 +19,7 @@ use fastwarp_gpu::{
 use fastwarp_reg::init::{initial_transform, InitFeature};
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
+use fastwarp_reg::recipe::SynMetric;
 use fastwarp_reg::register::RegisterTimings;
 use fastwarp_reg::stages::{register_stages, write_stage_outputs, StagePlan, StagesOutput};
 use fastwarp_reg::syn::SynOptions;
@@ -458,6 +459,7 @@ pub fn check_plan_capacity(
             .map(|(i, s)| SynStageCapacity {
                 shrink_factors: &s.shrink_factors,
                 mask_dims: syn_masks.get(i).map(Vec::as_slice).unwrap_or(&[]),
+                mattes: s.uses(SynMetric::Mattes),
             })
             .collect();
         plan_capacity_syn_stages(dims, moving_dims, channels, &stages, caps)?;

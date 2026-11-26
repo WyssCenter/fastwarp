@@ -890,24 +890,22 @@ pub async fn check_mi_dense_async(gpu: &WgpuBackend, case: &Case) -> RegResult<V
             .collect()
     };
     let mut out = Vec::new();
-    for masked in [false, true] {
-        let label = if masked {
-            "mi dense masked"
-        } else {
-            "mi dense"
-        };
-        let (gpu_pair, cpu_pair) = if masked {
+    for (label, masks) in [
+        ("mi dense", None),
+        ("mi dense masked", Some(true)),
+        ("mi dense fixed-masked", Some(false)),
+    ] {
+        let (gpu_pair, cpu_pair) = if let Some(both) = masks {
+            let (g_mm, c_mm) = if both {
+                (Some(&g_mm), Some(&moving_mask))
+            } else {
+                (None, None)
+            };
             (
-                gpu.mi_value_derivative_pair_masked(&g_fix, &g_mov, &g_fm, &g_mm, 32)
+                gpu.mi_value_derivative_pair_masked(&g_fix, &g_mov, Some(&g_fm), g_mm, 32)
                     .await
                     .map_err(|e| mismatch(label, e))?,
-                cpu.mi_value_derivative_pair_masked(
-                    &fixed,
-                    &moving,
-                    &fixed_mask,
-                    &moving_mask,
-                    32,
-                )?,
+                cpu.mi_value_derivative_pair_masked(&fixed, &moving, Some(&fixed_mask), c_mm, 32)?,
             )
         } else {
             (
