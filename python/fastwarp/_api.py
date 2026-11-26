@@ -1039,6 +1039,7 @@ def _warp_file(image: Any, reference: tuple, composite: str, path: str, labels: 
 
 
 _ATLASES_AT_ONCE = 4
+_STOP_TIMEOUT_S = 30.0
 
 
 def _atlases_at_once(
@@ -1168,24 +1169,25 @@ def register_atlases(
         return files, label_path, Path(composite)
 
     workers = _atlases_at_once(target, atlases, iso_mm, adapter, recipe)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
-        try:
-            pending = set(futures)
-            while pending:
-                finished, pending = wait(pending, timeout=0.05, return_when=FIRST_EXCEPTION)
-                if cancel is not None and cancel.cancelled:
-                    stop.cancel()
-                for f in finished:
-                    error = f.exception()
-                    if error is not None:
-                        raise error
-            done = [f.result() for f in futures]
-        except BaseException:
-            stop.cancel()
-            for f in futures:
-                f.cancel()
-            raise
+    pool = ThreadPoolExecutor(max_workers=workers)
+    futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
+    try:
+        pending = set(futures)
+        while pending:
+            finished, pending = wait(pending, timeout=0.05, return_when=FIRST_EXCEPTION)
+            if cancel is not None and cancel.cancelled:
+                stop.cancel()
+            for f in finished:
+                error = f.exception()
+                if error is not None:
+                    raise error
+        done = [f.result() for f in futures]
+    except BaseException:
+        stop.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        wait(futures, timeout=_STOP_TIMEOUT_S)
+        raise
+    pool.shutdown()
     result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
     for files, label_path, composite in done:
         result["atlases"].append(files)
