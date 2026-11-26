@@ -20,29 +20,39 @@
 // limitations under the License.
 //
 // Portions derived from ITK `itkMattesMutualInformationImageToImageMetricv4.hxx`
-// (`Initialize`: intensity ranges over the sampled points and the moving image, padding, bin
-// sizes and normalised minima; `ComputeSingleFixedImageParzenWindowIndex`;
-// `GetValueCommonAfterThreadedExecution`; `ComputeResults`),
+// (`Initialize`: intensity ranges over the sampled points, or over the voxels of the fixed and
+// the moving image inside their masks for dense sampling, padding, bin sizes and normalised
+// minima; `ComputeSingleFixedImageParzenWindowIndex`; `GetValueCommonAfterThreadedExecution`;
+// `ComputeResults` for a global transform and its local-support branch with `m_PRatioArray`),
 // `itkMattesMutualInformationImageToImageMetricv4GetValueAndDerivativeThreader.hxx`
 // (`ProcessPoint`: cubic B-spline Parzen window on the moving axis, box window on the fixed
-// axis, joint PDF and derivative accumulation, `AfterThreadedExecution`: `nFactor`),
-// `itkBSplineKernelFunction.h` and `itkBSplineDerivativeKernelFunction.h` (order 3),
-// `itkImageToImageMetricv4GetValueAndDerivativeThreaderBase.hxx` (`ProcessVirtualPoint`) and
-// `itkCompensatedSummation.h` (Kahan summation of the joint PDF). See
+// axis, joint PDF and derivative accumulation, `ComputePDFDerivativesLocalSupportTransform`,
+// `AfterThreadedExecution`: `nFactor`), `itkBSplineKernelFunction.h` and
+// `itkBSplineDerivativeKernelFunction.h` (order 3), `itkImageToImageMetricv4.hxx`
+// (`TransformAndEvaluateFixedPoint`, `TransformAndEvaluateMovingPoint`: mask, buffer and
+// gradient at the mapped points), `itkImageToImageMetricv4GetValueAndDerivativeThreaderBase.hxx`
+// (`ProcessVirtualPoint`), `itkDisplacementFieldTransform.h` (identity parameter Jacobian)
+// and `itkCompensatedSummation.h` (Kahan summation of the joint PDF). See
 // `docs/THIRD_PARTY_PORTS.md`.
 
-//! Mattes mutual information (`MI[fixed,moving,weight,bins,sampling,percentage]`), CPU oracle,
-//! for linear transforms on a sampled point set.
+//! Mattes mutual information (`MI[fixed,moving,weight,bins,sampling,percentage]`), CPU oracle:
+//! for linear transforms on a sampled point set ([`MattesMi::evaluate`]) and densely on a
+//! virtual grid with a per-voxel derivative, ITK's local-support path of a displacement field
+//! transform ([`MattesMi::evaluate_dense`]).
 //!
 //! **Sign convention.** `value = -MI` (ITK minimises). `derivative[k]` is ITK's metric derivative
 //! for a global transform: `+ d MI / d theta_k`, the direction in which the parameters are
-//! *added* to decrease the value, so `derivative = -d value / d theta`.
+//! *added* to decrease the value, so `derivative = -d value / d theta`. The dense derivative of a
+//! voxel is the same quantity for the displacement at that voxel.
 
 use rayon::prelude::*;
 
 use crate::error::{invalid, Result};
+use crate::grid::Grid;
 use crate::interp::{central_difference_at_point, linear_at_point};
 use crate::linalg::Vec3;
+use crate::mask::MaskVolume;
+use crate::metric::cc::NO_VOXEL_IN_MASKS;
 use crate::transform::{LinearMovingTransform, TransformChain};
 use crate::volume::Volume;
 
@@ -129,6 +139,27 @@ pub struct MiBinning {
     pub moving_normalized_min: f64,
 }
 
+fn finite_range(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
+    values
+        .filter(|v| v.is_finite())
+        .fold(None, |r: Option<(f64, f64)>, v| {
+            Some(r.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))))
+        })
+}
+
+fn masked_range(image: &Volume<f64>, mask: Option<&MaskVolume>) -> Option<(f64, f64)> {
+    let grid = image.grid();
+    let data = image.data();
+    match mask {
+        None => finite_range(data.iter().copied()),
+        Some(m) => finite_range((0..data.len()).filter_map(|idx| {
+            let [i, j, k] = grid.ijk(idx);
+            m.is_inside(grid.index_to_point([i as f64, j as f64, k as f64]))
+                .then_some(data[idx])
+        })),
+    }
+}
+
 fn nearest_index_value(vol: &Volume<f64>, p: Vec3) -> Option<f64> {
     let c = vol.grid().point_to_index(p);
     let size = vol.grid().size();
@@ -189,11 +220,25 @@ impl MiBinning {
                 "the fixed image is constant over the samples",
             ));
         }
-        let mut moving_min = f64::MAX;
-        let mut moving_max = f64::MIN;
-        for v in moving.data().iter().copied().filter(|v| v.is_finite()) {
-            moving_min = moving_min.min(v);
-            moving_max = moving_max.max(v);
+        let moving_range = finite_range(moving.data().iter().copied())
+            .ok_or_else(|| invalid("mattes", "the moving image has no finite voxel"))?;
+        Self::from_ranges(bins, (fixed_min, fixed_max), moving_range)
+    }
+
+    /// The bin geometry of the given `(min, max)` intensity ranges, as ITK's `Initialize` derives
+    /// it after measuring them. Fails for `bins <= 4` or a range that is not wider than machine
+    /// epsilon.
+    pub fn from_ranges(bins: usize, fixed: (f64, f64), moving: (f64, f64)) -> Result<Self> {
+        if bins <= 2 * PADDING {
+            return Err(invalid(
+                "mattes",
+                "at least five histogram bins are required",
+            ));
+        }
+        let (fixed_min, fixed_max) = fixed;
+        let (moving_min, moving_max) = moving;
+        if fixed_max - fixed_min <= f64::EPSILON {
+            return Err(invalid("mattes", "the fixed image is constant"));
         }
         if moving_max - moving_min <= f64::EPSILON {
             return Err(invalid("mattes", "the moving image is constant"));
@@ -212,6 +257,43 @@ impl MiBinning {
             fixed_normalized_min: fixed_min / fixed_bin_size - PADDING as f64,
             moving_normalized_min: moving_min / moving_bin_size - PADDING as f64,
         })
+    }
+
+    /// ITK's `Initialize` for dense sampling: the fixed range over the voxels of the fixed image
+    /// whose centre lies inside `fixed_mask` (all voxels without a mask), the moving range likewise
+    /// over the moving image and `moving_mask`; non-finite voxels are skipped. Fails as
+    /// [`MiBinning::from_ranges`] and when no voxel is inside a mask.
+    pub fn dense(
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        fixed_mask: Option<&MaskVolume>,
+        moving_mask: Option<&MaskVolume>,
+        bins: usize,
+    ) -> Result<Self> {
+        let fixed_range = masked_range(fixed, fixed_mask).ok_or_else(|| {
+            invalid(
+                "mattes",
+                "no finite fixed-image voxel lies inside the fixed mask",
+            )
+        })?;
+        let moving_range = masked_range(moving, moving_mask).ok_or_else(|| {
+            invalid(
+                "mattes",
+                "no finite moving-image voxel lies inside the moving mask",
+            )
+        })?;
+        Self::from_ranges(bins, fixed_range, moving_range)
+    }
+
+    /// The moving-axis Parzen window term of an intensity, `value / bin size - normalised minimum`.
+    pub fn moving_term(&self, value: f64) -> f64 {
+        value / self.moving_bin_size - self.moving_normalized_min
+    }
+
+    /// ITK's `movingImageParzenWindowIndex` of `term`, clamped to `[2, bins - 3]`; the cubic Parzen
+    /// window covers the bins from one below to two above it.
+    pub fn moving_bin(&self, term: f64) -> usize {
+        self.clamp_bin(term)
     }
 
     fn clamp_bin(&self, term: f64) -> usize {
@@ -416,6 +498,175 @@ impl MattesMi {
             joint_pdf: fin.joint_pdf,
             fixed_marginal: fin.fixed_marginal,
             moving_marginal: fin.moving_marginal,
+        })
+    }
+}
+
+/// Inputs of a dense evaluation: every voxel of the virtual grid is a sample point, as ITK's
+/// metric samples when no point set is given (`antsRegistration` in a SyN stage).
+#[derive(Clone, Copy)]
+pub struct MiDenseInputs<'a> {
+    /// The virtual domain.
+    pub virtual_grid: &'a Grid,
+    /// The fixed image.
+    pub fixed: &'a Volume<f64>,
+    /// The moving image.
+    pub moving: &'a Volume<f64>,
+    /// Virtual point to fixed image point.
+    pub fixed_transform: &'a TransformChain,
+    /// Virtual point to moving image point.
+    pub moving_transform: &'a TransformChain,
+    /// The fixed-image mask, tested at the mapped fixed point and over the fixed voxels for the
+    /// fixed intensity range.
+    pub fixed_mask: Option<&'a MaskVolume>,
+    /// The moving-image mask, tested at the mapped moving point and over the moving voxels for
+    /// the moving intensity range.
+    pub moving_mask: Option<&'a MaskVolume>,
+}
+
+/// Result of a dense evaluation.
+#[derive(Clone, Debug)]
+pub struct MiDenseEvaluation {
+    /// `-MI`.
+    pub value: f64,
+    /// Virtual voxels that contributed.
+    pub num_valid: usize,
+    /// The bin geometry of this evaluation.
+    pub binning: MiBinning,
+    /// Per virtual voxel: `sum_k B3'(m_k - term) * ratio[f, m_k] * grad M` with the weights of
+    /// [`HistogramResult::ratio`], zero for a voxel that did not contribute (ITK's local-support
+    /// derivative of a displacement field transform, not divided by anything further). Empty when
+    /// not requested.
+    pub derivative: Vec<Vec3>,
+}
+
+struct DensePoint {
+    fixed_bin: usize,
+    term: f64,
+    moving_bin: usize,
+    gradient: Vec3,
+}
+
+fn dense_point(
+    binning: &MiBinning,
+    inp: &MiDenseInputs<'_>,
+    idx: usize,
+    want_derivative: bool,
+) -> Option<DensePoint> {
+    let grid = inp.virtual_grid;
+    let [i, j, k] = grid.ijk(idx);
+    let p = grid.index_to_point([i as f64, j as f64, k as f64]);
+    let fp = inp.fixed_transform.apply(p);
+    if inp.fixed_mask.is_some_and(|m| !m.is_inside(fp)) {
+        return None;
+    }
+    let fv = linear_at_point(inp.fixed, fp)?;
+    let mp = inp.moving_transform.apply(p);
+    if inp.moving_mask.is_some_and(|m| !m.is_inside(mp)) {
+        return None;
+    }
+    let mv = linear_at_point(inp.moving, mp)?;
+    if !fv.is_finite() || !mv.is_finite() || mv < binning.moving_min || mv > binning.moving_max {
+        return None;
+    }
+    let term = binning.moving_term(mv);
+    let mut gradient = if want_derivative {
+        central_difference_at_point(inp.moving, mp)
+    } else {
+        [0.0; 3]
+    };
+    if !gradient.iter().all(|g| g.is_finite()) {
+        gradient = [0.0; 3];
+    }
+    Some(DensePoint {
+        fixed_bin: binning.fixed_bin(fv),
+        term,
+        moving_bin: binning.moving_bin(term),
+        gradient,
+    })
+}
+
+impl MattesMi {
+    /// Evaluates the metric densely on the virtual grid. A voxel contributes when its mapped
+    /// fixed and moving points lie inside their masks (when given) and image buffers and the
+    /// interpolated moving value is within the moving intensity range of
+    /// [`MiBinning::dense`], which is measured anew by every call. Fails when no voxel
+    /// contributes or the joint PDF sums to zero.
+    pub fn evaluate_dense(
+        &self,
+        inp: &MiDenseInputs<'_>,
+        want_derivative: bool,
+    ) -> Result<MiDenseEvaluation> {
+        let bins = self.bins;
+        let binning =
+            MiBinning::dense(inp.fixed, inp.moving, inp.fixed_mask, inp.moving_mask, bins)?;
+        let points: Vec<Option<DensePoint>> = (0..inp.virtual_grid.num_voxels())
+            .into_par_iter()
+            .map(|idx| dense_point(&binning, inp, idx, want_derivative))
+            .collect();
+        let partials: Vec<(Vec<f64>, Vec<f64>, usize)> = points
+            .par_chunks(SAMPLE_CHUNK)
+            .map(|chunk| {
+                let mut joint = vec![0.0f64; bins * bins];
+                let mut fixed_marginal = vec![0.0f64; bins];
+                let mut valid = 0usize;
+                for p in chunk.iter().flatten() {
+                    fixed_marginal[p.fixed_bin] += 1.0;
+                    for pdf_moving in (p.moving_bin - 1)..=(p.moving_bin + 2) {
+                        joint[p.fixed_bin * bins + pdf_moving] +=
+                            cubic_bspline(pdf_moving as f64 - p.term);
+                    }
+                    valid += 1;
+                }
+                (joint, fixed_marginal, valid)
+            })
+            .collect();
+        let mut joint = vec![0.0f64; bins * bins];
+        let mut fixed_marginal = vec![0.0f64; bins];
+        let mut num_valid = 0usize;
+        for (pj, pf, pv) in &partials {
+            for (a, b) in joint.iter_mut().zip(pj) {
+                *a += b;
+            }
+            for (a, b) in fixed_marginal.iter_mut().zip(pf) {
+                *a += b;
+            }
+            num_valid += pv;
+        }
+        if num_valid == 0 && (inp.fixed_mask.is_some() || inp.moving_mask.is_some()) {
+            return Err(invalid("mattes", NO_VOXEL_IN_MASKS));
+        }
+        let fin = finish_histogram(
+            bins,
+            binning.moving_bin_size,
+            num_valid,
+            joint,
+            fixed_marginal,
+            want_derivative,
+        )?;
+        let derivative = if want_derivative {
+            points
+                .par_iter()
+                .map(|p| match p {
+                    Some(p) => {
+                        let mut s = 0.0;
+                        for pdf_moving in (p.moving_bin - 1)..=(p.moving_bin + 2) {
+                            s += cubic_bspline_derivative(pdf_moving as f64 - p.term)
+                                * fin.ratio[p.fixed_bin * bins + pdf_moving];
+                        }
+                        [s * p.gradient[0], s * p.gradient[1], s * p.gradient[2]]
+                    }
+                    None => [0.0; 3],
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(MiDenseEvaluation {
+            value: fin.value,
+            num_valid,
+            binning,
+            derivative,
         })
     }
 }

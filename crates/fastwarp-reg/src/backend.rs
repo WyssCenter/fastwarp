@@ -176,6 +176,71 @@ pub trait Backend: Sync {
         Ok((pair, norms))
     }
 
+    /// Mattes mutual information (`MI[fixed,moving,weight,bins]` with dense sampling) of two
+    /// images on the same grid, in both directions: first `(fixed, moving)`, then
+    /// `(moving, fixed)`. Each value is `-MI`; each derivative is ITK's local-support derivative of
+    /// a displacement field transform, `sum_k B3'(m_k - term) * ratio[f, m_k] * grad(moving)` per
+    /// voxel. Every call measures the intensity ranges of the histogram anew from the two images,
+    /// as ITK's metric `Initialize` does before each evaluation.
+    async fn mi_value_derivative_pair(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        bins: usize,
+    ) -> Result<MetricPair<Self::Field>>;
+
+    /// [`Backend::mi_value_derivative_pair`] with image masks resolved on the grid of the two
+    /// images (zeros and ones): a voxel contributes only where both masks are not zero, the
+    /// intensity range of each image is measured over the voxels inside its own mask, and a voxel
+    /// that does not contribute has a zero derivative. The second direction swaps the masks with
+    /// the images. Fails when no voxel is inside both masks.
+    async fn mi_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        fixed_mask: &Self::Image,
+        moving_mask: &Self::Image,
+        bins: usize,
+    ) -> Result<MetricPair<Self::Field>>;
+
+    /// [`Backend::mi_value_derivative_pair`] with the [`Backend::l2_norm`] of both derivatives,
+    /// in the same order. The default calls them one after the other; a backend that can return
+    /// all the scalars at once overrides it with bit-identical results.
+    async fn mi_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        bins: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        let pair = self.mi_value_derivative_pair(fixed, moving, bins).await?;
+        let norms = [
+            self.l2_norm(&pair.0 .1).await?,
+            self.l2_norm(&pair.1 .1).await?,
+        ];
+        Ok((pair, norms))
+    }
+
+    /// [`Backend::mi_value_derivative_pair_masked`] with the [`Backend::l2_norm`] of both
+    /// derivatives, in the same order. The default calls them one after the other; a backend that
+    /// can return all the scalars at once overrides it with bit-identical results.
+    async fn mi_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        fixed_mask: &Self::Image,
+        moving_mask: &Self::Image,
+        bins: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        let pair = self
+            .mi_value_derivative_pair_masked(fixed, moving, fixed_mask, moving_mask, bins)
+            .await?;
+        let norms = [
+            self.l2_norm(&pair.0 .1).await?,
+            self.l2_norm(&pair.1 .1).await?,
+        ];
+        Ok((pair, norms))
+    }
+
     /// SyN's Gaussian smoothing of a field (`variance` in squared voxels of the field's grid,
     /// faces pinned to zero). Takes the field so that `variance <= 0` returns it unchanged
     /// without a copy.

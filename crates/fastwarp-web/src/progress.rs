@@ -444,6 +444,68 @@ impl<B: Backend, E: Sync> Backend for Observed<'_, B, E> {
         Ok((self.seen(Ok(pair))?, norms))
     }
 
+    async fn mi_value_derivative_pair(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        bins: usize,
+    ) -> Result<MetricPair<Self::Field>> {
+        let out = self
+            .backend
+            .mi_value_derivative_pair(fixed, moving, bins)
+            .await;
+        self.seen(out)
+    }
+
+    async fn mi_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        fixed_mask: &Self::Image,
+        moving_mask: &Self::Image,
+        bins: usize,
+    ) -> Result<MetricPair<Self::Field>> {
+        let out = self
+            .backend
+            .mi_value_derivative_pair_masked(fixed, moving, fixed_mask, moving_mask, bins)
+            .await;
+        self.seen(out)
+    }
+
+    async fn mi_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        bins: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        let (pair, norms) = self
+            .backend
+            .mi_value_derivative_pair_with_norms(fixed, moving, bins)
+            .await?;
+        Ok((self.seen(Ok(pair))?, norms))
+    }
+
+    async fn mi_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        fixed_mask: &Self::Image,
+        moving_mask: &Self::Image,
+        bins: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        let (pair, norms) = self
+            .backend
+            .mi_value_derivative_pair_masked_with_norms(
+                fixed,
+                moving,
+                fixed_mask,
+                moving_mask,
+                bins,
+            )
+            .await?;
+        Ok((self.seen(Ok(pair))?, norms))
+    }
+
     async fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field> {
         self.backend.smooth_field(field, variance).await
     }

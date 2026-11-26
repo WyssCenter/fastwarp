@@ -38,6 +38,8 @@
 //! `sum_k B3'(arg_k) w[f, m_k] * (grad M . dT/dtheta_p)` to every parameter `p`, reduced per
 //! workgroup by a fixed tree and summed on the host in workgroup order.
 
+mod dense;
+
 use std::sync::Mutex;
 
 use fastwarp_reg::error::Result as RegResult;
@@ -54,6 +56,7 @@ use super::{bad, block_reg, gerr, index_from_offset, GpuImage, PoolBuf, WgpuBack
 use crate::device::GpuContext;
 use crate::error::GpuResult;
 
+const BSPLINE: &str = include_str!("../shaders/mi_bspline.wgsl");
 const COMMON: &str = include_str!("../shaders/mi_common.wgsl");
 const HIST: &str = include_str!("../shaders/mi_hist.wgsl");
 const DERIV: &str = include_str!("../shaders/mi_deriv.wgsl");
@@ -98,11 +101,12 @@ pub(super) struct MiKernels {
     deriv: wgpu::ComputePipeline,
     merge: wgpu::ComputePipeline,
     merge_final: wgpu::ComputePipeline,
+    dense: dense::DenseMiKernels,
 }
 
 impl MiKernels {
     pub(super) async fn new(ctx: &GpuContext) -> GpuResult<Self> {
-        let with_common = |body: &str| format!("{COMMON}\n{body}");
+        let with_common = |body: &str| format!("{BSPLINE}\n{COMMON}\n{body}");
         Ok(Self {
             hist: ctx
                 .compile_async("k_mi_hist", &with_common(HIST), "k_mi_hist")
@@ -116,6 +120,7 @@ impl MiKernels {
             merge_final: ctx
                 .compile_async("k_mi_merge_final", MERGE_FINAL, "k_mi_merge_final")
                 .await?,
+            dense: dense::DenseMiKernels::new(ctx).await?,
         })
     }
 }
