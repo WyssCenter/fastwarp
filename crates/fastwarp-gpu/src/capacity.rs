@@ -186,7 +186,51 @@ fn host_available() -> Option<u64> {
     let text = std::fs::read_to_string("/proc/meminfo").ok()?;
     let line = text.lines().find(|l| l.starts_with("MemAvailable:"))?;
     let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
-    kib.checked_mul(1024)
+    let host = kib.checked_mul(1024)?;
+    let groups = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    Some(
+        match cgroup_room(&groups, std::path::Path::new("/sys/fs/cgroup")) {
+            Some(room) => host.min(room),
+            None => host,
+        },
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn cgroup_room(groups: &str, root: &std::path::Path) -> Option<u64> {
+    let read = |p: std::path::PathBuf| -> Option<u64> {
+        std::fs::read_to_string(p).ok()?.trim().parse().ok()
+    };
+    let mut best: Option<u64> = None;
+    for line in groups.lines() {
+        let mut parts = line.splitn(3, ':');
+        let (Some(_), Some(controllers), Some(path)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let (base, limit, usage) = if controllers.is_empty() {
+            (root.to_path_buf(), "memory.max", "memory.current")
+        } else if controllers.split(',').any(|c| c == "memory") {
+            (
+                root.join("memory"),
+                "memory.limit_in_bytes",
+                "memory.usage_in_bytes",
+            )
+        } else {
+            continue;
+        };
+        let mut dir = base.join(path.trim_start_matches('/'));
+        loop {
+            if let (Some(max), Some(used)) = (read(dir.join(limit)), read(dir.join(usage))) {
+                let room = max.saturating_sub(used);
+                best = Some(best.map_or(room, |b| b.min(room)));
+            }
+            if dir == base || !dir.pop() {
+                break;
+            }
+        }
+    }
+    best
 }
 
 #[cfg(windows)]
@@ -653,6 +697,44 @@ pub fn plan_capacity_linear(
         binding_limit: caps.max_storage_buffer_binding_size,
         memory_budget: caps.memory_budget,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod cgroup_tests {
+    use super::cgroup_room;
+    use std::fs;
+    use std::path::Path;
+
+    fn put(dir: &Path, name: &str, value: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join(name), value).unwrap();
+    }
+
+    #[test]
+    fn the_smallest_room_of_the_cgroup_and_its_parents_counts() {
+        let root = std::env::temp_dir().join(format!("fw-cgroup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let job = root.join("slurm/job_1");
+        let step = job.join("step_0");
+        put(&root.join("slurm"), "memory.max", "max");
+        put(&root.join("slurm"), "memory.current", "100");
+        put(&job, "memory.max", "8000");
+        put(&job, "memory.current", "3000");
+        put(&step, "memory.max", "max");
+        put(&step, "memory.current", "2000");
+        assert_eq!(cgroup_room("0::/slurm/job_1/step_0\n", &root), Some(5000));
+        let v1 = root.join("memory/job_2");
+        put(&v1, "memory.limit_in_bytes", "4000");
+        put(&v1, "memory.usage_in_bytes", "1500");
+        assert_eq!(
+            cgroup_room("5:cpu,cpuacct:/job_2\n4:memory:/job_2\n", &root),
+            Some(2500)
+        );
+        assert_eq!(cgroup_room("0::/elsewhere\n", &root), None);
+        assert_eq!(cgroup_room("", &root), None);
+        fs::remove_dir_all(&root).unwrap();
+    }
 }
 
 #[cfg(test)]
