@@ -1066,6 +1066,20 @@ def _atlases_at_once(
     return max(n, 1)
 
 
+def _first_error(futures: Sequence[Any]) -> BaseException:
+    errors = [
+        (i, f.exception())
+        for i, f in enumerate(futures, 1)
+        if f.done() and not f.cancelled() and f.exception() is not None
+    ]
+    real = [(i, e) for i, e in errors if not isinstance(e, RegistrationCancelled)]
+    first = (real or errors)[0][1]
+    for i, e in real:
+        if e is not first:
+            first.add_note(f"atlas {i} also failed: {type(e).__name__}: {e}")
+    return first
+
+
 def register_atlases(
     target: Any,
     atlases: Sequence[Any],
@@ -1171,23 +1185,26 @@ def register_atlases(
     workers = _atlases_at_once(target, atlases, iso_mm, adapter, recipe)
     pool = ThreadPoolExecutor(max_workers=workers)
     futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
+    failed = False
     try:
         pending = set(futures)
-        while pending:
+        while pending and not failed:
             finished, pending = wait(pending, timeout=0.05, return_when=FIRST_EXCEPTION)
             if cancel is not None and cancel.cancelled:
                 stop.cancel()
-            for f in finished:
-                error = f.exception()
-                if error is not None:
-                    raise error
-        done = [f.result() for f in futures]
+            failed = any(f.exception() is not None for f in finished)
     except BaseException:
         stop.cancel()
         pool.shutdown(wait=False, cancel_futures=True)
         wait(futures, timeout=_STOP_TIMEOUT_S)
         raise
+    if failed:
+        stop.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        wait(futures, timeout=_STOP_TIMEOUT_S)
+        raise _first_error(futures)
     pool.shutdown()
+    done = [f.result() for f in futures]
     result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
     for files, label_path, composite in done:
         result["atlases"].append(files)
