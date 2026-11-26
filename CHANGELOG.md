@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New: the browser demo's diagnostic report holds what the engine knows: the GPU limits it saw,
+  requested and was granted, the self-test result, and for a failed run the step it reached, the
+  planned GPU memory, the GPU memory in use and the GPU's errors; after an internal error it holds
+  the message and its place in FastWarp's source code, and the size of a failed allocation.
+- New: `ci/web-faults.mjs` drives the browser demo in headless Chrome. On every pull request that
+  changes the GPU code or the demo (`web.yml`) it starts the GPU, which compiles every kernel with
+  Chrome's own shader compiler, and registers the sample; in `full.yml` it runs the demo with each
+  fault of its new test parameters (`?fault=`, `?limits=`) and checks the error panel and the
+  report.
 - New: when the browser demo cannot use WebGPU, it says why for the device it runs on (iOS
   version, Android version and GPU, browser), and when a run fails, makes no progress for three
   minutes or ended because the browser closed the page, it says so and offers a diagnostic report

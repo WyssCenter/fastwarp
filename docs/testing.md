@@ -124,12 +124,44 @@ FASTWARP_ANTS_DIR=/path/to/ants/bin cargo nextest run --locked -p fastwarp-cli -
 
 All test variables are listed under [Environment variables](environment.md#tests-and-development).
 
+## The browser demo in headless Chrome
+
+`ci/web-faults.mjs` serves the built documentation on `127.0.0.1`, opens the
+[browser demo](browser.md) in headless Chrome and drives it over Chrome's DevTools protocol (no
+packages to install; Node.js 20 or later and Chrome). It has two suites:
+
+- `start`: starts the GPU, which compiles every kernel with Chrome's own shader compiler (Tint, not
+  the naga compiler of the native tests) and runs the self-test, then registers the sample on the
+  2 mm grid with a short recipe (`?plan=short`: two levels and a few iterations per stage, so that
+  every stage and kernel runs in a short time). Any WebGPU error, internal error or a failed run
+  fails the suite.
+- `faults`: runs the demo once per fault of its test parameters and checks the error panel and the
+  diagnostic report: `?fault=panic` and `?fault=alloc` (a panic or a failed allocation in the
+  engine), `?fault=lost` (the GPU device is destroyed), `?fault=oom` and `?fault=internal` (the
+  browser reports an out-of-memory or internal error), `?fault=stall` with `?stall=6` (no progress),
+  `?fault=kill` (the page reloads during the run), `?fault=nogpu` (no WebGPU) and `?limits=64` (the
+  GPU's buffer limits clamped to 64 MiB; `?limits=default` clamps them to the WebGPU defaults).
+  `?fault_at=` names the step at which the fault happens (default `rigid`). The page ignores these
+  parameters unless they are in its address.
+
+```bash
+bash docs/_scripts/build_web_demo.sh
+python -m sphinx -b html docs docs/_build/html
+node ci/web-faults.mjs docs/_build/html --chrome "$(command -v google-chrome)" --swiftshader
+```
+
+`--swiftshader` runs WebGPU on Chrome's software GPU, as CI does; without it Chrome uses the
+computer's GPU. `--suite start` or `--suite faults` runs one suite, `--only panic,oom` single cases.
+SwiftShader checks Chrome's shader compiler and the page, not the behaviour of hardware GPUs, their
+drivers, their memory limits or the watchdogs of phones.
+
 ## What CI runs
 
 | Workflow | When | What |
 | --- | --- | --- |
 | `ci.yml` | Every push to `main` and every pull request | Lint (`cargo fmt`, `clippy`, `ruff`), the Rust tests and the Python tests on Linux x86_64 with Python 3.13, on lavapipe, with a missing adapter or ANTsPy counted as a failure. The Python tests also compare the standalone `fastwarp` program (`FASTWARP_BIN`) with `python -m fastwarp`. |
-| `full.yml` | Non-draft pull requests that change more than documentation, nightly when `main` has changed, and by hand | The tests against the ANTs programs, with the three programs of the official ANTs 2.6.5 Ubuntu 24.04 release, checked against the SHA-256 sums in `.github/ants-2.6.5-ubuntu-24.04.sha256` and cached; the command-line test against `antsApplyTransforms` runs on lavapipe. |
+| `full.yml` | Non-draft pull requests that change more than documentation, nightly when `main` has changed, and by hand | The tests against the ANTs programs, with the three programs of the official ANTs 2.6.5 Ubuntu 24.04 release, checked against the SHA-256 sums in `.github/ants-2.6.5-ubuntu-24.04.sha256` and cached; the command-line test against `antsApplyTransforms` runs on lavapipe. Also the `faults` suite of `ci/web-faults.mjs`. |
+| `web.yml` | Pushes to `main` and pull requests that change `crates/fastwarp-gpu/src`, `crates/fastwarp-web`, `docs/_static/web`, the demo page or its build script, `Cargo.lock` or the toolchain, and by hand | The `start` suite of `ci/web-faults.mjs` in headless Chrome on SwiftShader (see [the browser demo in headless Chrome](#the-browser-demo-in-headless-chrome)). |
 | `docs.yml` | Pushes to `main` and pull requests that change the documentation or a file it reads, weekly, and by hand | The HTML build of the documentation with warnings as errors, as Read the Docs builds it (Python 3.13, `docs/requirements.txt` installed with `--require-hashes`). The HTML build fetches the intersphinx inventories of Python, NumPy and ANTsPy; the link check, which depends on every linked site, runs only weekly and by hand. |
 | `audit.yml` | When a lockfile, manifest or workflow changes, and weekly | `cargo deny` and `uv audit`. |
 | `wheels.yml` | A `v*` tag, or by hand (`gh workflow run wheels`) | Builds and tests the wheels; on a tag also publishes them (see below). |

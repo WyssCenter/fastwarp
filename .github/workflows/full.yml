@@ -110,6 +110,33 @@ jobs:
           | (binary_id(fastwarp-cli::cli) & test(=ants_apply_transforms_reads_the_registration))
           | binary_id(fastwarp-cli::ants_mode)'
 
+  web-faults:
+    name: Browser demo fault injection (headless Chrome, SwiftShader)
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: web-demo
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: WebAssembly module and sample images
+        run: bash docs/_scripts/build_web_demo.sh
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Documentation with the demo page
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r docs/requirements.txt
+          python -m sphinx -W --keep-going -b html docs "$RUNNER_TEMP/html"
+      - name: Fault injection in headless Chrome
+        run: node ci/web-faults.mjs "$RUNNER_TEMP/html" --chrome "$(command -v google-chrome)" --swiftshader --suite faults
+
   installer-windows:
     name: install.ps1 on Windows PowerShell 5.1 and PowerShell 7
     needs: gate

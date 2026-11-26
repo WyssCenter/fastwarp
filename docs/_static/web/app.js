@@ -34,7 +34,11 @@ const BROWSERS =
   "later on Android, Firefox 141 or later on Windows, and Safari 26 or later on macOS, iOS and " +
   "iPadOS.";
 
-const STALL_MS = 180000;
+const STALL_MS = Math.max(5, Number(params.get("stall")) || 180) * 1000;
+const DEBUG_KEYS = ["fault", "fault_at", "limits", "stall", "plan"];
+const debugParams = Object.fromEntries(DEBUG_KEYS.filter((k) => params.has(k)).map((k) => [k, params.get(k)]));
+const debugQuery = new URLSearchParams(debugParams).toString();
+const pageGpu = params.get("fault") === "nogpu" ? null : navigator.gpu;
 
 const PHASES = {
   gpu: ["Opening the GPU", 0.0, 0.02],
@@ -77,7 +81,8 @@ const diag = {
   platform: platformOf(navigator.userAgent, navigator.maxTouchPoints ?? 0),
   hints: null,
   hintsReady: Promise.resolve(),
-  pageGpu: Boolean(navigator.gpu),
+  pageGpu: Boolean(pageGpu),
+  engine: null,
   adapter: null,
   workerAdapter: null,
   device: null,
@@ -191,6 +196,8 @@ function browserInfo() {
 }
 
 function lastPanic() {
+  const recorded = diag.error?.failure?.panic;
+  if (recorded?.message) return recorded.location ? `${recorded.message} (at ${recorded.location})` : recorded.message;
   for (let i = diag.console.length - 1; i >= 0; i--) {
     const text = diag.console[i].text ?? "";
     const at = text.indexOf("internal error:");
@@ -214,6 +221,7 @@ function makeReport(kind, text) {
     time_utc: `${new Date().toISOString().slice(0, 16)}Z`,
     fastwarp: diag.version,
     page: location.pathname,
+    debug: Object.keys(debugParams).length ? debugParams : null,
     browser: browserInfo(),
     webgpu: {
       navigator_gpu: diag.pageGpu,
@@ -223,6 +231,7 @@ function makeReport(kind, text) {
       wgsl_language_features: diag.adapter?.wgsl ?? null,
       worker_adapter: diag.workerAdapter,
       device: diag.device,
+      engine: diag.engine,
     },
     run: run
       ? {
@@ -248,6 +257,8 @@ function makeReport(kind, text) {
       phase: diag.error?.phase ?? null,
       stack: diag.error?.stack ?? null,
       panic: lastPanic(),
+      failed_alloc_bytes: diag.error?.failure?.failed_alloc_bytes ?? null,
+      engine: diag.error?.engine ?? null,
       gpu: diag.events,
       gpu_events_dropped: diag.droppedEvents,
       console: diag.console,
@@ -515,6 +526,10 @@ function onProgress(p, memory) {
     log(p.levels ? `${name}, level ${p.level} of ${p.levels}${p.grid ? ` (${p.grid.join(" x ")})` : ""}` : name);
     if (run && run.timeline.length < 60) run.timeline.push([seconds(now - run.started), p.phase, p.levels ? p.level : null]);
     crumb();
+    if (params.get("fault") === "kill" && p.phase === (params.get("fault_at") || "rigid")) {
+      history.replaceState(null, "", location.pathname);
+      location.reload();
+    }
   } else if (now - state.savedAt > 10000) {
     crumb();
   }
@@ -626,13 +641,15 @@ function onDone(zip, memory, view) {
     adapter: state.adapterLabel ?? null,
     affine_parameters: run?.results?.affine_parameters ?? null,
     viewer: view ? { dims: view.dims, spacing: view.spacing, before: view.before } : null,
+    gpu_events: diag.events,
+    worker_errors: diag.console,
   });
 }
 
 function onError(name, text, phase, extra = {}) {
   const wasRunning = state.running;
   if (extra.memory != null) diag.memory = extra.memory;
-  if (name !== "Cancelled") diag.error = { name, message: clip(text, 2000), phase, stack: extra.stack ?? null };
+  if (name !== "Cancelled") diag.error = errorRecord(name, text, phase, extra);
   finish(name === "Cancelled" ? "cancelled" : "error");
   if (name === "Cancelled") {
     el("fw-stage").textContent = "Cancelled";
@@ -668,7 +685,7 @@ function startFailed(name, text, extra = {}) {
   state.gpu = "failed";
   updateButtons();
   if (extra.memory != null) diag.memory = extra.memory;
-  diag.error = { name, message: clip(text, 2000), phase: "start", stack: extra.stack ?? null };
+  diag.error = errorRecord(name, text, "start", extra);
   const panic = lastPanic();
   const what = name === "RuntimeError" && panic ? `FastWarp stopped with an internal error (${clip(panic, 300)}).` : text;
   diag.platform = currentPlatform();
@@ -679,22 +696,57 @@ function startFailed(name, text, extra = {}) {
   result("error", { name, message: text, phase: "gpu_info" });
 }
 
+function errorRecord(name, text, phase, extra) {
+  return {
+    name,
+    message: clip(text, 2000),
+    phase,
+    stack: extra.stack ?? null,
+    failure: extra.failure ?? null,
+    engine: extra.diagnostics ?? null,
+  };
+}
+
+function engineInfo(info) {
+  return {
+    name: info.name ?? null,
+    backend: info.backend ?? null,
+    device_type: info.device_type ?? null,
+    software: info.software ?? null,
+    limits_adapter: info.limits_adapter ?? null,
+    limits_requested: info.limits_requested ?? null,
+    limits_granted: info.limits_granted ?? null,
+    selftest: info.selftest ?? null,
+  };
+}
+
 function startWorker(requestInfo = true) {
   state.worker?.terminate();
   dropSliceRequests();
   viewer.hide();
-  const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+  const url = new URL("./worker.js", import.meta.url);
+  url.search = debugQuery;
+  const worker = new Worker(url, { type: "module" });
   worker.onmessage = ({ data }) => {
     if (worker !== state.worker) return;
     if (data.type === "info") {
       state.ready = true;
       diag.version = data.info.fastwarp_version ?? diag.version;
+      diag.engine = engineInfo(data.info);
       if (data.memory != null) diag.memory = data.memory;
       showAdapter(data.info);
       state.gpu = "ready";
       state.adapterLabel = adapterLabel(data.info);
       updateButtons();
       if (autorun === "sample") runSample();
+      if (autorun === "info") {
+        result("ready", {
+          adapter: state.adapterLabel,
+          selftest: data.info.selftest ?? null,
+          gpu_events: diag.events,
+          worker_errors: diag.console,
+        });
+      }
     } else if (data.type === "diag") {
       onDiag(data.kind, data.detail ?? {});
     } else if (data.type === "progress") {
@@ -803,7 +855,7 @@ async function run() {
   state.beatTimer = setInterval(crumb, 10000);
   crumb();
   state.worker.postMessage(
-    { type: "run", fixed: buffers[0], moving: buffers[1], options: { grid } },
+    { type: "run", fixed: buffers[0], moving: buffers[1], options: params.get("plan") === "short" ? { grid, plan: "short" } : { grid } },
     buffers,
   );
 }
@@ -901,7 +953,7 @@ function adapterDetails(adapter) {
     },
     features: featureList(adapter.features),
     limits: limitsObject(adapter.limits),
-    wgsl: featureList(navigator.gpu.wgslLanguageFeatures ?? []),
+    wgsl: featureList(pageGpu.wgslLanguageFeatures ?? []),
   };
 }
 
@@ -940,7 +992,7 @@ async function main() {
   diag.previous = takeUnfinished();
   if (diag.previous) showUnfinished(diag.previous);
 
-  if (!navigator.gpu) {
+  if (!pageGpu) {
     state.gpu = "failed";
     updateButtons();
     el("fw-support").textContent = "This browser does not offer WebGPU.";
@@ -956,7 +1008,7 @@ async function main() {
   let adapter = null;
   let adapterError = null;
   try {
-    adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+    adapter = await pageGpu.requestAdapter({ powerPreference: "high-performance" });
   } catch (err) {
     adapter = null;
     adapterError = `${err?.name}: ${err?.message ?? err}`;

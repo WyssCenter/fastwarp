@@ -206,7 +206,13 @@ page without the site name, the GPU's name, the WebGPU limits and features the b
 those FastWarp asked for and got, the grid, the size and voxel spacing of both images, the time the
 report was made and the run started (to the minute, in UTC), how far the run got and when it
 reached each step, the memory of the WebAssembly module and of the page's JavaScript, and the
-error messages of the browser, the GPU and FastWarp.
+error messages of the browser, the GPU and FastWarp. From FastWarp's engine it adds the limits of
+the GPU as the engine sees them, those it requested and those the device granted, the result of
+the GPU self-test, and for a failed run the step it reached, the planned GPU memory, the GPU memory
+in use when it failed and the errors the GPU reported. When FastWarp stops with an internal error,
+the report holds its message and its place in FastWarp's source code (a file of the program, such
+as `crates/fastwarp-web/src/web.rs`, never one of yours), and the size of an allocation that
+failed when the tab ran out of memory.
 
 It never contains your images or any part of them, the text fields of their headers, file names,
 or anything else from your computer. The page sends nothing: the report leaves your device only
