@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- New: when the browser demo cannot use WebGPU, it says why for the device it runs on (iOS
+  version, Android version and GPU, browser), and when a run fails, makes no progress for three
+  minutes or ended because the browser closed the page, it says so and offers a diagnostic report
+  (browser, GPU and its WebGPU limits, image sizes, the step reached, the errors of the browser, the
+  GPU and FastWarp; never images or file names) to send by e-mail or copy. The WebGPU box offers
+  the same report for a device where the demo works. Nothing leaves the device unless the user sends
+  it.
 - New: `fastwarp.release_idle_gpus()` frees the GPU devices that a process keeps between
   registrations.
 - Changed: images handed over from Python as `float32` are converted on all cores, so

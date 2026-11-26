@@ -244,6 +244,55 @@
   border-left-color: var(--pst-color-warning);
 }
 
+.fw-demo .fw-message:has(+ .fw-report:not([hidden])) {
+  margin-bottom: 0;
+}
+
+.fw-demo .fw-report {
+  border-left: 4px solid var(--pst-color-danger);
+  padding: 0.25rem 0.75rem 0.75rem;
+  margin: 0 0 1rem;
+  background: var(--pst-color-surface);
+  font-size: 0.9em;
+}
+
+.fw-demo .fw-report[data-kind="warning"] {
+  border-left-color: var(--pst-color-warning);
+}
+
+.fw-demo .fw-report-lead {
+  margin: 0 0 0.6rem;
+  color: var(--pst-color-text-muted);
+}
+
+.fw-demo .fw-report-actions,
+.fw-demo .fw-device-report {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.fw-demo .fw-device-report {
+  margin: 0.75rem 0 0.25rem;
+}
+
+.fw-demo .fw-report-actions button,
+.fw-demo .fw-report-actions .fw-button,
+.fw-demo .fw-device-report button,
+.fw-demo .fw-device-report .fw-button {
+  padding: 0.3rem 0.85rem;
+  font-size: 0.95em;
+}
+
+.fw-demo .fw-report .fw-small {
+  margin-top: 0.5rem;
+}
+
+.fw-demo .fw-report .fw-log {
+  max-height: 18rem;
+}
+
 .fw-demo .fw-status {
   margin: 1.25rem 0 0;
 }
@@ -643,5 +692,11 @@ html.fw-noscroll {
   .fw-demo .fw-run-hint {
     flex: 1 1 100%;
     order: -2;
+  }
+
+  .fw-demo .fw-report-actions > button,
+  .fw-demo .fw-report-actions > .fw-button {
+    flex: 1 1 100%;
+    text-align: center;
   }
 }
