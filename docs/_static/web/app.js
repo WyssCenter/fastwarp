@@ -2,6 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createViewer } from "./viewer.js";
+import {
+  clip,
+  dismissUnfinished,
+  endRun,
+  featureList,
+  isoDims,
+  limitsObject,
+  mailtoHref,
+  niftiGeometry,
+  platformOf,
+  reportText,
+  saveRun,
+  stageText,
+  supportHint,
+  takeUnfinished,
+} from "./diag.js";
 
 const el = (id) => document.getElementById(id);
 const here = new URL("./", import.meta.url);
@@ -17,6 +33,8 @@ const BROWSERS =
   "WebGPU runs in Chrome and Edge 113 or later on Windows, macOS and ChromeOS, Chrome 121 or " +
   "later on Android, Firefox 141 or later on Windows, and Safari 26 or later on macOS, iOS and " +
   "iPadOS.";
+
+const STALL_MS = 180000;
 
 const PHASES = {
   gpu: ["Opening the GPU", 0.0, 0.02],
@@ -38,6 +56,8 @@ const state = {
   started: 0,
   timer: 0,
   cancelTimer: 0,
+  stallTimer: 0,
+  beatTimer: 0,
   lastKey: "",
   zipUrl: null,
   jsAdapter: null,
@@ -48,6 +68,28 @@ const state = {
   gpu: "starting",
   sample: false,
   done: false,
+  progressAt: 0,
+  savedAt: 0,
+  stalled: false,
+};
+
+const diag = {
+  platform: platformOf(navigator.userAgent, navigator.maxTouchPoints ?? 0),
+  hints: null,
+  hintsReady: Promise.resolve(),
+  pageGpu: Boolean(navigator.gpu),
+  adapter: null,
+  workerAdapter: null,
+  device: null,
+  version: null,
+  events: [],
+  droppedEvents: 0,
+  console: [],
+  run: null,
+  memory: null,
+  error: null,
+  previous: null,
+  report: null,
 };
 
 const sliceRequests = new Map();
@@ -100,6 +142,10 @@ function bytes(n) {
   return `${n} bytes`;
 }
 
+function seconds(ms) {
+  return Math.round(ms / 100) / 10;
+}
+
 function isMobile() {
   if (navigator.userAgentData) return navigator.userAgentData.mobile;
   const ua = navigator.userAgent;
@@ -124,6 +170,222 @@ function result(status, extra = {}) {
     console.log(`FASTWARP_RESULT ${JSON.stringify(out)}`);
     document.title = `FASTWARP_${status.toUpperCase()}`;
   }
+}
+
+function browserInfo() {
+  const d = navigator.userAgentData;
+  return {
+    user_agent: navigator.userAgent,
+    brands: d?.brands?.map((b) => `${b.brand} ${b.version}`) ?? null,
+    mobile: d?.mobile ?? diag.platform.mobile,
+    platform: d?.platform || diag.platform.os,
+    platform_version: diag.hints?.platformVersion || null,
+    model: diag.hints?.model || null,
+    architecture: diag.hints?.architecture || null,
+    cores: navigator.hardwareConcurrency ?? null,
+    device_memory_gb: navigator.deviceMemory ?? null,
+    touch_points: navigator.maxTouchPoints ?? 0,
+    secure_context: window.isSecureContext,
+    cross_origin_isolated: window.crossOriginIsolated ?? false,
+  };
+}
+
+function lastPanic() {
+  for (let i = diag.console.length - 1; i >= 0; i--) {
+    const text = diag.console[i].text ?? "";
+    const at = text.indexOf("internal error:");
+    if (at >= 0) return text.slice(at + "internal error:".length).trim();
+  }
+  return null;
+}
+
+function stageOf(run) {
+  return run?.stage ?? null;
+}
+
+function makeReport(kind, text) {
+  const now = performance.now();
+  const run = diag.run;
+  const end = run?.end ?? now;
+  return {
+    schema: 1,
+    kind,
+    message: clip(text, 2000),
+    time_utc: `${new Date().toISOString().slice(0, 16)}Z`,
+    fastwarp: diag.version,
+    page: location.pathname,
+    browser: browserInfo(),
+    webgpu: {
+      navigator_gpu: diag.pageGpu,
+      adapter: diag.adapter?.info ?? null,
+      features: diag.adapter?.features ?? null,
+      limits: diag.adapter?.limits ?? null,
+      wgsl_language_features: diag.adapter?.wgsl ?? null,
+      worker_adapter: diag.workerAdapter,
+      device: diag.device,
+    },
+    run: run
+      ? {
+          grid: run.grid,
+          fixed: run.fixed,
+          moving: run.moving,
+          registration_grid: run.registrationGrid,
+          started_utc: run.startedUtc,
+          stage: stageOf(run),
+          elapsed_s: seconds(end - run.started),
+          since_progress_s: seconds(end - run.progressAt),
+          outcome: run.outcome ?? "running",
+          timeline: run.timeline,
+        }
+      : null,
+    memory: {
+      wasm_bytes: diag.memory,
+      js_heap_bytes: performance.memory?.usedJSHeapSize ?? null,
+    },
+    errors: {
+      name: diag.error?.name ?? null,
+      message: diag.error?.message ?? null,
+      phase: diag.error?.phase ?? null,
+      stack: diag.error?.stack ?? null,
+      panic: lastPanic(),
+      gpu: diag.events,
+      gpu_events_dropped: diag.droppedEvents,
+      console: diag.console,
+    },
+    previous_run: diag.previous,
+  };
+}
+
+function safeReport(kind, text) {
+  try {
+    return makeReport(kind, text);
+  } catch (err) {
+    return {
+      schema: 1,
+      kind,
+      message: clip(text, 2000),
+      report_error: clip(err?.message ?? err, 300),
+      browser: { user_agent: navigator.userAgent },
+    };
+  }
+}
+
+function setMail(link, report) {
+  try {
+    link.href = mailtoHref(report).href;
+    link.hidden = false;
+  } catch {
+    link.hidden = true;
+  }
+}
+
+function refreshReport() {
+  if (!diag.report) return;
+  try {
+    const report = safeReport(diag.report.kind, diag.report.text);
+    setMail(el("fw-mail"), report);
+    if (el("fw-report-box").open) el("fw-report-text").textContent = reportText(report);
+  } catch (err) {
+    el("fw-report-text").textContent = `The report could not be built: ${clip(err?.message ?? err, 300)}`;
+  }
+}
+
+function showReport(kind, text, { tone = "error", dismiss = false } = {}) {
+  diag.report = { kind, text };
+  try {
+    const box = el("fw-report");
+    box.dataset.kind = tone;
+    el("fw-dismiss").hidden = !dismiss;
+    el("fw-copy-state").textContent = "";
+    box.hidden = false;
+    refreshReport();
+    el("fw-message").scrollIntoView({ block: "nearest" });
+  } catch {
+    el("fw-report").hidden = false;
+  }
+}
+
+function hideReport() {
+  diag.report = null;
+  el("fw-report").hidden = true;
+  el("fw-report-text").textContent = "";
+}
+
+function copyFallback(text) {
+  const before = document.activeElement;
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.opacity = "0";
+  area.style.fontSize = "16px";
+  document.body.append(area);
+  area.focus();
+  area.select();
+  area.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  before?.focus?.();
+  return ok;
+}
+
+function copyText(build, status) {
+  const done = (ok) => {
+    status.textContent = ok
+      ? "Copied. Paste it into an e-mail or a message to the FastWarp team."
+      : "The browser did not allow copying; open Show report and copy the text by hand.";
+  };
+  let text;
+  try {
+    text = build();
+  } catch {
+    done(false);
+    return;
+  }
+  if (!navigator.clipboard?.writeText) {
+    done(copyFallback(text));
+    return;
+  }
+  navigator.clipboard.writeText(text).then(
+    () => done(true),
+    () => done(copyFallback(text)),
+  );
+}
+
+function deviceReport() {
+  return safeReport("DeviceReport", "No problem; this report describes the device only.");
+}
+
+function currentPlatform() {
+  return platformOf(navigator.userAgent, navigator.maxTouchPoints ?? 0, diag.hints?.platformVersion ?? null);
+}
+
+async function settledPlatform() {
+  await Promise.race([diag.hintsReady, new Promise((resolve) => setTimeout(resolve, 500))]);
+  return currentPlatform();
+}
+
+function onDiag(kind, detail) {
+  const at_s = seconds(performance.now());
+  if (kind === "device") diag.device = detail;
+  else if (kind === "adapter") diag.workerAdapter = detail;
+  else if (kind === "console") {
+    diag.console.push({ at_s, ...detail });
+    if (diag.console.length > 20) diag.console.shift();
+  } else {
+    diag.events.push({ at_s, ...detail });
+    if (diag.events.length > 40) {
+      diag.events.shift();
+      diag.droppedEvents += 1;
+    }
+  }
+  refreshReport();
 }
 
 function updateButtons() {
@@ -185,7 +447,8 @@ function showAdapter(info) {
   el("fw-adapter-summary").replaceChildren("WebGPU · ", gpuName, ` · FastWarp ${info.fastwarp_version}`);
   el("fw-support").textContent = "";
   el("fw-adapter-box").hidden = false;
-  if (software) {
+  setMail(el("fw-device-mail"), deviceReport());
+  if (software && diag.report?.kind !== "UnfinishedRun") {
     message(
       "The browser gave FastWarp a software (CPU) adapter instead of a GPU. A registration will be very slow; use the 2 mm grid, or a browser and computer with WebGPU on the GPU.",
       "warning",
@@ -212,15 +475,64 @@ function fraction(p) {
   return start + (end - start) * (done / total);
 }
 
-function onProgress(p) {
+function crumb() {
+  const run = diag.run;
+  if (!run) return;
+  state.savedAt = performance.now();
+  saveRun({
+    started_utc: run.startedUtc,
+    grid: run.grid,
+    fixed: run.fixed,
+    moving: run.moving,
+    registration_grid: run.registrationGrid,
+    stage: run.stage,
+    elapsed_s: seconds(performance.now() - run.started),
+    wasm_bytes: diag.memory,
+    adapter: state.adapterLabel,
+  });
+}
+
+function onProgress(p, memory) {
+  const now = performance.now();
+  state.progressAt = now;
+  if (memory != null) diag.memory = memory;
+  if (state.stalled) {
+    state.stalled = false;
+    message("");
+    hideReport();
+  }
   el("fw-stage").textContent = describe(p);
   el("fw-progress").value = fraction(p);
   const key = `${p.phase}/${p.level}`;
+  const run = diag.run;
+  if (run) {
+    run.stage = { phase: p.phase, level: p.level ?? null, levels: p.levels ?? null, iteration: p.iteration ?? null, iterations: p.iterations ?? null, grid: p.grid ?? null };
+    run.progressAt = now;
+  }
   if (key !== state.lastKey) {
     state.lastKey = key;
     const [name] = PHASES[p.phase] ?? [p.phase];
     log(p.levels ? `${name}, level ${p.level} of ${p.levels}${p.grid ? ` (${p.grid.join(" x ")})` : ""}` : name);
+    if (run && run.timeline.length < 60) run.timeline.push([seconds(now - run.started), p.phase, p.levels ? p.level : null]);
+    crumb();
+  } else if (now - state.savedAt > 10000) {
+    crumb();
   }
+}
+
+function watchStall() {
+  if (!state.running || !state.posted || state.stalled || document.hidden) return;
+  const quiet = performance.now() - state.progressAt;
+  if (quiet < STALL_MS) return;
+  state.stalled = true;
+  const stage = diag.run?.stage ? describe(diag.run.stage) : "the start";
+  const minutes = Math.max(1, Math.round(quiet / 60000));
+  log(`No progress for ${minutes} minutes.`);
+  message(
+    `No progress for ${minutes} minutes (${stage}). The GPU may have stopped responding. You can wait, or cancel and try the 2 mm grid; the report below helps us find out why.`,
+    "warning",
+  );
+  showReport("Stall", `no progress for ${minutes} minutes during ${stageText(diag.run?.stage)}`, { tone: "warning" });
 }
 
 function zipEntries(buffer) {
@@ -245,16 +557,28 @@ function zipEntries(buffer) {
   return out;
 }
 
-function finish() {
+function finish(outcome) {
+  const wasRunning = state.running;
   state.running = false;
+  state.stalled = false;
   clearInterval(state.timer);
+  clearInterval(state.stallTimer);
+  clearInterval(state.beatTimer);
   clearTimeout(state.cancelTimer);
+  if (wasRunning && diag.run && !diag.run.end) {
+    diag.run.end = performance.now();
+    diag.run.outcome = outcome;
+    endRun(outcome === "ok");
+  }
   updateButtons();
 }
 
 function onDone(zip, memory, view) {
   const elapsed = (performance.now() - state.started) / 1000;
-  finish();
+  if (memory != null) diag.memory = memory;
+  finish("ok");
+  diag.previous = null;
+  hideReport();
   state.restarts = 0;
   el("fw-progress").value = 1;
   const entries = zipEntries(zip);
@@ -278,6 +602,7 @@ function onDone(zip, memory, view) {
     log(
       `Registration grid ${run.registration_grid.size.join(" x ")}; linear ${t.linear.toFixed(1)} s, SyN ${t.syn.toFixed(1)} s, total ${t.total.toFixed(1)} s; GPU memory peak ${bytes(run.peak_gpu_bytes)}`,
     );
+    if (diag.run) diag.run.registrationGrid = run.registration_grid.size;
   }
   if (memory) log(`WebAssembly memory of the worker: ${bytes(memory)}`);
   if (state.zipUrl) URL.revokeObjectURL(state.zipUrl);
@@ -304,23 +629,29 @@ function onDone(zip, memory, view) {
   });
 }
 
-function onError(name, text, phase) {
+function onError(name, text, phase, extra = {}) {
   const wasRunning = state.running;
-  finish();
+  if (extra.memory != null) diag.memory = extra.memory;
+  if (name !== "Cancelled") diag.error = { name, message: clip(text, 2000), phase, stack: extra.stack ?? null };
+  finish(name === "Cancelled" ? "cancelled" : "error");
   if (name === "Cancelled") {
     el("fw-stage").textContent = "Cancelled";
     message("The registration was cancelled.", "info");
+    hideReport();
     log("Cancelled.");
     result("cancelled");
     return;
   }
   const crashed = name === "RuntimeError" || name === "WorkerError";
+  const panic = lastPanic();
   const shown = crashed
-    ? `FastWarp stopped with an internal error (${text}). The page has restarted its worker; the browser's console may say more. If it happens again, try the 2 mm grid.`
+    ? `FastWarp stopped with an internal error (${clip(panic ?? text, 300)}). The page has restarted its worker. If it happens again, try the 2 mm grid.`
     : text;
   message(shown, "error");
   log(`Error (${name}): ${text}`);
+  if (panic) log(`Internal error: ${clip(panic, 600)}`);
   if (wasRunning) el("fw-stage").textContent = "Failed";
+  showReport(name, text);
   result("error", { name, message: text, phase });
   if (!crashed) return;
   if (state.restarts < 2) {
@@ -333,21 +664,41 @@ function onError(name, text, phase) {
   }
 }
 
+function startFailed(name, text, extra = {}) {
+  state.gpu = "failed";
+  updateButtons();
+  if (extra.memory != null) diag.memory = extra.memory;
+  diag.error = { name, message: clip(text, 2000), phase: "start", stack: extra.stack ?? null };
+  const panic = lastPanic();
+  const what = name === "RuntimeError" && panic ? `FastWarp stopped with an internal error (${clip(panic, 300)}).` : text;
+  diag.platform = currentPlatform();
+  const hint = /adapter/i.test(text) ? supportHint(diag.platform, "no-adapter") : "";
+  el("fw-support").textContent = "WebGPU could not be started.";
+  message(`${what} ${hint} The report below helps us find out which devices need a fix.`.replace(/\s+/g, " "), "error");
+  showReport(name, text);
+  result("error", { name, message: text, phase: "gpu_info" });
+}
+
 function startWorker(requestInfo = true) {
   state.worker?.terminate();
   dropSliceRequests();
   viewer.hide();
   const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
   worker.onmessage = ({ data }) => {
+    if (worker !== state.worker) return;
     if (data.type === "info") {
       state.ready = true;
+      diag.version = data.info.fastwarp_version ?? diag.version;
+      if (data.memory != null) diag.memory = data.memory;
       showAdapter(data.info);
       state.gpu = "ready";
       state.adapterLabel = adapterLabel(data.info);
       updateButtons();
       if (autorun === "sample") runSample();
+    } else if (data.type === "diag") {
+      onDiag(data.kind, data.detail ?? {});
     } else if (data.type === "progress") {
-      onProgress(data.progress);
+      onProgress(data.progress, data.memory);
     } else if (data.type === "done") {
       onDone(data.zip, data.memory, data.view);
     } else if (data.type === "slice") {
@@ -360,23 +711,18 @@ function startWorker(requestInfo = true) {
       pending?.reject(new Error(data.message));
     } else if (data.type === "error") {
       if (!state.ready && !state.running) {
-        state.gpu = "failed";
-        el("fw-support").textContent = "WebGPU could not be started.";
-        message(`${data.message} ${BROWSERS}`, "error");
-        result("error", { name: data.name, message: data.message, phase: "gpu_info" });
+        startFailed(data.name, data.message, data);
         return;
       }
-      onError(data.name, data.message, state.lastKey);
+      onError(data.name, data.message, state.lastKey, data);
     }
   };
   worker.onerror = (e) => {
     e.preventDefault?.();
     const text = e.message || "the worker could not be started";
     if (!state.ready && !state.running) {
-      state.gpu = "failed";
+      startFailed("WorkerError", text);
       el("fw-support").textContent = "FastWarp's worker could not be started.";
-      message(text, "error");
-      result("error", { name: "WorkerError", message: text, phase: "start" });
       return;
     }
     onError("WorkerError", text, state.lastKey);
@@ -390,6 +736,14 @@ function startWorker(requestInfo = true) {
   }
 }
 
+async function geometry(buffer) {
+  try {
+    return await niftiGeometry(buffer);
+  } catch {
+    return null;
+  }
+}
+
 async function run() {
   if (state.running) return;
   const { fixed, moving } = state.inputs;
@@ -400,12 +754,26 @@ async function run() {
   state.done = false;
   el("fw-log").textContent = "";
   message("");
+  hideReport();
   const grid = el("fw-grid").value;
   const token = ++state.runId;
   state.posted = false;
   state.running = true;
   state.started = performance.now();
+  state.progressAt = state.started;
   state.lastKey = "";
+  diag.error = null;
+  diag.run = {
+    grid,
+    fixed: null,
+    moving: null,
+    registrationGrid: null,
+    startedUtc: `${new Date().toISOString().slice(0, 16)}Z`,
+    started: state.started,
+    progressAt: state.started,
+    stage: null,
+    timeline: [],
+  };
   updateButtons();
   state.timer = setInterval(() => {
     el("fw-elapsed").textContent = clock(performance.now() - state.started);
@@ -423,7 +791,17 @@ async function run() {
     return;
   }
   if (token !== state.runId || !state.running) return;
+  const [fixedGeometry, movingGeometry] = await Promise.all(buffers.map(geometry));
+  if (token !== state.runId || !state.running) return;
+  diag.run.fixed = fixedGeometry;
+  diag.run.moving = movingGeometry;
+  diag.run.registrationGrid = isoDims(fixedGeometry, grid === "2mm" ? 2 : 1);
   state.posted = true;
+  state.progressAt = performance.now();
+  diag.run.progressAt = state.progressAt;
+  state.stallTimer = setInterval(watchStall, 5000);
+  state.beatTimer = setInterval(crumb, 10000);
+  crumb();
   state.worker.postMessage(
     { type: "run", fixed: buffers[0], moving: buffers[1], options: { grid } },
     buffers,
@@ -472,6 +850,61 @@ function runSample() {
   }
 }
 
+function showUnfinished(previous) {
+  const [name] = PHASES[previous.stage?.phase] ?? [previous.stage?.phase ?? "the start"];
+  const after = previous.elapsed_s != null ? ` after ${clock(previous.elapsed_s * 1000)}` : "";
+  const advice = previous.grid === "1mm" ? "Try the 2 mm grid." : "Try smaller images, or a computer with more memory.";
+  message(
+    `The last run on this page did not finish: it stopped during "${name}"${after}. If you did not close or reload the page yourself, the browser most likely closed it because it ran out of memory. ${advice} The report below helps us find out which devices need a fix.`,
+    "warning",
+  );
+  showReport("UnfinishedRun", `the page closed during ${stageText(previous.stage)}`, { tone: "warning", dismiss: true });
+}
+
+function setupReports() {
+  el("fw-copy").addEventListener("click", () => {
+    if (diag.report) copyText(() => reportText(safeReport(diag.report.kind, diag.report.text)), el("fw-copy-state"));
+  });
+  el("fw-mail").addEventListener("click", () => {
+    if (diag.report) setMail(el("fw-mail"), safeReport(diag.report.kind, diag.report.text));
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) state.progressAt = performance.now();
+  });
+  el("fw-report-box").addEventListener("toggle", refreshReport);
+  el("fw-dismiss").addEventListener("click", () => {
+    dismissUnfinished();
+    diag.previous = null;
+    hideReport();
+    message("");
+  });
+  el("fw-device-copy").addEventListener("click", () => copyText(() => reportText(deviceReport()), el("fw-device-state")));
+  el("fw-device-mail").addEventListener("click", () => setMail(el("fw-device-mail"), deviceReport()));
+  diag.hintsReady =
+    navigator.userAgentData
+      ?.getHighEntropyValues?.(["model", "platformVersion", "architecture"])
+      .then((values) => {
+        diag.hints = values;
+      })
+      .catch(() => {}) ?? Promise.resolve();
+}
+
+function adapterDetails(adapter) {
+  const i = adapter.info ?? {};
+  return {
+    info: {
+      vendor: i.vendor ?? "",
+      architecture: i.architecture ?? "",
+      device: i.device ?? "",
+      description: i.description ?? "",
+      fallback: Boolean(i.isFallbackAdapter ?? adapter.isFallbackAdapter ?? false),
+    },
+    features: featureList(adapter.features),
+    limits: limitsObject(adapter.limits),
+    wgsl: featureList(navigator.gpu.wgslLanguageFeatures ?? []),
+  };
+}
+
 async function main() {
   el("fw-grid").value = isMobile() ? "2mm" : "1mm";
   for (const key of ["fixed", "moving"]) {
@@ -501,32 +934,45 @@ async function main() {
     run();
   });
   el("fw-cancel").addEventListener("click", cancelRun);
+  setupReports();
   updateButtons();
 
-  if (!("gpu" in navigator)) {
+  diag.previous = takeUnfinished();
+  if (diag.previous) showUnfinished(diag.previous);
+
+  if (!navigator.gpu) {
     state.gpu = "failed";
+    updateButtons();
     el("fw-support").textContent = "This browser does not offer WebGPU.";
-    message(window.isSecureContext ? BROWSERS : `WebGPU needs a secure page (https or localhost). ${BROWSERS}`, "error");
+    diag.platform = await settledPlatform();
+    const hint = window.isSecureContext
+      ? supportHint(diag.platform, "no-gpu")
+      : "WebGPU needs a secure page (https or localhost).";
+    message(hint || BROWSERS, "error");
+    showReport("NoWebGPU", "navigator.gpu is missing");
     result("error", { name: "NoWebGPU", message: "navigator.gpu is missing" });
     return;
   }
   let adapter = null;
+  let adapterError = null;
   try {
     adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
-  } catch {
+  } catch (err) {
     adapter = null;
+    adapterError = `${err?.name}: ${err?.message ?? err}`;
   }
   if (!adapter) {
     state.gpu = "failed";
+    updateButtons();
     el("fw-support").textContent = "WebGPU is present, but the browser gave no GPU adapter.";
-    message(
-      `The GPU may be on the browser's block list, or WebGPU may be switched off (see chrome://gpu or about:support). ${BROWSERS}`,
-      "error",
-    );
+    diag.platform = await settledPlatform();
+    message(supportHint(diag.platform, "no-adapter") || BROWSERS, "error");
+    showReport("NoAdapter", adapterError ?? "requestAdapter returned null");
     result("error", { name: "NoAdapter", message: "requestAdapter returned null" });
     return;
   }
   state.jsAdapter = adapter.info ?? null;
+  diag.adapter = adapterDetails(adapter);
   const [haveWasm, haveFixed, haveMoving] = await Promise.all([
     exists("pkg/fastwarp_web_bg.wasm"),
     exists(SAMPLES.fixed),

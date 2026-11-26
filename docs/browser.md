@@ -6,6 +6,19 @@
 <link rel="stylesheet" href="_static/web/app.css">
 <div class="fw-demo" id="fw-demo">
   <p id="fw-message" class="fw-message" role="alert" hidden></p>
+  <div id="fw-report" class="fw-report" hidden>
+    <p class="fw-report-lead">Please send us the diagnostic report: it holds your browser, your GPU and its limits, the image sizes and the error, never your images or file names. Nothing is sent until you send it yourself.</p>
+    <div class="fw-report-actions">
+      <a id="fw-mail" class="fw-button" hidden>Send report via e-mail</a>
+      <button type="button" id="fw-copy" class="fw-secondary">Copy diagnostic report</button>
+      <button type="button" id="fw-dismiss" class="fw-secondary" hidden>Dismiss</button>
+    </div>
+    <p id="fw-copy-state" class="fw-small" role="status"></p>
+    <details id="fw-report-box" class="fw-more">
+      <summary>Show report</summary>
+      <pre id="fw-report-text" class="fw-log"></pre>
+    </details>
+  </div>
   <form id="fw-form">
     <fieldset class="fw-files-in">
       <label class="fw-pick" id="fw-pick-fixed">
@@ -114,6 +127,11 @@
     <details id="fw-adapter-box" class="fw-more" hidden>
       <summary id="fw-adapter-summary">WebGPU</summary>
       <dl id="fw-adapter" class="fw-adapter"></dl>
+      <p class="fw-device-report">
+        <button type="button" id="fw-device-copy" class="fw-secondary">Copy device report</button>
+        <a id="fw-device-mail" class="fw-button fw-secondary" hidden>Send device report via e-mail</a>
+        <span id="fw-device-state" role="status"></span>
+      </p>
     </details>
   </div>
 </div>
@@ -165,6 +183,36 @@ GPUs. One image pair only: several channels, masks and other recipes need the
   compressed files) run on one core. On one laptop GPU (Intel Arc 140V) Chrome registered the
   sample in 13 s on the 2 mm grid and in 33 s on the 1 mm grid; `fastwarp register` took 2.5 s
   for the 2 mm grid on the same GPU.
+
+## Problems?
+
+When the page cannot use WebGPU, or a run fails or makes no progress for three minutes, the page
+says what happened and what to try, and offers a diagnostic report. When a run did not finish
+because the browser closed or reloaded the page (phones do this when a tab needs too much memory),
+the page says so the next time you open it, until a run succeeds or you dismiss the note.
+
+- **Send report via e-mail** opens your mail app with a short report addressed to the FastWarp
+  maintainers. You can read and change it before you send it. Mail apps limit the length of such
+  a message, so it holds the main points only and says what it left out.
+- **Copy diagnostic report** copies the full report, to paste into an e-mail or a
+  [GitHub issue](https://github.com/WyssCenter/fastwarp/issues). **Show report** shows it.
+- **Copy device report** and **Send device report via e-mail**, under *WebGPU* below the demo, do
+  the same when nothing went wrong: a report from a device where the demo works helps as well.
+
+The report contains the browser and operating system (the user agent and the browser's brand
+names, and in Chrome the device model, the operating system version and the processor
+architecture), the number of processor cores and the browser's memory class, the address of this
+page without the site name, the GPU's name, the WebGPU limits and features the browser offers and
+those FastWarp asked for and got, the grid, the size and voxel spacing of both images, the time the
+report was made and the run started (to the minute, in UTC), how far the run got and when it
+reached each step, the memory of the WebAssembly module and of the page's JavaScript, and the
+error messages of the browser, the GPU and FastWarp.
+
+It never contains your images or any part of them, the text fields of their headers, file names,
+or anything else from your computer. The page sends nothing: the report leaves your device only
+when you send the e-mail or paste the text somewhere yourself. The note about an unfinished run is
+kept in your browser's local storage on your device; it holds the same kind of information and is
+removed after the next successful run or when you dismiss it.
 
 ## Checking the result
 
