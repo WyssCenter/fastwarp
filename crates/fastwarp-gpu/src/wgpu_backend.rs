@@ -604,16 +604,21 @@ impl WgpuBackend {
         *self.trimmed_for.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
-    /// Turns per-operation GPU timing on or off. While on, every operation is submitted alone and
-    /// waited for (timestamps bracket its commands), so wall-clock time grows. On wasm32, run one
-    /// operation at a time while profiling: the timestamp read-back buffer and the uniform ring are
-    /// shared while an operation waits.
+    #[doc(hidden)]
+    pub fn invert_indirect_min_groups(&self) -> u32 {
+        self.invert_indirect_min_groups.load(Ordering::Relaxed)
+    }
+
     #[doc(hidden)]
     pub fn set_invert_indirect_min_groups(&self, groups: u32) {
         self.invert_indirect_min_groups
             .store(groups, Ordering::Relaxed);
     }
 
+    /// Turns per-operation GPU timing on or off. While on, every operation is submitted alone and
+    /// waited for (timestamps bracket its commands), so wall-clock time grows. On wasm32, run one
+    /// operation at a time while profiling: the timestamp read-back buffer and the uniform ring are
+    /// shared while an operation waits.
     pub fn set_profiling(&self, enabled: bool) {
         let mut p = self.profile.lock().unwrap_or_else(|p| p.into_inner());
         p.enabled = enabled;

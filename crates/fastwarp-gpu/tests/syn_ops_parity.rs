@@ -246,13 +246,14 @@ fn the_indirect_and_direct_inversions_are_bit_identical() {
         ]);
         bits(&flat)
     };
+    let default = b.invert_indirect_min_groups();
     for params in [InvertParams::SYN, every_step] {
         let indirect = run(&params);
         b.set_invert_indirect_min_groups(u32::MAX);
         let direct = run(&params);
         b.set_invert_indirect_min_groups(0);
         let always = run(&params);
-        b.set_invert_indirect_min_groups(2048);
+        b.set_invert_indirect_min_groups(default);
         assert_eq!(indirect, direct);
         assert_eq!(indirect, always);
     }
