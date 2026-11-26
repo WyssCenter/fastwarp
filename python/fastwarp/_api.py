@@ -18,6 +18,7 @@ import numpy as np
 from ._core import (
     CancelToken,
     GpuUnavailableError,
+    RegistrationCancelled,
     gpu_info,
 )
 from ._core import LinearSession as _LinearSession
@@ -1084,7 +1085,8 @@ def register_atlases(
     does. Up to four atlases are registered and resampled at the same time, as many as fit the
     GPU's memory and the computer's free memory (one at a time on an integrated GPU, or when the
     GPU reports no memory size); the files are the same as when they run one after the other. The
-    first failure, a cancelled ``cancel`` or an interrupt stops the atlases still running.
+    first failure, a cancelled ``cancel`` or an interrupt stops the atlases still running; the
+    files of the atlases that had finished remain in ``out_dir``.
     Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
     :func:`register_syn`), ``atlasNN_Warped.nii.gz`` (one file per modality after the first:
     ``atlasNN_Warped2.nii.gz``, ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
@@ -1147,13 +1149,20 @@ def register_atlases(
             recipe=recipe,
         )
         composite = f"{prefix}Composite.h5"
+
+        def go_on() -> None:
+            if stop.cancelled:
+                raise RegistrationCancelled(f"register_atlases: atlas {i} cancelled")
+
         files = []
         for m, image in enumerate(_modalities(atlas)):
+            go_on()
             path = Path(f"{prefix}Warped{'' if m == 0 else m + 1}.nii.gz")
             _warp_file(image, reference, composite, str(path), labels=False)
             files.append(path)
         label_path = None
         if labels is not None:
+            go_on()
             label_path = Path(f"{prefix}WarpedLabels.nii.gz")
             _warp_file(labels[i - 1], reference, composite, str(label_path), labels=True)
         return files, label_path, Path(composite)
