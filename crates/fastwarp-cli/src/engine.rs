@@ -434,6 +434,21 @@ pub fn apply_masks(
     Ok(())
 }
 
+/// Refuses before any work a plan whose SyN stages use Mattes MI on a GPU whose dense MI kernels
+/// failed their known-answer check, as [`Failure::GpuUnavailable`].
+pub fn check_mi_available(gpu: &WgpuBackend, plan: &StagePlan) -> Result<(), Failure> {
+    if !plan.syn.iter().any(|s| s.uses(SynMetric::Mattes)) {
+        return Ok(());
+    }
+    match gpu.selftest_record().mi_dense_failure {
+        Some(why) => Err(Failure::GpuUnavailable(format!(
+            "this GPU cannot run SyN stages with Mattes mutual information: its dense MI \
+             kernels failed the known-answer check ({why})"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The pre-flight capacity check of every stage of `plan` for a `dims` registration grid and a
 /// `moving_dims` moving grid: the linear stages (their sample buffers summed over the chain) and
 /// the SyN stages, each with the grid sizes of its masks (`syn_masks`, one list per SyN stage,
@@ -521,6 +536,7 @@ where
     guarded(move || {
         let t_all = Instant::now();
         let g = checkout_gpu(adapter)?;
+        check_mi_available(&g, &recipe.plan)?;
         let caps = CapacityCaps::from_context(g.context());
         let dims = iso_dims(fixed[0].grid(), iso_mm);
         let moving_dims = moving
@@ -678,6 +694,7 @@ pub fn registrations_at_once(
 ) -> Result<usize, Failure> {
     check_masks_used(recipe, masks.fixed.is_some(), masks.moving.is_some())?;
     let g = checkout_gpu(adapter)?;
+    check_mi_available(&g, &recipe.plan)?;
     let ctx = g.context();
     let shared = matches!(ctx.info.device_type.as_str(), "IntegratedGpu" | "Cpu");
     if shared || CapacityCaps::budget_is_guess(ctx) {
@@ -724,9 +741,10 @@ pub fn capacity_check(
     masks: &MaskDims,
 ) -> Result<Result<(), String>, Failure> {
     check_masks_used(recipe, masks.fixed.is_some(), masks.moving.is_some())?;
-    let g = open_gpu(adapter)?;
+    let g = checkout_gpu(adapter)?;
+    check_mi_available(&g, &recipe.plan)?;
     let caps = CapacityCaps::from_context(g.context());
-    Ok(check_plan_capacity(
+    let fits = check_plan_capacity(
         &recipe.plan,
         dims,
         moving_dims.unwrap_or(dims),
@@ -734,7 +752,9 @@ pub fn capacity_check(
         &masks.per_syn_stage(recipe),
         &caps,
     )
-    .map_err(|e| e.to_string()))
+    .map_err(|e| e.to_string());
+    g.finish();
+    Ok(fits)
 }
 
 /// The chain `ants.apply_transforms(transformlist=transforms, whichtoinvert=invert)` and
@@ -918,6 +938,92 @@ pub fn open_linear(
 mod tests {
     use super::*;
     use fastwarp_reg::linalg::IDENTITY3;
+
+    fn require_adapter() -> bool {
+        fastwarp_gpu::device::env_var("FASTWARP_GPU_REQUIRE_ADAPTER")
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false)
+    }
+
+    fn idle_gpu_without_dense_mi() -> Option<String> {
+        let mut gpu = match open_gpu(None) {
+            Ok(g) => g,
+            Err(e) => {
+                assert!(
+                    !require_adapter(),
+                    "no GPU adapter with FASTWARP_GPU_REQUIRE_ADAPTER set: {e}"
+                );
+                eprintln!("skip: {e}");
+                return None;
+            }
+        };
+        gpu.disable_dense_mi("forced for the test");
+        let adapter = gpu.context().info.name.clone();
+        IDLE_GPUS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push((gpu_key(Some(&adapter)), gpu));
+        Some(adapter)
+    }
+
+    fn assert_refused<T: fmt::Debug>(r: Result<T, Failure>) {
+        match r {
+            Err(Failure::GpuUnavailable(m)) => {
+                assert!(m.contains("Mattes"), "{m}");
+                assert!(m.contains("forced for the test"), "{m}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mattes_on_a_gpu_that_failed_its_dense_check_is_refused_before_any_work() {
+        let cc = Recipe::cohort(1);
+        let mut mattes = cc.clone();
+        mattes.plan.syn[0].channel_metrics = vec![SynMetric::Mattes];
+        let none = MaskDims::default();
+        let Some(adapter) = idle_gpu_without_dense_mi() else {
+            return;
+        };
+        let fits = capacity_check([8; 3], None, 1, Some(adapter.clone()), &cc, &none);
+        assert!(matches!(fits, Ok(Ok(()))), "{fits:?}");
+        assert_refused(capacity_check(
+            [8; 3],
+            None,
+            1,
+            Some(adapter.clone()),
+            &mattes,
+            &none,
+        ));
+        idle_gpu_without_dense_mi().unwrap();
+        assert_refused(registrations_at_once(
+            [8; 3],
+            None,
+            1,
+            Some(adapter.clone()),
+            &mattes,
+            &none,
+            512,
+            4,
+        ));
+        idle_gpu_without_dense_mi().unwrap();
+        let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let image = || vec![Volume::from_vec(g, vec![0.0; 512]).unwrap()];
+        let mut wrote = false;
+        assert_refused(register_with(
+            image(),
+            image(),
+            1.0,
+            Some(adapter),
+            None,
+            mattes,
+            |_, _, _| {
+                wrote = true;
+                Ok((Vec::new(), 0.0))
+            },
+        ));
+        assert!(!wrote);
+    }
 
     #[test]
     fn iso_dims_keeps_a_matching_spacing_and_floors_otherwise() {

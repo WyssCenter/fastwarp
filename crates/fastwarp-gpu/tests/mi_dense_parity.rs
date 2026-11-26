@@ -190,6 +190,37 @@ fn the_mattes_pair_matches_the_cpu_in_both_directions() {
         }
         compare(&format!("{dims:?} masked forward"), v1, c1, &g1, &e1);
         compare(&format!("{dims:?} masked backward"), v2, c2, &g2, &e2);
+        for (label, gpu_masks, cpu_masks) in [
+            ("fixed mask only", (Some(&gfm), None), (Some(&fm), None)),
+            ("moving mask only", (None, Some(&gmm)), (None, Some(&mm))),
+        ] {
+            let ((v1, d1), (v2, d2)) =
+                block_on(b.mi_value_derivative_pair_masked(&ga, &gb, gpu_masks.0, gpu_masks.1, 32))
+                    .unwrap();
+            let ((c1, e1), (c2, e2)) = cpu
+                .mi_value_derivative_pair_masked(&fa, &fb, cpu_masks.0, cpu_masks.1, 32)
+                .unwrap();
+            let open = cpu.mi_value_derivative_pair(&fa, &fb, 32).unwrap();
+            assert_ne!(
+                c1.to_bits(),
+                open.0 .0.to_bits(),
+                "{label}: the mask matters"
+            );
+            compare(
+                &format!("{dims:?} {label} forward"),
+                v1,
+                c1,
+                &download(&b, &d1),
+                &e1,
+            );
+            compare(
+                &format!("{dims:?} {label} backward"),
+                v2,
+                c2,
+                &download(&b, &d2),
+                &e2,
+            );
+        }
     }
 }
 

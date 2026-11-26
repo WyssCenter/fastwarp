@@ -553,6 +553,10 @@ impl WgpuBackend {
     #[doc(hidden)]
     pub fn disable_dense_mi(&mut self, why: &str) {
         self.mi_dense_failure = Some(why.to_string());
+        self.selftest
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .mi_dense_failure = Some(why.to_string());
     }
 
     fn selftest_failed(&self, family: &str, failures: &[String]) -> GpuError {

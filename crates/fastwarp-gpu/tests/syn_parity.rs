@@ -327,6 +327,7 @@ fn mattes_syn_matches_the_cpu_reference_alone_mixed_and_masked() {
     let mut one = small_recipe(&[(2, 1.0, 20), (1, 0.0, 12)], 2);
     one.convergence_threshold = -1.0;
     one.channel_metrics = vec![SynMetric::Mattes];
+    one.gradient_step = 0.2;
     let p24 = phantom(24, 2.0, 2.0);
     let c = compare(&gpu, &p24, &one, false, &SynOptions::default());
     report("blob 24^3 T1, MI", &c);
@@ -341,6 +342,7 @@ fn mattes_syn_matches_the_cpu_reference_alone_mixed_and_masked() {
     let mut mixed = small_recipe(&[(2, 1.0, 12), (1, 0.0, 6)], 2);
     mixed.convergence_threshold = -1.0;
     mixed.channel_weights = vec![0.5, 0.5];
+    mixed.gradient_step = 0.2;
     mixed.channel_metrics = vec![SynMetric::Cc, SynMetric::Mattes];
     let fixed_only = SynRecipe {
         fixed_mask: Some(mask_without_ball(p16.grid, [5.0, 3.0, -2.0], 5.0)),
@@ -350,12 +352,20 @@ fn mattes_syn_matches_the_cpu_reference_alone_mixed_and_masked() {
         moving_mask: Some(mask_without_ball(p16.grid, [-4.0, 4.5, 3.5], 5.0)),
         ..fixed_only.clone()
     };
-    for (label, recipe) in [
-        ("blob 16^3 T1 CC + T2 MI", &mixed),
-        ("blob 16^3 T1 CC + T2 MI, fixed mask", &fixed_only),
-        ("blob 16^3 T1 CC + T2 MI, both masks", &both),
+    let mi_first = SynRecipe {
+        channel_metrics: vec![SynMetric::Mattes, SynMetric::Cc],
+        ..both.clone()
+    };
+    let mut p16s = phantom(16, 2.0, 1.5);
+    std::mem::swap(&mut p16s.fixed, &mut p16s.fixed2);
+    std::mem::swap(&mut p16s.moving, &mut p16s.moving2);
+    for (label, p, recipe) in [
+        ("blob 16^3 T1 CC + T2 MI", &p16, &mixed),
+        ("blob 16^3 T1 CC + T2 MI, fixed mask", &p16, &fixed_only),
+        ("blob 16^3 T1 CC + T2 MI, both masks", &p16, &both),
+        ("blob 16^3 T2 MI + T1 CC, both masks", &p16s, &mi_first),
     ] {
-        let c = compare(&gpu, &p16, recipe, true, &SynOptions::default());
+        let c = compare(&gpu, p, recipe, true, &SynOptions::default());
         report(label, &c);
         assert!(
             c.warp_rms_diff / c.warp_rms < 0.05,
