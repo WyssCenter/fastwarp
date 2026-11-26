@@ -18,7 +18,7 @@ updates:
       default-days: 7
     versioning-strategy: lockfile-only
   - package-ecosystem: uv
-    directory: /
+    directories: ["/", "/scripts/itk_fixtures"]
     multi-ecosystem-group: dependencies
     patterns: ["*"]
     cooldown:

@@ -1894,6 +1894,61 @@ impl Backend for WgpuBackend {
         Ok((cc_pair(out)?, norms))
     }
 
+    async fn mi_value_derivative_pair(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        bins: usize,
+    ) -> RegResult<MetricPair<GpuField>> {
+        Ok(self
+            .mi_dense_pair(fixed, moving, None, bins, false)
+            .await?
+            .0)
+    }
+
+    async fn mi_value_derivative_pair_masked(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        fixed_mask: &GpuImage,
+        moving_mask: &GpuImage,
+        bins: usize,
+    ) -> RegResult<MetricPair<GpuField>> {
+        Ok(self
+            .mi_dense_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins, false)
+            .await?
+            .0)
+    }
+
+    async fn mi_value_derivative_pair_with_norms(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        bins: usize,
+    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
+        match self.mi_dense_pair(fixed, moving, None, bins, true).await? {
+            (pair, Some(norms)) => Ok((pair, norms)),
+            _ => Err(bad("the Mattes pair produced no norms")),
+        }
+    }
+
+    async fn mi_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &GpuImage,
+        moving: &GpuImage,
+        fixed_mask: &GpuImage,
+        moving_mask: &GpuImage,
+        bins: usize,
+    ) -> RegResult<(MetricPair<GpuField>, [f64; 2])> {
+        match self
+            .mi_dense_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins, true)
+            .await?
+        {
+            (pair, Some(norms)) => Ok((pair, norms)),
+            _ => Err(bad("the Mattes pair produced no norms")),
+        }
+    }
+
     async fn smooth_field(&self, field: GpuField, variance: f64) -> RegResult<GpuField> {
         if variance <= 0.0 {
             return Ok(field);

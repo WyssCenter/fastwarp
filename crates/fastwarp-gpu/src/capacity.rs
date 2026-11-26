@@ -53,6 +53,13 @@ const PRIOR_FIELD_BYTES_PER_VOXEL: u64 = 12;
 /// The share of the per-voxel figures held by the nine displacement fields of a level.
 const LEVEL_FIELD_BYTES_PER_VOXEL: u64 = 9 * 12;
 const SYN_WORKGROUP: [u64; 3] = [8, 8, 4];
+/// Voxels per workgroup of the dense Mattes histogram on small grids, and the most workgroups it
+/// uses on large ones (`wgpu_backend/mi/dense.rs`).
+const MATTES_CHUNK: u64 = 4096;
+const MATTES_MAX_GROUPS: u64 = 4096;
+/// Bytes of one 64-bit histogram of the dense Mattes metric: 1024 joint cells and 32 marginals.
+const MATTES_HISTOGRAM_BYTES: u64 = 1056 * 8;
+const MATTES_MAX_STRIPES: u64 = 64;
 const SYN_REDUCTION_GROUP: u64 = 256;
 const SYN_REDUCTION_MAX_GROUPS_X: u64 = 32768;
 
@@ -421,6 +428,37 @@ pub fn plan_capacity_pair(
     plan_capacity_syn(grid_dims, moving_dims, channels, &[1], caps)
 }
 
+/// Voxels per workgroup of the dense Mattes histogram on a grid of `voxels`: 4096, or more (a
+/// multiple of 256) so that at most 4096 workgroups and partial histograms are needed.
+pub(crate) fn mattes_chunk(voxels: u64) -> u64 {
+    voxels
+        .div_ceil(MATTES_MAX_GROUPS)
+        .div_ceil(256)
+        .saturating_mul(256)
+        .max(MATTES_CHUNK)
+}
+
+/// The largest binding of a dense Mattes pair evaluation besides the images and fields: the
+/// partial histograms of every workgroup.
+fn mattes_partials_bytes(voxels: u64) -> u64 {
+    voxels
+        .div_ceil(mattes_chunk(voxels))
+        .max(1)
+        .saturating_mul(MATTES_HISTOGRAM_BYTES)
+}
+
+/// What a dense Mattes pair evaluation acquires besides its two derivative fields: the partial
+/// histograms, the stripe sums, the two merged histograms, the two ratio tables and the range
+/// partials. Bounded by about 35 MB whatever the grid.
+fn mattes_histogram_bytes(voxels: u64) -> u64 {
+    let groups = voxels.div_ceil(mattes_chunk(voxels)).max(1);
+    let stripes = groups.div_ceil(groups.div_ceil(MATTES_MAX_STRIPES));
+    mattes_partials_bytes(voxels)
+        .saturating_add((stripes + 2).saturating_mul(MATTES_HISTOGRAM_BYTES))
+        .saturating_add(2 * 1024 * 4)
+        .saturating_add(groups.saturating_mul(16) + 16)
+}
+
 fn voxel_count(dims: [usize; 3]) -> u64 {
     dims.iter()
         .fold(1u64, |acc, d| acc.saturating_mul(*d as u64))
@@ -441,7 +479,8 @@ fn syn_partial_bytes(dims: [usize; 3], voxels: u64, masked: bool) -> u64 {
 /// grid: the finest level's working set, plus the buffers of every coarser level that the pool
 /// keeps (those below [`RETAIN_FLOOR_BYTES`], or all of a level that follows a larger one), the
 /// last field resampled from the previous level (idle until the next trim, which one channel
-/// never reaches), plus [`SELFTEST_POOL_BYTES`].
+/// never reaches), the histogram buffers of a dense Mattes evaluation, plus
+/// [`SELFTEST_POOL_BYTES`].
 pub fn plan_capacity_syn(
     grid_dims: [usize; 3],
     moving_dims: [usize; 3],
@@ -475,7 +514,8 @@ pub fn plan_capacity_syn_masked(
     let largest_binding_bytes = voxels
         .saturating_mul(LARGEST_BINDING_BYTES_PER_VOXEL)
         .max(moving_voxels.saturating_mul(MOVING_IMAGE_BYTES_PER_VOXEL))
-        .max(mask_bytes.iter().copied().max().unwrap_or(0));
+        .max(mask_bytes.iter().copied().max().unwrap_or(0))
+        .max(mattes_partials_bytes(voxels));
     let per_voxel = LEVEL_BYTES_PER_VOXEL_TWO_CHANNELS - LEVEL_BYTES_PER_VOXEL_PER_CHANNEL
         + LEVEL_BYTES_PER_VOXEL_PER_CHANNEL.saturating_mul(channels - 1)
         + if masked { MASK_BYTES_PER_VOXEL } else { 0 };
@@ -526,6 +566,7 @@ pub fn plan_capacity_syn_masked(
         .saturating_add(coarser_bytes)
         .saturating_add(stale_field_bytes)
         .saturating_add(mask_bytes.iter().fold(0u64, |a, b| a.saturating_add(*b)))
+        .saturating_add(mattes_histogram_bytes(voxels))
         .saturating_add(SELFTEST_POOL_BYTES);
     if largest_binding_bytes > caps.max_storage_buffer_binding_size {
         return Err(CapacityError::Binding {
@@ -1091,13 +1132,13 @@ mod tests {
         assert!(plan.largest_binding_bytes < GIB, "{plan:?}");
         assert_eq!(
             plan.level_total_bytes,
-            197 * 233 * 189 * 188 + SELFTEST_POOL_BYTES
+            197 * 233 * 189 * 188 + mattes_histogram_bytes(197 * 233 * 189) + SELFTEST_POOL_BYTES
         );
         assert!(plan.level_total_bytes < 17 * GIB, "{plan:?}");
         let one = plan_capacity([197, 233, 189], 1, &arc()).expect("one channel must fit");
         assert_eq!(
             one.level_total_bytes,
-            197 * 233 * 189 * 168 + SELFTEST_POOL_BYTES
+            197 * 233 * 189 * 168 + mattes_histogram_bytes(197 * 233 * 189) + SELFTEST_POOL_BYTES
         );
     }
 
@@ -1111,6 +1152,7 @@ mod tests {
             (plan_capacity([10, 10, 10], channels, &caps)
                 .unwrap()
                 .level_total_bytes
+                - mattes_histogram_bytes(1000)
                 - SELFTEST_POOL_BYTES)
                 / 1000
         };
@@ -1128,7 +1170,7 @@ mod tests {
         assert!(plan.largest_binding_bytes < GIB, "{plan:?}");
         assert_eq!(
             plan.level_total_bytes,
-            394 * 466 * 378 * 188 + SELFTEST_POOL_BYTES
+            394 * 466 * 378 * 188 + mattes_histogram_bytes(394 * 466 * 378) + SELFTEST_POOL_BYTES
         );
         assert!(plan.level_total_bytes < 17 * GIB, "{plan:?}");
     }
@@ -1352,7 +1394,10 @@ mod tests {
         assert_eq!(partials, 3 * 3 * 6 * 20 + 54 * 4);
         assert_eq!(
             syn_total([48; 3], 1, &[2, 1]),
-            (48u64.pow(3) + 24u64.pow(3)) * 168 + partials + SELFTEST_POOL_BYTES
+            (48u64.pow(3) + 24u64.pow(3)) * 168
+                + partials
+                + mattes_histogram_bytes(48u64.pow(3))
+                + SELFTEST_POOL_BYTES
         );
         assert_eq!(
             syn_total([48; 3], 2, &[2, 1]) - syn_total([48; 3], 2, &[1]),
@@ -1395,7 +1440,7 @@ mod tests {
             .to_string();
         assert_eq!(
             text,
-            "the SyN stage on the registration grid [197, 233, 189] needs 1658255740 bytes of device \
+            "the SyN stage on the registration grid [197, 233, 189] needs 1676739820 bytes of device \
              memory, but the budget is 1073741824 bytes"
         );
     }
@@ -1429,6 +1474,19 @@ mod tests {
             let cohort = syn_total([197, 233, 189], channels, &[8, 4, 2, 1]);
             assert!(cohort > single);
             assert!(cohort - single < single / 50, "{cohort} vs {single}");
+        }
+    }
+
+    #[test]
+    fn the_dense_mattes_histogram_stays_bounded_on_large_grids() {
+        assert_eq!(mattes_chunk(1000), 4096);
+        assert_eq!(mattes_chunk(4096 * 4096), 4096);
+        assert_eq!(mattes_chunk(4096 * 4096 + 1), 4352);
+        for n in [1u64, 1 << 20, 256 * 256 * 256, 512 * 512 * 512, 1 << 32] {
+            let groups = n.div_ceil(mattes_chunk(n));
+            assert!(groups <= MATTES_MAX_GROUPS, "{n}: {groups}");
+            assert!(mattes_partials_bytes(n) <= 128 << 20, "{n}");
+            assert!(mattes_histogram_bytes(n) < 40_000_000, "{n}");
         }
     }
 }

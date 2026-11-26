@@ -19,6 +19,7 @@ use crate::grid::Grid;
 use crate::interp::linear_at_point;
 use crate::mask::nearest_voxel;
 use crate::metric::cc::{CcInputs, CcMetric};
+use crate::metric::mi::{MattesMi, MiDenseInputs};
 use crate::transform::{AffineTransform, TransformChain};
 use crate::volume::Volume;
 
@@ -187,6 +188,61 @@ impl CpuBackend {
     }
 
     #[doc(hidden)]
+    pub fn mi_value_derivative_pair(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        bins: usize,
+    ) -> Result<MetricPair<VectorField>> {
+        mi_pair(fixed, moving, None, bins)
+    }
+
+    #[doc(hidden)]
+    pub fn mi_value_derivative_pair_masked(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        fixed_mask: &Volume<f64>,
+        moving_mask: &Volume<f64>,
+        bins: usize,
+    ) -> Result<MetricPair<VectorField>> {
+        for (what, mask) in [("fixed", fixed_mask), ("moving", moving_mask)] {
+            if mask.grid() != fixed.grid() {
+                return Err(invalid(
+                    "mattes",
+                    format!("the {what} mask is not on the grid of the images"),
+                ));
+            }
+        }
+        mi_pair(fixed, moving, Some((fixed_mask, moving_mask)), bins)
+    }
+
+    pub(crate) fn mi_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        bins: usize,
+    ) -> Result<(MetricPair<VectorField>, [f64; 2])> {
+        let pair = self.mi_value_derivative_pair(fixed, moving, bins)?;
+        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        Ok((pair, norms))
+    }
+
+    pub(crate) fn mi_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Volume<f64>,
+        moving: &Volume<f64>,
+        fixed_mask: &Volume<f64>,
+        moving_mask: &Volume<f64>,
+        bins: usize,
+    ) -> Result<(MetricPair<VectorField>, [f64; 2])> {
+        let pair =
+            self.mi_value_derivative_pair_masked(fixed, moving, fixed_mask, moving_mask, bins)?;
+        let norms = [self.l2_norm(&pair.0 .1)?, self.l2_norm(&pair.1 .1)?];
+        Ok((pair, norms))
+    }
+
+    #[doc(hidden)]
     pub fn smooth_field(&self, field: VectorField, variance: f64) -> Result<VectorField> {
         if variance <= 0.0 {
             return Ok(field);
@@ -294,6 +350,39 @@ impl CpuBackend {
     }
 }
 
+fn mi_pair(
+    fixed: &Volume<f64>,
+    moving: &Volume<f64>,
+    masks: Option<(&Volume<f64>, &Volume<f64>)>,
+    bins: usize,
+) -> Result<MetricPair<VectorField>> {
+    let grid = *fixed.grid();
+    if moving.grid() != &grid {
+        return Err(invalid("mattes", "the images are not on one grid"));
+    }
+    let identity = TransformChain::new();
+    let metric = MattesMi { bins };
+    let run = |a: &Volume<f64>, b: &Volume<f64>, ma, mb| -> Result<(f64, VectorField)> {
+        let e = metric.evaluate_dense(
+            &MiDenseInputs {
+                virtual_grid: &grid,
+                fixed: a,
+                moving: b,
+                fixed_transform: &identity,
+                moving_transform: &identity,
+                fixed_mask: ma,
+                moving_mask: mb,
+            },
+            true,
+        )?;
+        Ok((e.value, VectorField::from_vec(grid, e.derivative)?))
+    };
+    let (fm, mm) = masks.map_or((None, None), |(f, m)| (Some(f), Some(m)));
+    let first = run(fixed, moving, fm, mm)?;
+    let second = run(moving, fixed, mm, fm)?;
+    Ok((first, second))
+}
+
 impl Backend for CpuBackend {
     type Image = Volume<f64>;
     type Field = VectorField;
@@ -396,6 +485,60 @@ impl Backend for CpuBackend {
         radius: usize,
     ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
         CpuBackend::cc_value_derivative_pair_with_norms(self, fixed, moving, radius)
+    }
+
+    async fn mi_value_derivative_pair(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        bins: usize,
+    ) -> Result<MetricPair<Self::Field>> {
+        CpuBackend::mi_value_derivative_pair(self, fixed, moving, bins)
+    }
+
+    async fn mi_value_derivative_pair_masked(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        fixed_mask: &Self::Image,
+        moving_mask: &Self::Image,
+        bins: usize,
+    ) -> Result<MetricPair<Self::Field>> {
+        CpuBackend::mi_value_derivative_pair_masked(
+            self,
+            fixed,
+            moving,
+            fixed_mask,
+            moving_mask,
+            bins,
+        )
+    }
+
+    async fn mi_value_derivative_pair_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        bins: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        CpuBackend::mi_value_derivative_pair_with_norms(self, fixed, moving, bins)
+    }
+
+    async fn mi_value_derivative_pair_masked_with_norms(
+        &self,
+        fixed: &Self::Image,
+        moving: &Self::Image,
+        fixed_mask: &Self::Image,
+        moving_mask: &Self::Image,
+        bins: usize,
+    ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
+        CpuBackend::mi_value_derivative_pair_masked_with_norms(
+            self,
+            fixed,
+            moving,
+            fixed_mask,
+            moving_mask,
+            bins,
+        )
     }
 
     async fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field> {

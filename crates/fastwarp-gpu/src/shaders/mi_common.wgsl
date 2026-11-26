@@ -18,8 +18,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Portions derived from ITK `itkBSplineKernelFunction.h`, `itkBSplineDerivativeKernelFunction.h`
-// (order 3), `itkLinearInterpolateImageFunction.h`, `itkImageFunction.hxx` (`IsInsideBuffer`),
+// Portions derived from ITK `itkLinearInterpolateImageFunction.h`, `itkImageFunction.hxx` (`IsInsideBuffer`),
 // `itkCentralDifferenceImageFunction.hxx` and the per-point steps of
 // `itkMattesMutualInformationImageToImageMetricv4GetValueAndDerivativeThreader.hxx`
 // (`ProcessPoint`). See `docs/THIRD_PARTY_PORTS.md`.
@@ -80,35 +79,6 @@ fn tri(c: vec3<f32>, nx: u32, ny: u32, nz: u32) -> f32 {
     let c0 = c00 + (c10 - c00) * t.y;
     let c1 = c01 + (c11 - c01) * t.y;
     return c0 + (c1 - c0) * t.z;
-}
-
-fn b3(u: f32) -> f32 {
-    let a = abs(u);
-    if (a < 1.0) {
-        let s = a * a;
-        return (4.0 - 6.0 * s + 3.0 * s * a) / 6.0;
-    }
-    if (a < 2.0) {
-        let s = a * a;
-        return (8.0 - 12.0 * a + 6.0 * s - s * a) / 6.0;
-    }
-    return 0.0;
-}
-
-fn db3(u: f32) -> f32 {
-    if (u >= 0.0 && u < 1.0) {
-        return -2.0 * u + 1.5 * u * u;
-    }
-    if (u > -1.0 && u < 0.0) {
-        return -2.0 * u - 1.5 * u * u;
-    }
-    if (u >= 1.0 && u < 2.0) {
-        return -2.0 + 2.0 * u - 0.5 * u * u;
-    }
-    if (u > -2.0 && u <= -1.0) {
-        return 2.0 + 2.0 * u + 0.5 * u * u;
-    }
-    return 0.0;
 }
 
 fn locate(i: u32, u: MiU) -> Hit {

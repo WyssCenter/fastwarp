@@ -11,6 +11,8 @@ on:
       - "rust-toolchain.toml"
       - "uv.lock"
       - "pyproject.toml"
+      - "scripts/itk_fixtures/uv.lock"
+      - "scripts/itk_fixtures/pyproject.toml"
       - ".github/workflows/**"
   pull_request:
     paths:
@@ -21,6 +23,8 @@ on:
       - "rust-toolchain.toml"
       - "uv.lock"
       - "pyproject.toml"
+      - "scripts/itk_fixtures/uv.lock"
+      - "scripts/itk_fixtures/pyproject.toml"
       - ".github/workflows/**"
   schedule:
     - cron: "41 5 * * 1"
@@ -55,3 +59,5 @@ jobs:
         with:
           version: "0.13.7"
       - run: uv audit --frozen --preview-features audit-command
+      - run: uv audit --frozen --preview-features audit-command
+        working-directory: scripts/itk_fixtures

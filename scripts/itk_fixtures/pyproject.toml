@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Wyss Center for Bio and Neuroengineering
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "fastwarp-itk-fixtures"
+version = "0"
+description = "Writes the ITK golden fixtures of the FastWarp metric tests (development only)"
+requires-python = ">=3.11"
+dependencies = ["itk-registration==5.4.5", "numpy>=2"]
+
+[tool.uv]
+package = false
+exclude-newer = "7 days"

@@ -150,6 +150,36 @@ pub(crate) mod testing {
                 .await
         }
 
+        async fn mi_value_derivative_pair(
+            &self,
+            fixed: &Self::Image,
+            moving: &Self::Image,
+            bins: usize,
+        ) -> Result<MetricPair<Self::Field>> {
+            yield_once().await;
+            Backend::mi_value_derivative_pair(&CpuBackend, fixed, moving, bins).await
+        }
+
+        async fn mi_value_derivative_pair_masked(
+            &self,
+            fixed: &Self::Image,
+            moving: &Self::Image,
+            fixed_mask: &Self::Image,
+            moving_mask: &Self::Image,
+            bins: usize,
+        ) -> Result<MetricPair<Self::Field>> {
+            yield_once().await;
+            Backend::mi_value_derivative_pair_masked(
+                &CpuBackend,
+                fixed,
+                moving,
+                fixed_mask,
+                moving_mask,
+                bins,
+            )
+            .await
+        }
+
         async fn smooth_field(&self, field: Self::Field, variance: f64) -> Result<Self::Field> {
             yield_once().await;
             Backend::smooth_field(&CpuBackend, field, variance).await
