@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Mapping, Sequence
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from os import PathLike, fspath
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ import numpy as np
 from ._core import (
     CancelToken,
     GpuUnavailableError,
+    RegistrationCancelled,
     gpu_info,
 )
 from ._core import LinearSession as _LinearSession
@@ -27,6 +29,7 @@ from ._core import cohort_recipe as _cohort_recipe
 from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
+from ._core import registrations_at_once as _registrations_at_once
 
 #: The citation of FastWarp as one line of text, for method sections and logs.
 CITATION = (
@@ -209,7 +212,8 @@ def register_syn(
     Notes
     -----
     The call releases Python's global interpreter lock while it runs, so other Python threads keep
-    running. With the default outputs the files are ``<out_prefix>Composite.h5`` (warps the moving
+    running; it also reads the image arrays without the lock, so they must not be changed until it
+    returns. With the default outputs the files are ``<out_prefix>Composite.h5`` (warps the moving
     image onto the fixed image), ``<out_prefix>InverseComposite.h5`` (the inverse) and
     ``<out_prefix>0GenericAffine.mat`` (the affine part).
     """
@@ -998,7 +1002,7 @@ def joint_label_fusion(
 
     def image(key: str, dtype: Any = np.float32) -> Any:
         data, size, *_ = kept[key]
-        arr = np.asarray(data).reshape(tuple(size), order="F").astype(dtype)
+        arr = np.asarray(data).reshape(tuple(size), order="F").astype(dtype, copy=False)
         if hasattr(reference, "new_image_like"):
             return reference.new_image_like(arr)
         return arr
@@ -1035,6 +1039,48 @@ def _warp_file(image: Any, reference: tuple, composite: str, path: str, labels: 
     )
 
 
+_ATLASES_AT_ONCE = 4
+_STOP_TIMEOUT_S = 30.0
+
+
+def _atlases_at_once(
+    target: Any, atlases: Sequence[Any], iso_mm: float, adapter: str | None, recipe: Any
+) -> int:
+    if len(atlases) < 2:
+        return 1
+    grids = [iso_grid_dims(_first(a), iso_mm) for a in atlases]
+    moving = max(grids, key=lambda d: d[0] * d[1] * d[2])
+
+    def voxels(img: Any) -> int:
+        return math.prod(img.shape if not isinstance(img, tuple) else np.shape(img[0]))
+
+    native = voxels(target) + max(voxels(_first(a)) for a in atlases)
+    n = _registrations_at_once(
+        iso_grid_dims(target, iso_mm),
+        1,
+        min(len(atlases), _ATLASES_AT_ONCE),
+        adapter,
+        moving,
+        _recipe_arg(recipe),
+        native,
+    )
+    return max(n, 1)
+
+
+def _first_error(futures: Sequence[Any]) -> BaseException:
+    errors = [
+        (i, f.exception())
+        for i, f in enumerate(futures, 1)
+        if f.done() and not f.cancelled() and f.exception() is not None
+    ]
+    real = [(i, e) for i, e in errors if not isinstance(e, RegistrationCancelled)]
+    first = (real or errors)[0][1]
+    for i, e in real:
+        if e is not first:
+            first.add_note(f"atlas {i} also failed: {type(e).__name__}: {e}")
+    return first
+
+
 def register_atlases(
     target: Any,
     atlases: Sequence[Any],
@@ -1052,7 +1098,12 @@ def register_atlases(
     Each atlas is registered to ``target`` with :func:`register_syn` (the default recipe unless
     ``recipe`` is given) on the GPU; its images are then resampled onto the target's grid with
     linear interpolation and its label image with nearest neighbour, as :func:`apply_transforms`
-    does. Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
+    does. Up to four atlases are registered and resampled at the same time, as many as fit the
+    GPU's memory and the computer's free memory (one at a time on an integrated GPU, or when the
+    GPU reports no memory size); the files are the same as when they run one after the other. The
+    first failure, a cancelled ``cancel`` or an interrupt stops the atlases still running; the
+    files of the atlases that had finished remain in ``out_dir``.
+    Atlas ``i`` (from 1) writes ``atlasNN_Composite.h5`` (and the other files of
     :func:`register_syn`), ``atlasNN_Warped.nii.gz`` (one file per modality after the first:
     ``atlasNN_Warped2.nii.gz``, ...) and ``atlasNN_WarpedLabels.nii.gz`` in ``out_dir``.
 
@@ -1097,8 +1148,12 @@ def register_atlases(
         reference = _grid_args((np.asarray(arr).shape, spacing, origin, direction))
     else:
         reference = _grid_args(target)
-    result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
-    for i, atlas in enumerate(atlases, 1):
+
+    stop = CancelToken()
+    if cancel is not None and cancel.cancelled:
+        stop.cancel()
+
+    def one(i: int, atlas: Any) -> tuple[list[Path], Path | None, Path]:
         prefix = out / f"atlas{i:02d}_"
         register_syn(
             target,
@@ -1106,19 +1161,55 @@ def register_atlases(
             prefix,
             iso_mm=iso_mm,
             adapter=adapter,
-            cancel=cancel,
+            cancel=stop,
             recipe=recipe,
         )
         composite = f"{prefix}Composite.h5"
+
+        def go_on() -> None:
+            if stop.cancelled:
+                raise RegistrationCancelled(f"register_atlases: atlas {i} cancelled")
+
         files = []
         for m, image in enumerate(_modalities(atlas)):
+            go_on()
             path = Path(f"{prefix}Warped{'' if m == 0 else m + 1}.nii.gz")
             _warp_file(image, reference, composite, str(path), labels=False)
             files.append(path)
-        result["atlases"].append(files)
+        label_path = None
         if labels is not None:
-            path = Path(f"{prefix}WarpedLabels.nii.gz")
-            _warp_file(labels[i - 1], reference, composite, str(path), labels=True)
-            result["labels"].append(path)
-        result["transforms"].append(Path(composite))
+            go_on()
+            label_path = Path(f"{prefix}WarpedLabels.nii.gz")
+            _warp_file(labels[i - 1], reference, composite, str(label_path), labels=True)
+        return files, label_path, Path(composite)
+
+    workers = _atlases_at_once(target, atlases, iso_mm, adapter, recipe)
+    pool = ThreadPoolExecutor(max_workers=workers)
+    futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
+    failed = False
+    try:
+        pending = set(futures)
+        while pending and not failed:
+            finished, pending = wait(pending, timeout=0.05, return_when=FIRST_EXCEPTION)
+            if cancel is not None and cancel.cancelled:
+                stop.cancel()
+            failed = any(f.exception() is not None for f in finished)
+    except BaseException:
+        stop.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        wait(futures, timeout=_STOP_TIMEOUT_S)
+        raise
+    if failed:
+        stop.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        wait(futures, timeout=_STOP_TIMEOUT_S)
+        raise _first_error(futures)
+    pool.shutdown()
+    done = [f.result() for f in futures]
+    result: dict[str, list[Any]] = {"atlases": [], "labels": [], "transforms": []}
+    for files, label_path, composite in done:
+        result["atlases"].append(files)
+        if label_path is not None:
+            result["labels"].append(label_path)
+        result["transforms"].append(composite)
     return result

@@ -10,6 +10,7 @@ struct P {
     l1: vec4<f32>,
     l2: vec4<f32>,
     sp: vec4<f32>,
+    groups: vec4<u32>,
 }
 
 struct St {
@@ -34,7 +35,6 @@ fn k_inv_residual(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
     @builtin(workgroup_id) w: vec3<u32>,
-    @builtin(num_workgroups) nw: vec3<u32>,
 ) {
     let act = st.run != 0u;
     var nrm = 0.0;
@@ -67,8 +67,8 @@ fn k_inv_residual(
         workgroupBarrier();
     }
     if (li == 0u && act) {
-        let count = nw.x * nw.y * nw.z;
-        let wi = w.x + nw.x * (w.y + nw.y * w.z);
+        let count = p.groups.x * p.groups.y * p.groups.z;
+        let wi = w.x + p.groups.x * (w.y + p.groups.y * w.z);
         part[wi] = sh_sum[0];
         part[count + wi] = sh_max[0];
     }

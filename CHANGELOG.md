@@ -4,6 +4,22 @@
 
 - New: `fastwarp.release_idle_gpus()` frees the GPU devices that a process keeps between
   registrations.
+- Changed: images handed over from Python as `float32` are converted on all cores, so
+  `joint_label_fusion` (and `register_syn`) start sooner, and `joint_label_fusion` no longer
+  copies its results when they already have the returned type. Same results to the bit; on an
+  RTX PRO 6000 with `mode="gpu"`, deep7t with 9 atlases 3.0 s to 1.8 s, a 1 mm brain with 5
+  atlases 3.5 s to 3.2 s and with 20 atlases 8.9 s to 8.1 s.
+- Changed: the field inversion of the SyN stage, which usually converges after one of its 20
+  steps, no longer runs the remaining steps on the GPU for large grids: the GPU itself sets the
+  size of their dispatches to zero once the inversion has converged. Registration is 3 to 6 %
+  faster on an RTX PRO 6000 (more on GPUs where these steps weigh more), with the same files to the
+  bit.
+- Changed: `fastwarp.register_atlases` registers and resamples up to four atlases at the same
+  time on one GPU, as many as fit its memory and the computer's free memory (one at a time on an
+  integrated GPU or when the GPU reports no memory size), with the same files to the bit; the
+  first failure, a cancel or an interrupt stops the atlases still running. On an RTX PRO 6000,
+  deep7t with 9 atlases: 27.8 s to 12.5 s for the call, 31.9 s to 16.6 s for the whole Python
+  process.
 - Changed: joint label fusion on a dedicated GPU is 2.5 to 3.6 times faster with the same labels,
   offsets and intensities to the bit. The patch search kernel handles 64 neighbouring voxels of
   one atlas per workgroup and two candidate offsets per thread, the size of each dispatch follows
@@ -15,8 +31,8 @@
   and draws the sample points of the next level (same results to the bit).
 - Changed: the composite `.h5` files are written without building the whole file in memory
   first (the same bytes).
-- Changed: a process keeps the GPU device of a finished registration (its idle buffers freed; one
-  per adapter and `FASTWARP_GPU_*` / `WGPU_*` settings, four at most) and reuses it for the next
+- Changed: a process keeps the GPU device of a finished registration (its idle buffers freed; four
+  at most, by adapter and `FASTWARP_GPU_*` / `WGPU_*` settings) and reuses it for the next
   registration with the same settings, which saves the device creation, the kernel compilation and
   the known-answer check (about 0.2 s). `fastwarp bench` still times every run with a new device. With the two
   changes above, a 1 mm brain pair on an RTX PRO 6000 takes 2.1 to 3.5 s instead of 2.8 to 5.0 s

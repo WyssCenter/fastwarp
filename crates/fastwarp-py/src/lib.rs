@@ -20,6 +20,7 @@ use std::time::Instant;
 mod ants;
 mod recipe;
 
+use fastwarp_cli::ants::widen_f32;
 use fastwarp_cli::engine::{self, Failure, SynOutputs};
 use fastwarp_cli::session;
 use fastwarp_reg::mask::MaskVolume;
@@ -119,7 +120,7 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
         .map_err(|e| PyValueError::new_err(format!("bad image geometry: {e}")))?;
     let values: Vec<f64> = if let Ok(a) = data.extract::<PyReadonlyArray1<'_, f32>>() {
         let s = a.as_slice().map_err(|_| contiguous_err())?;
-        s.iter().map(|&v| f64::from(v)).collect()
+        data.py().detach(|| widen_f32(s))
     } else if let Ok(a) = data.extract::<PyReadonlyArray1<'_, f64>>() {
         a.as_slice().map_err(|_| contiguous_err())?.to_vec()
     } else {
@@ -282,6 +283,39 @@ fn fits_gpu(
     };
     py.detach(move || engine::fits(dims, moving_dims, channels, adapter, &recipe, &masks))
         .map_err(py_err)
+}
+
+#[pyfunction]
+#[pyo3(signature = (dims, channels, max, adapter=None, moving_dims=None, recipe=None, native_voxels=0))]
+#[allow(clippy::too_many_arguments)]
+fn registrations_at_once(
+    py: Python<'_>,
+    dims: [usize; 3],
+    channels: usize,
+    max: usize,
+    adapter: Option<String>,
+    moving_dims: Option<[usize; 3]>,
+    recipe: Option<Bound<'_, PyDict>>,
+    native_voxels: u64,
+) -> PyResult<usize> {
+    if channels == 0 {
+        return Err(PyValueError::new_err("channels must be at least 1"));
+    }
+    let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
+    let masks = engine::MaskDims::default();
+    py.detach(move || {
+        engine::registrations_at_once(
+            dims,
+            moving_dims,
+            channels,
+            adapter,
+            &recipe,
+            &masks,
+            native_voxels,
+            max,
+        )
+    })
+    .map_err(py_err)
 }
 
 /// A reference grid from Python: size, spacing, origin, direction (ITK / LPS).
@@ -551,6 +585,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(gpu_info, m)?)?;
     m.add_function(wrap_pyfunction!(release_idle_gpus, m)?)?;
     m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
+    m.add_function(wrap_pyfunction!(registrations_at_once, m)?)?;
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;

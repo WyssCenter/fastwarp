@@ -261,7 +261,8 @@ A token stays cancelled; use a new one for the next run. `token.cancelled` tells
 ## Threads and repeat runs
 
 While the engine runs, the call lets other Python threads run (it releases Python's global
-interpreter lock). Two runs with the same inputs on the same GPU give the same transforms
+interpreter lock). The image arrays given to a call are also read without the lock: do not change
+them from another thread until the call returns. Two runs with the same inputs on the same GPU give the same transforms
 (`tests/test_register.py::test_runs_are_deterministic`).
 
 ## The figure on the home page

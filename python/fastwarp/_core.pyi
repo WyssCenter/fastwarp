@@ -126,6 +126,14 @@ def fits_gpu(
     fixed_mask_dims: tuple[int, int, int] | None = None,
     moving_mask_dims: tuple[int, int, int] | None = None,
 ) -> bool: ...
+def registrations_at_once(
+    dims: tuple[int, int, int],
+    channels: int,
+    max: int,
+    adapter: str | None = None,
+    moving_dims: tuple[int, int, int] | None = None,
+    recipe: dict[str, Any] | None = None,
+) -> int: ...
 def compose_field(
     transforms: list[str],
     reference: tuple[

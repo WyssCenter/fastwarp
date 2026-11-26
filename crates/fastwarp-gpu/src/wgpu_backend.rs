@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytemuck::Pod;
@@ -69,6 +69,8 @@ const RING_SLOTS: u64 = 8192;
 const GAUSS_MAX_ERROR: f64 = 0.001;
 const SELFTEST_ATTEMPTS: u32 = 3;
 const INVERT_BODIES_PER_SUBMIT: u32 = 1024;
+
+const INVERT_INDIRECT_MIN_GROUPS: u32 = 2048;
 const SCALAR_STAGING_BYTES: u64 = 256;
 /// Storage buffers `k_cc_deriv` binds: the five split window-sum planes, the fixed and moving
 /// images and the derivative field.
@@ -234,6 +236,7 @@ pub struct WgpuBackend {
     scalar_staging: Mutex<Option<wgpu::Buffer>>,
     partial_staging: Mutex<Option<wgpu::Buffer>>,
     trimmed_for: Mutex<Option<Grid>>,
+    invert_indirect_min_groups: AtomicU32,
 }
 
 fn dir_scaled(g: &Grid) -> Mat3 {
@@ -410,6 +413,7 @@ impl WgpuBackend {
             scalar_staging: Mutex::new(Some(scalar_staging)),
             partial_staging: Mutex::new(None),
             trimmed_for: Mutex::new(None),
+            invert_indirect_min_groups: AtomicU32::new(INVERT_INDIRECT_MIN_GROUPS),
         };
         backend.run_selftest().await?;
         Ok(backend)
@@ -598,6 +602,17 @@ impl WgpuBackend {
 
     fn forget_trim(&self) {
         *self.trimmed_for.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    #[doc(hidden)]
+    pub fn invert_indirect_min_groups(&self) -> u32 {
+        self.invert_indirect_min_groups.load(Ordering::Relaxed)
+    }
+
+    #[doc(hidden)]
+    pub fn set_invert_indirect_min_groups(&self, groups: u32) {
+        self.invert_indirect_min_groups
+            .store(groups, Ordering::Relaxed);
     }
 
     /// Turns per-operation GPU timing on or off. While on, every operation is submitted alone and
@@ -797,6 +812,19 @@ impl WgpuBackend {
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
         Ok(())
+    }
+
+    fn dispatch_indirect(
+        &self,
+        pass: &mut wgpu::ComputePass<'_>,
+        pipeline: &wgpu::ComputePipeline,
+        group: &wgpu::BindGroup,
+        args: &wgpu::Buffer,
+        offset: u64,
+    ) {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.dispatch_workgroups_indirect(args, offset);
     }
 
     /// Copies an image back to the host as `f64`; an error on wasm32 (use
@@ -2065,6 +2093,18 @@ impl WgpuBackend {
             .acquire("invert partials", u64::from(count) * 8)
             .await?;
         let state = self.acquire("invert state", 16).await?;
+        let args = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("invert dispatch"),
+            size: 24,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
+        if g3.iter().any(|g| *g > self.max_groups) {
+            return Err(bad(format!(
+                "dispatch {g3:?} exceeds max_compute_workgroups_per_dimension {}",
+                self.max_groups
+            )));
+        }
         let init: [u32; 4] = [f32::MAX.to_bits(), f32::MAX.to_bits(), 0, 1];
         self.ctx
             .queue
@@ -2086,11 +2126,12 @@ impl WgpuBackend {
             self.run_pass(label, |pass| {
                 let begin = self.prepare(
                     &self.kernels.inv_begin,
-                    &[state.buffer()],
+                    &[state.buffer(), &args],
                     &InvBeginU {
                         max_tol: max_tol as f32,
                         mean_tol: mean_tol as f32,
                         pad: [0; 2],
+                        groups: [g3[0], g3[1], g3[2], 0],
                     },
                 )?;
                 let residual = self.prepare(
@@ -2102,7 +2143,12 @@ impl WgpuBackend {
                         part.buffer(),
                         state.buffer(),
                     ],
-                    &InvResidualU { dims, l, sp },
+                    &InvResidualU {
+                        dims,
+                        l,
+                        sp,
+                        groups: [g3[0], g3[1], g3[2], 0],
+                    },
                 )?;
                 let reduce = self.prepare(
                     &self.kernels.inv_reduce,
@@ -2134,9 +2180,21 @@ impl WgpuBackend {
                         _ => &update_rest,
                     };
                     self.dispatch(pass, &self.kernels.inv_begin, &begin, [1, 1, 1])?;
-                    self.dispatch(pass, &self.kernels.inv_residual, &residual, g3)?;
-                    self.dispatch(pass, &self.kernels.inv_reduce, &reduce, [1, 1, 1])?;
-                    self.dispatch(pass, &self.kernels.inv_update, update, g3)?;
+                    if count >= self.invert_indirect_min_groups.load(Ordering::Relaxed) {
+                        self.dispatch_indirect(
+                            pass,
+                            &self.kernels.inv_residual,
+                            &residual,
+                            &args,
+                            0,
+                        );
+                        self.dispatch_indirect(pass, &self.kernels.inv_reduce, &reduce, &args, 12);
+                        self.dispatch_indirect(pass, &self.kernels.inv_update, update, &args, 0);
+                    } else {
+                        self.dispatch(pass, &self.kernels.inv_residual, &residual, g3)?;
+                        self.dispatch(pass, &self.kernels.inv_reduce, &reduce, [1, 1, 1])?;
+                        self.dispatch(pass, &self.kernels.inv_update, update, g3)?;
+                    }
                 }
                 Ok(())
             })

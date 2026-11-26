@@ -104,6 +104,7 @@ pub struct InvResidualU {
     pub dims: [u32; 4],
     pub l: [[f32; 4]; 3],
     pub sp: [f32; 4],
+    pub groups: [u32; 4],
 }
 
 /// Uniform of `k_inv_begin`.
@@ -113,6 +114,7 @@ pub struct InvBeginU {
     pub max_tol: f32,
     pub mean_tol: f32,
     pub pad: [u32; 2],
+    pub groups: [u32; 4],
 }
 
 /// Uniform of `k_inv_reduce`.

@@ -122,8 +122,8 @@ pub fn open_gpu(adapter_substring: Option<String>) -> Result<WgpuBackend, Failur
     WgpuBackend::new(&sel).map_err(|e| Failure::GpuUnavailable(e.to_string()))
 }
 
-/// GPU backends of finished registrations, at most one per key of [`gpu_key`] and
-/// [`MAX_IDLE_GPUS`] in all, oldest first.
+/// GPU backends of finished registrations, by key of [`gpu_key`], at most [`MAX_IDLE_GPUS`],
+/// oldest first.
 static IDLE_GPUS: std::sync::Mutex<Vec<(String, WgpuBackend)>> = std::sync::Mutex::new(Vec::new());
 
 /// Most backends [`IDLE_GPUS`] keeps.
@@ -146,13 +146,9 @@ impl GpuCheckout {
         self.gpu.release_idle();
         let freed = {
             let mut list = IDLE_GPUS.lock().unwrap_or_else(|p| p.into_inner());
-            if list.iter().any(|(k, _)| *k == self.key) {
-                Some((self.key, self.gpu))
-            } else {
-                let evicted = (list.len() >= MAX_IDLE_GPUS).then(|| list.remove(0));
-                list.push((self.key, self.gpu));
-                evicted
-            }
+            let evicted = (list.len() >= MAX_IDLE_GPUS).then(|| list.remove(0));
+            list.push((self.key, self.gpu));
+            evicted
         };
         drop(freed);
     }
@@ -651,6 +647,69 @@ pub fn fits(
     masks: &MaskDims,
 ) -> Result<bool, Failure> {
     Ok(capacity_check(dims, moving_dims, channels, adapter, recipe, masks)?.is_ok())
+}
+
+const DEVICE_OVERHEAD_BYTES: u64 = 256 << 20;
+
+pub fn registration_host_bytes(
+    dims: [usize; 3],
+    moving_dims: [usize; 3],
+    native_voxels: u64,
+) -> u64 {
+    let voxels = |d: [usize; 3]| d.iter().map(|&n| n as u64).product::<u64>();
+    voxels(dims)
+        .saturating_mul(128)
+        .saturating_add(voxels(moving_dims).saturating_mul(32))
+        .saturating_add(native_voxels.saturating_mul(16))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn registrations_at_once(
+    dims: [usize; 3],
+    moving_dims: Option<[usize; 3]>,
+    channels: usize,
+    adapter: Option<String>,
+    recipe: &Recipe,
+    masks: &MaskDims,
+    native_voxels: u64,
+    max: usize,
+) -> Result<usize, Failure> {
+    check_masks_used(recipe, masks.fixed.is_some(), masks.moving.is_some())?;
+    let g = checkout_gpu(adapter)?;
+    let ctx = g.context();
+    let shared = matches!(ctx.info.device_type.as_str(), "IntegratedGpu" | "Cpu");
+    if shared || CapacityCaps::budget_is_guess(ctx) {
+        g.finish();
+        return Ok(max.min(1));
+    }
+    let host = registration_host_bytes(dims, moving_dims.unwrap_or(dims), native_voxels);
+    let by_host = fastwarp_gpu::host_available_bytes().map_or(1, |free| {
+        usize::try_from(free / host.max(1)).unwrap_or(usize::MAX)
+    });
+    let caps = CapacityCaps::from_context(ctx);
+    let syn_masks = masks.per_syn_stage(recipe);
+    let fits = |n: usize| {
+        let devices = DEVICE_OVERHEAD_BYTES.saturating_mul(n as u64);
+        let share = CapacityCaps {
+            memory_budget: caps.memory_budget.saturating_sub(devices) / n as u64,
+            ..caps
+        };
+        check_plan_capacity(
+            &recipe.plan,
+            dims,
+            moving_dims.unwrap_or(dims),
+            channels,
+            &syn_masks,
+            &share,
+        )
+        .is_ok()
+    };
+    let n = (1..=max.min(by_host.max(1)))
+        .take_while(|&n| fits(n))
+        .last()
+        .unwrap_or(0);
+    g.finish();
+    Ok(n)
 }
 
 /// The capacity check of [`fits`], with the reason when the grid does not fit.
