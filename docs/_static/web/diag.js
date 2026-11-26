@@ -4,12 +4,38 @@
 export const REPORT_ADDRESS = "richard.koehler@wysscenter.ch";
 export const MAILTO_LIMIT = 1800;
 
-const RUN_KEY = "fastwarp-demo-run";
+const RUN_PREFIX = "fastwarp-demo-run:";
+const TAB_KEY = "fastwarp-demo-tab";
+const HEARTBEAT_MS = 120000;
 const UNFINISHED_KEY = "fastwarp-demo-unfinished";
 
+function wellFormed(s) {
+  if (typeof s.toWellFormed === "function") return s.toWellFormed();
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    const next = s.charCodeAt(i + 1);
+    if (c >= 0xd800 && c <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+      out += s[i] + s[i + 1];
+      i += 1;
+    } else if (c >= 0xd800 && c <= 0xdfff) {
+      out += String.fromCharCode(0xfffd);
+    } else {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
+function cut(s, n) {
+  const out = s.slice(0, Math.max(0, n));
+  const last = out.charCodeAt(out.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? out.slice(0, -1) : out;
+}
+
 export function clip(text, n = 600) {
-  const s = text == null ? "" : String(text);
-  return s.length > n ? `${s.slice(0, n)}...` : s;
+  const s = wellFormed(text == null ? "" : String(text));
+  return s.length > n ? `${cut(s, n)}...` : s;
 }
 
 export function size(n) {
@@ -40,7 +66,7 @@ export function featureList(features) {
   }
 }
 
-export function platformOf(ua, touchPoints = 0) {
+export function platformOf(ua, touchPoints = 0, platformVersion = null) {
   const num = (re) => {
     const m = ua.match(re);
     return m ? Number(m[1]) : null;
@@ -53,7 +79,9 @@ export function platformOf(ua, touchPoints = 0) {
     osVersion = num(/OS (\d+)[_.]\d+/);
   } else if (/Android/.test(ua)) {
     os = "android";
-    osVersion = num(/Android (\d+)/);
+    const declared = Number.parseInt(platformVersion ?? "", 10);
+    if (Number.isFinite(declared) && declared > 0) osVersion = declared;
+    else if (!/Android 10; K\)/.test(ua)) osVersion = num(/Android (\d+)/);
   } else if (/CrOS/.test(ua)) os = "chromeos";
   else if (/Windows/.test(ua)) os = "windows";
   else if (/Macintosh/.test(ua)) os = "mac";
@@ -287,17 +315,18 @@ export function reportText(report) {
 }
 
 export function mailtoHref(report, limit = MAILTO_LIMIT) {
-  const subject = encodeURIComponent(`FastWarp browser demo: ${report.kind}`);
+  const subject = encodeURIComponent(wellFormed(`FastWarp browser demo: ${report.kind}`));
   const lines = compactLines(report);
   const dropped = [];
   let shortened = false;
-  const href = () => {
+  const href = (cap = Infinity) => {
     const notes = [];
     if (dropped.length || shortened) {
       const what = dropped.length ? `; left out: ${dropped.join(", ")}` : "";
       notes.push(`Shortened for e-mail${what}. The page's Copy diagnostic report button gives the full report.`);
     }
-    const body = [...lines.map((l) => l.text), ...notes].join("\r\n");
+    let body = wellFormed([...lines.map((l) => l.text), ...notes].join("\r\n"));
+    if (body.length > cap) body = cut(body, cap);
     return `mailto:${REPORT_ADDRESS}?subject=${subject}&body=${encodeURIComponent(body)}`;
   };
   let out = href();
@@ -318,9 +347,15 @@ export function mailtoHref(report, limit = MAILTO_LIMIT) {
     });
     const text = lines[longest].text;
     if (text.length < 40) break;
-    lines[longest].text = `${text.slice(0, Math.floor(text.length * 0.8))}...`;
+    lines[longest].text = `${cut(text, Math.floor(text.length * 0.8))}...`;
     shortened = true;
     out = href();
+  }
+  let cap = lines.reduce((n, l) => n + l.text.length + 2, 0);
+  while (out.length > limit && cap > 0) {
+    shortened = true;
+    cap = Math.floor(cap * 0.9);
+    out = href(cap);
   }
   return { href: out, length: out.length, dropped };
 }
@@ -341,29 +376,68 @@ function attempt(f) {
   }
 }
 
+let tab = null;
+
+function reloaded() {
+  const entry = attempt(() => globalThis.performance.getEntriesByType("navigation")[0]);
+  if (entry) return entry.type === "reload";
+  return attempt(() => globalThis.performance.navigation?.type === 1) ?? false;
+}
+
+function liveElsewhere(id) {
+  if (reloaded()) return false;
+  const record = attempt(() => JSON.parse(storage()?.getItem(RUN_PREFIX + id) ?? "null"));
+  return Boolean(record && Date.now() - (record.beat ?? 0) < HEARTBEAT_MS);
+}
+
+function tabId() {
+  if (tab) return tab;
+  const fresh = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  tab = attempt(() => {
+    const s = globalThis.sessionStorage;
+    const known = s.getItem(TAB_KEY);
+    if (known && !liveElsewhere(known)) return known;
+    s.setItem(TAB_KEY, fresh);
+    return fresh;
+  }) ?? fresh;
+  return tab;
+}
+
 export function saveRun(record) {
   const s = storage();
-  if (s) attempt(() => s.setItem(RUN_KEY, JSON.stringify(record)));
+  const id = tabId();
+  if (s) attempt(() => s.setItem(RUN_PREFIX + id, JSON.stringify({ ...record, tab: id, beat: Date.now() })));
 }
 
 export function endRun(success) {
   const s = storage();
   if (!s) return;
-  attempt(() => s.removeItem(RUN_KEY));
+  attempt(() => s.removeItem(RUN_PREFIX + tabId()));
   if (success) attempt(() => s.removeItem(UNFINISHED_KEY));
 }
 
-export function takeUnfinished() {
+export function takeUnfinished(now = Date.now()) {
   const s = storage();
   if (!s) return null;
+  const own = RUN_PREFIX + tabId();
   return attempt(() => {
-    const running = s.getItem(RUN_KEY);
-    if (running) {
-      s.setItem(UNFINISHED_KEY, running);
-      s.removeItem(RUN_KEY);
+    const keys = [];
+    for (let i = 0; i < s.length; i++) {
+      const key = s.key(i);
+      if (key?.startsWith(RUN_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) {
+      const text = s.getItem(key);
+      const record = attempt(() => JSON.parse(text));
+      const live = key !== own && record && now - (record.beat ?? 0) < HEARTBEAT_MS;
+      if (live) continue;
+      if (record) s.setItem(UNFINISHED_KEY, text);
+      s.removeItem(key);
     }
     const text = s.getItem(UNFINISHED_KEY);
-    return text ? JSON.parse(text) : null;
+    if (!text) return null;
+    const { tab: _tab, beat: _beat, ...record } = JSON.parse(text);
+    return record;
   });
 }
 

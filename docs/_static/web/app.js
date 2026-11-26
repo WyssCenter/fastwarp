@@ -57,6 +57,7 @@ const state = {
   timer: 0,
   cancelTimer: 0,
   stallTimer: 0,
+  beatTimer: 0,
   lastKey: "",
   zipUrl: null,
   jsAdapter: null,
@@ -75,6 +76,7 @@ const state = {
 const diag = {
   platform: platformOf(navigator.userAgent, navigator.maxTouchPoints ?? 0),
   hints: null,
+  hintsReady: Promise.resolve(),
   pageGpu: Boolean(navigator.gpu),
   adapter: null,
   workerAdapter: null,
@@ -254,22 +256,53 @@ function makeReport(kind, text) {
   };
 }
 
+function safeReport(kind, text) {
+  try {
+    return makeReport(kind, text);
+  } catch (err) {
+    return {
+      schema: 1,
+      kind,
+      message: clip(text, 2000),
+      report_error: clip(err?.message ?? err, 300),
+      browser: { user_agent: navigator.userAgent },
+    };
+  }
+}
+
+function setMail(link, report) {
+  try {
+    link.href = mailtoHref(report).href;
+    link.hidden = false;
+  } catch {
+    link.hidden = true;
+  }
+}
+
 function refreshReport() {
   if (!diag.report) return;
-  const report = makeReport(diag.report.kind, diag.report.text);
-  el("fw-mail").href = mailtoHref(report).href;
-  if (el("fw-report-box").open) el("fw-report-text").textContent = reportText(report);
+  try {
+    const report = safeReport(diag.report.kind, diag.report.text);
+    setMail(el("fw-mail"), report);
+    if (el("fw-report-box").open) el("fw-report-text").textContent = reportText(report);
+  } catch (err) {
+    el("fw-report-text").textContent = `The report could not be built: ${clip(err?.message ?? err, 300)}`;
+  }
 }
 
 function showReport(kind, text, { tone = "error", dismiss = false } = {}) {
   diag.report = { kind, text };
-  const box = el("fw-report");
-  box.dataset.kind = tone;
-  el("fw-dismiss").hidden = !dismiss;
-  el("fw-copy-state").textContent = "";
-  box.hidden = false;
-  refreshReport();
-  el("fw-message").scrollIntoView({ block: "nearest" });
+  try {
+    const box = el("fw-report");
+    box.dataset.kind = tone;
+    el("fw-dismiss").hidden = !dismiss;
+    el("fw-copy-state").textContent = "";
+    box.hidden = false;
+    refreshReport();
+    el("fw-message").scrollIntoView({ block: "nearest" });
+  } catch {
+    el("fw-report").hidden = false;
+  }
 }
 
 function hideReport() {
@@ -279,13 +312,18 @@ function hideReport() {
 }
 
 function copyFallback(text) {
+  const before = document.activeElement;
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
   area.style.position = "fixed";
+  area.style.top = "0";
   area.style.opacity = "0";
+  area.style.fontSize = "16px";
   document.body.append(area);
+  area.focus();
   area.select();
+  area.setSelectionRange(0, text.length);
   let ok = false;
   try {
     ok = document.execCommand("copy");
@@ -293,24 +331,44 @@ function copyFallback(text) {
     ok = false;
   }
   area.remove();
+  before?.focus?.();
   return ok;
 }
 
-async function copyText(text, status) {
-  let ok = false;
+function copyText(build, status) {
+  const done = (ok) => {
+    status.textContent = ok
+      ? "Copied. Paste it into an e-mail or a message to the FastWarp team."
+      : "The browser did not allow copying; open Show report and copy the text by hand.";
+  };
+  let text;
   try {
-    await navigator.clipboard.writeText(text);
-    ok = true;
+    text = build();
   } catch {
-    ok = copyFallback(text);
+    done(false);
+    return;
   }
-  status.textContent = ok
-    ? "Copied. Paste it into an e-mail or a message to the FastWarp team."
-    : "The browser did not allow copying; open Show report and copy the text by hand.";
+  if (!navigator.clipboard?.writeText) {
+    done(copyFallback(text));
+    return;
+  }
+  navigator.clipboard.writeText(text).then(
+    () => done(true),
+    () => done(copyFallback(text)),
+  );
 }
 
 function deviceReport() {
-  return makeReport("DeviceReport", "No problem; this report describes the device only.");
+  return safeReport("DeviceReport", "No problem; this report describes the device only.");
+}
+
+function currentPlatform() {
+  return platformOf(navigator.userAgent, navigator.maxTouchPoints ?? 0, diag.hints?.platformVersion ?? null);
+}
+
+async function settledPlatform() {
+  await Promise.race([diag.hintsReady, new Promise((resolve) => setTimeout(resolve, 500))]);
+  return currentPlatform();
 }
 
 function onDiag(kind, detail) {
@@ -389,6 +447,7 @@ function showAdapter(info) {
   el("fw-adapter-summary").replaceChildren("WebGPU · ", gpuName, ` · FastWarp ${info.fastwarp_version}`);
   el("fw-support").textContent = "";
   el("fw-adapter-box").hidden = false;
+  setMail(el("fw-device-mail"), deviceReport());
   if (software && diag.report?.kind !== "UnfinishedRun") {
     message(
       "The browser gave FastWarp a software (CPU) adapter instead of a GPU. A registration will be very slow; use the 2 mm grid, or a browser and computer with WebGPU on the GPU.",
@@ -462,7 +521,7 @@ function onProgress(p, memory) {
 }
 
 function watchStall() {
-  if (!state.running || !state.posted || state.stalled) return;
+  if (!state.running || !state.posted || state.stalled || document.hidden) return;
   const quiet = performance.now() - state.progressAt;
   if (quiet < STALL_MS) return;
   state.stalled = true;
@@ -504,6 +563,7 @@ function finish(outcome) {
   state.stalled = false;
   clearInterval(state.timer);
   clearInterval(state.stallTimer);
+  clearInterval(state.beatTimer);
   clearTimeout(state.cancelTimer);
   if (wasRunning && diag.run && !diag.run.end) {
     diag.run.end = performance.now();
@@ -611,6 +671,7 @@ function startFailed(name, text, extra = {}) {
   diag.error = { name, message: clip(text, 2000), phase: "start", stack: extra.stack ?? null };
   const panic = lastPanic();
   const what = name === "RuntimeError" && panic ? `FastWarp stopped with an internal error (${clip(panic, 300)}).` : text;
+  diag.platform = currentPlatform();
   const hint = /adapter/i.test(text) ? supportHint(diag.platform, "no-adapter") : "";
   el("fw-support").textContent = "WebGPU could not be started.";
   message(`${what} ${hint} The report below helps us find out which devices need a fix.`.replace(/\s+/g, " "), "error");
@@ -739,6 +800,7 @@ async function run() {
   state.progressAt = performance.now();
   diag.run.progressAt = state.progressAt;
   state.stallTimer = setInterval(watchStall, 5000);
+  state.beatTimer = setInterval(crumb, 10000);
   crumb();
   state.worker.postMessage(
     { type: "run", fixed: buffers[0], moving: buffers[1], options: { grid } },
@@ -801,10 +863,13 @@ function showUnfinished(previous) {
 
 function setupReports() {
   el("fw-copy").addEventListener("click", () => {
-    if (diag.report) copyText(reportText(makeReport(diag.report.kind, diag.report.text)), el("fw-copy-state"));
+    if (diag.report) copyText(() => reportText(safeReport(diag.report.kind, diag.report.text)), el("fw-copy-state"));
   });
   el("fw-mail").addEventListener("click", () => {
-    if (diag.report) el("fw-mail").href = mailtoHref(makeReport(diag.report.kind, diag.report.text)).href;
+    if (diag.report) setMail(el("fw-mail"), safeReport(diag.report.kind, diag.report.text));
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) state.progressAt = performance.now();
   });
   el("fw-report-box").addEventListener("toggle", refreshReport);
   el("fw-dismiss").addEventListener("click", () => {
@@ -813,16 +878,15 @@ function setupReports() {
     hideReport();
     message("");
   });
-  el("fw-device-copy").addEventListener("click", () => copyText(reportText(deviceReport()), el("fw-device-state")));
-  el("fw-device-mail").addEventListener("click", () => {
-    el("fw-device-mail").href = mailtoHref(deviceReport()).href;
-  });
-  navigator.userAgentData
-    ?.getHighEntropyValues?.(["model", "platformVersion", "architecture"])
-    .then((values) => {
-      diag.hints = values;
-    })
-    .catch(() => {});
+  el("fw-device-copy").addEventListener("click", () => copyText(() => reportText(deviceReport()), el("fw-device-state")));
+  el("fw-device-mail").addEventListener("click", () => setMail(el("fw-device-mail"), deviceReport()));
+  diag.hintsReady =
+    navigator.userAgentData
+      ?.getHighEntropyValues?.(["model", "platformVersion", "architecture"])
+      .then((values) => {
+        diag.hints = values;
+      })
+      .catch(() => {}) ?? Promise.resolve();
 }
 
 function adapterDetails(adapter) {
@@ -880,6 +944,7 @@ async function main() {
     state.gpu = "failed";
     updateButtons();
     el("fw-support").textContent = "This browser does not offer WebGPU.";
+    diag.platform = await settledPlatform();
     const hint = window.isSecureContext
       ? supportHint(diag.platform, "no-gpu")
       : "WebGPU needs a secure page (https or localhost).";
@@ -900,6 +965,7 @@ async function main() {
     state.gpu = "failed";
     updateButtons();
     el("fw-support").textContent = "WebGPU is present, but the browser gave no GPU adapter.";
+    diag.platform = await settledPlatform();
     message(supportHint(diag.platform, "no-adapter") || BROWSERS, "error");
     showReport("NoAdapter", adapterError ?? "requestAdapter returned null");
     result("error", { name: "NoAdapter", message: "requestAdapter returned null" });

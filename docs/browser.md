@@ -9,7 +9,7 @@
   <div id="fw-report" class="fw-report" hidden>
     <p class="fw-report-lead">Please send us the diagnostic report: it holds your browser, your GPU and its limits, the image sizes and the error, never your images or file names. Nothing is sent until you send it yourself.</p>
     <div class="fw-report-actions">
-      <a id="fw-mail" class="fw-button" href="mailto:">Send report via e-mail</a>
+      <a id="fw-mail" class="fw-button" hidden>Send report via e-mail</a>
       <button type="button" id="fw-copy" class="fw-secondary">Copy diagnostic report</button>
       <button type="button" id="fw-dismiss" class="fw-secondary" hidden>Dismiss</button>
     </div>
@@ -129,7 +129,7 @@
       <dl id="fw-adapter" class="fw-adapter"></dl>
       <p class="fw-device-report">
         <button type="button" id="fw-device-copy" class="fw-secondary">Copy device report</button>
-        <a id="fw-device-mail" class="fw-button fw-secondary" href="mailto:">Send device report via e-mail</a>
+        <a id="fw-device-mail" class="fw-button fw-secondary" hidden>Send device report via e-mail</a>
         <span id="fw-device-state" role="status"></span>
       </p>
     </details>
@@ -199,11 +199,14 @@ the page says so the next time you open it, until a run succeeds or you dismiss 
 - **Copy device report** and **Send device report via e-mail**, under *WebGPU* below the demo, do
   the same when nothing went wrong: a report from a device where the demo works helps as well.
 
-The report contains the browser and operating system (the user agent, and in Chrome the device
-model), the number of processor cores and the browser's memory class, the GPU's name, the WebGPU
-limits and features the browser offers and those FastWarp asked for and got, the grid, the size and
-voxel spacing of both images, how far the run got and when it reached each step, the memory of the
-WebAssembly module, and the error messages of the browser, the GPU and FastWarp.
+The report contains the browser and operating system (the user agent and the browser's brand
+names, and in Chrome the device model, the operating system version and the processor
+architecture), the number of processor cores and the browser's memory class, the address of this
+page without the site name, the GPU's name, the WebGPU limits and features the browser offers and
+those FastWarp asked for and got, the grid, the size and voxel spacing of both images, the time the
+report was made and the run started (to the minute, in UTC), how far the run got and when it
+reached each step, the memory of the WebAssembly module and of the page's JavaScript, and the
+error messages of the browser, the GPU and FastWarp.
 
 It never contains your images or any part of them, the text fields of their headers, file names,
 or anything else from your computer. The page sends nothing: the report leaves your device only
