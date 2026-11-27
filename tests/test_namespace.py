@@ -13,6 +13,7 @@ import fastwarp
 import pytest
 
 ERRORS = (
+    "AdapterNotFoundError",
     "GpuCapacityError",
     "GpuUnavailableError",
     "HostMemoryError",

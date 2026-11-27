@@ -42,7 +42,12 @@ Three rules hold for every argument:
   With `fallback="ants"`, a refused argument, a machine without a usable GPU, or a registration
   that does not fit the GPU runs ANTsPy's own function with the same arguments instead, with a
   `UserWarning`; the result then has an `"engine"` key, `"fastwarp"` or `"ants"`. Without it,
-  {class}`~fastwarp.GpuUnavailableError` and {class}`~fastwarp.GpuCapacityError` are raised.
+  {class}`~fastwarp.GpuUnavailableError` and {class}`~fastwarp.GpuCapacityError` are raised. An
+  `adapter` that matches no GPU adapter raises {class}`~fastwarp.AdapterNotFoundError` even with
+  `fallback="ants"`.
+- **The engine that ran.** When FastWarp ran, the result of `registration` also has a
+  `"fastwarp_engine"` key, `"gpu"` or `"cpu"` (see [CPU engine](cpu.md); `engine=` and
+  `FASTWARP_ENGINE` choose it).
 
 ## Types of transform
 

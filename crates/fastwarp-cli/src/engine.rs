@@ -42,6 +42,8 @@ pub enum Failure {
     Invalid(String),
     /// No usable GPU adapter.
     GpuUnavailable(String),
+    /// The requested adapter name matches no GPU adapter; never a reason to fall back.
+    AdapterNotFound(String),
     /// The registration grid does not fit the GPU's memory budget or binding limit.
     GpuCapacity(String),
     /// The registration on the CPU engine would need more memory than the host has available.
@@ -62,6 +64,7 @@ impl fmt::Display for Failure {
             Failure::Cancelled => f.write_str("registration cancelled"),
             Failure::Invalid(m)
             | Failure::GpuUnavailable(m)
+            | Failure::AdapterNotFound(m)
             | Failure::GpuCapacity(m)
             | Failure::HostMemory(m)
             | Failure::Registration(m)
@@ -121,11 +124,20 @@ pub fn finest_spacing(grid: &Grid) -> f64 {
 /// `FASTWARP_GPU_ALLOW_SOFTWARE`, `WGPU_FORCE_FALLBACK_ADAPTER`) selects; `adapter_substring`
 /// overrides `FASTWARP_GPU_ADAPTER`.
 pub fn open_gpu(adapter_substring: Option<String>) -> Result<WgpuBackend, Failure> {
-    let mut sel = BackendSelect::from_env().map_err(|e| Failure::GpuUnavailable(e.to_string()))?;
+    let mut sel = BackendSelect::from_env().map_err(gpu_failure)?;
     if adapter_substring.is_some() {
         sel.adapter_substring = adapter_substring;
     }
-    WgpuBackend::new(&sel).map_err(|e| Failure::GpuUnavailable(e.to_string()))
+    WgpuBackend::new(&sel).map_err(gpu_failure)
+}
+
+/// A failure to open the GPU: [`Failure::AdapterNotFound`] for an adapter name that matches no
+/// adapter, else [`Failure::GpuUnavailable`].
+pub fn gpu_failure(e: fastwarp_gpu::GpuError) -> Failure {
+    match e {
+        fastwarp_gpu::GpuError::AdapterNotFound(m) => Failure::AdapterNotFound(m),
+        other => Failure::GpuUnavailable(other.to_string()),
+    }
 }
 
 /// GPU backends of finished registrations, by key of [`gpu_key`], at most [`MAX_IDLE_GPUS`],
@@ -1463,6 +1475,7 @@ mod tests {
     #[test]
     fn auto_falls_back_to_the_cpu_and_reports_it_once() {
         use std::sync::Mutex;
+        std::env::set_var("FASTWARP_GPU_BACKEND", "none-such");
         let g = Grid::new([12; 3], [4.0; 3], [0.0; 3], IDENTITY3).unwrap();
         let blob = |c: f64| {
             let data = (0..g.num_voxels())
@@ -1491,7 +1504,7 @@ mod tests {
                 sink.lock().unwrap().push(m.to_string());
                 Ok(())
             })),
-            ..EngineRequest::new(EngineChoice::Auto, Some("no such adapter 7f3c".into()))
+            ..EngineRequest::new(EngineChoice::Auto, None)
         };
         let run = register_with(
             blob(6.0),
@@ -1540,6 +1553,37 @@ mod tests {
         });
         assert!(matches!(r, Err(Failure::Cancelled)), "{r:?}");
         assert!(!wrote);
+    }
+
+    #[test]
+    fn a_missing_adapter_is_an_error_for_every_engine_choice() {
+        let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let image = || vec![Volume::from_vec(g, vec![0.0; 512]).unwrap()];
+        let heard = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for choice in [EngineChoice::Gpu, EngineChoice::Auto] {
+            let sink = Arc::clone(&heard);
+            let request = EngineRequest {
+                on_fallback: Some(Arc::new(move |_: &str| {
+                    sink.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                })),
+                ..EngineRequest::new(choice, Some("zzqx 9000 7f3c".into()))
+            };
+            let r = register_with(
+                image(),
+                image(),
+                1.0,
+                request,
+                None,
+                Recipe::cohort(1),
+                |_, _, _| Ok((Vec::new(), 0.0)),
+            );
+            assert!(
+                matches!(&r, Err(Failure::AdapterNotFound(m)) if m.contains("'zzqx 9000 7f3c'")),
+                "{choice:?}: {r:?}"
+            );
+        }
+        assert!(!heard.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

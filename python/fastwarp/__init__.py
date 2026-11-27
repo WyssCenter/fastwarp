@@ -33,6 +33,7 @@ from ._api import (
 )
 from ._core import (
     ENGINE_SOURCE,
+    AdapterNotFoundError,
     CancelToken,
     GpuCapacityError,
     GpuUnavailableError,
@@ -49,6 +50,7 @@ except PackageNotFoundError:  # pragma: no cover - source tree without metadata
     __version__ = "0+unknown"
 
 __all__ = [
+    "AdapterNotFoundError",
     "CITATION",
     "ENGINE_SOURCE",
     "CancelToken",

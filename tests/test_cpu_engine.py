@@ -23,7 +23,13 @@ SMALL = {
     "affine": LINEAR,
     "syn": {"iterations": [10, 5], "shrink_factors": [2, 1], "smoothing_sigmas": [1, 0]},
 }
-NO_GPU = "no such adapter 7f3c"
+MISSING = "zzqx 9000 7f3c"
+
+
+@pytest.fixture
+def no_gpu(monkeypatch):
+    """No usable GPU: an unknown graphics API makes every GPU open fail."""
+    monkeypatch.setenv("FASTWARP_GPU_BACKEND", "none-such")
 
 
 def _register(out, **kw):
@@ -62,21 +68,44 @@ def test_fastwarp_engine_selects_the_cpu_and_an_argument_overrides_it(
     assert info["engine"] == "cpu"
 
 
-def test_auto_falls_back_to_the_cpu_with_a_warning(cpu_run, tmp_path):
+def test_auto_falls_back_to_the_cpu_with_a_warning(cpu_run, tmp_path, no_gpu):
     with pytest.warns(UserWarning, match="no usable GPU") as caught:
-        info = _register(tmp_path / "auto_", engine="auto", adapter=NO_GPU)
+        info = _register(tmp_path / "auto_", engine="auto")
     assert any("much slower" in str(w.message) for w in caught)
     assert info["engine"] == "cpu"
     assert info["warnings"] == []
     assert info["affine_parameters"] == cpu_run[1]["affine_parameters"]
 
 
-def test_a_fallback_warning_turned_error_stops_before_any_work(tmp_path):
+def test_a_fallback_warning_turned_error_stops_before_any_work(tmp_path, no_gpu):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         with pytest.raises(UserWarning, match="no usable GPU"):
-            _register(tmp_path / "strict_", engine="auto", adapter=NO_GPU)
+            _register(tmp_path / "strict_", engine="auto")
     assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("engine", ["auto", "gpu", None])
+def test_a_missing_adapter_is_an_error_without_a_fallback(tmp_path, engine):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(g.AdapterNotFoundError, match="'zzqx 9000 7f3c' matches no GPU"):
+            _register(tmp_path / "missing_", engine=engine, adapter=MISSING)
+        with pytest.raises(g.AdapterNotFoundError):
+            g.gpu_available(MISSING)
+    assert issubclass(g.AdapterNotFoundError, g.GpuUnavailableError)
+    assert not any(tmp_path.iterdir())
+
+
+def test_a_misspelled_adapter_gets_a_suggestion(tmp_path):
+    if not g.gpu_available():
+        pytest.skip("no usable GPU adapter to misspell")
+    word = g.gpu_info()["name"].split()[0]
+    if len(word) < 3:
+        pytest.skip(f"the adapter name {word!r} is too short to misspell")
+    typo = word[0] + ("z" if word[1].lower() == "q" else "q") + word[2:]
+    with pytest.raises(g.AdapterNotFoundError, match="; did you mean '"):
+        _register(tmp_path / "typo_", engine="auto", adapter=typo)
 
 
 def test_engine_mistakes_are_refused_before_any_work(tmp_path):
@@ -102,7 +131,7 @@ def test_a_linear_session_runs_on_the_cpu():
     np.testing.assert_allclose(fit["parameters"][9:], SHIFT_MM, atol=0.5)
 
 
-def test_register_atlases_falls_back_once_and_runs_on_the_cpu(tmp_path):
+def test_register_atlases_falls_back_once_and_runs_on_the_cpu(tmp_path, no_gpu):
     atlases = [phantom(SHIFT_MM), phantom((-1.0, 2.0, 0.0))]
     with pytest.warns(UserWarning, match="no usable GPU") as caught:
         out = g.register_atlases(
@@ -112,7 +141,6 @@ def test_register_atlases_falls_back_once_and_runs_on_the_cpu(tmp_path):
             tmp_path,
             recipe=SMALL,
             iso_mm=SPACING,
-            adapter=NO_GPU,
             engine="auto",
         )
     assert len([w for w in caught if "no usable GPU" in str(w.message)]) == 1
@@ -137,3 +165,16 @@ def test_fastwarp_ants_registration_runs_on_the_cpu(tmp_path, capsys):
     )
     assert "compatibility mode on cpu (f64, " in capsys.readouterr().out
     assert all(Path(f).is_file() for f in result["fwdtransforms"])
+    assert result["fastwarp_engine"] == "cpu"
+    assert "engine" not in result
+    with pytest.raises(g.AdapterNotFoundError):
+        fa.registration(
+            image((0.0, 0.0, 0.0)),
+            image(SHIFT_MM),
+            "SyN",
+            outprefix=str(tmp_path / "m_"),
+            reg_iterations=(10, 5),
+            engine="auto",
+            adapter=MISSING,
+            fallback="ants",
+        )

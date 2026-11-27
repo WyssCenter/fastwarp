@@ -1,12 +1,13 @@
 # Errors
 
-FastWarp raises five exceptions of its own, and the standard `ValueError` and
+FastWarp raises six exceptions of its own, and the standard `ValueError` and
 `FileNotFoundError` for mistakes in the arguments. [Troubleshooting](troubleshooting.md) says
 what to do about the most common ones.
 
 | Exception | Base class | Meaning |
 | --- | --- | --- |
 | {class}`~fastwarp.GpuUnavailableError` | `RuntimeError` | No usable GPU. Raised before any work. |
+| {class}`~fastwarp.AdapterNotFoundError` | {class}`~fastwarp.GpuUnavailableError` | The requested adapter name matches no GPU adapter. Raised before any work, whatever the engine. |
 | {class}`~fastwarp.GpuCapacityError` | `RuntimeError` | The registration does not fit the GPU. Raised before any work. |
 | {class}`~fastwarp.HostMemoryError` | `RuntimeError` | On the CPU engine, the registration does not fit the computer's available memory. Raised before any work. |
 | {class}`~fastwarp.RegistrationError` | `RuntimeError` | The engine failed while it worked. |
@@ -14,7 +15,7 @@ what to do about the most common ones.
 | `ValueError` | | An argument or the recipe is wrong. Raised before any work. |
 | `FileNotFoundError` | | A transform file does not exist. Raised before any work. |
 
-All five FastWarp exceptions can be pickled, so they also cross process boundaries, for example
+All six FastWarp exceptions can be pickled, so they also cross process boundaries, for example
 out of a {class}`concurrent.futures.ProcessPoolExecutor` worker.
 
 ## GpuUnavailableError
@@ -23,7 +24,6 @@ Raised by every function that opens the GPU when:
 
 - no hardware adapter is found for the graphics APIs tried (see
   [Which GPU is used](guide/gpu.md#which-gpu-is-used));
-- `adapter=` or `FASTWARP_GPU_ADAPTER` matches no adapter;
 - only a software adapter is present and `FASTWARP_GPU_ALLOW_SOFTWARE` is not set;
 - `FASTWARP_GPU_BACKEND` has an unknown value;
 - the driver fails to create the device, or the GPU fails the short self-test of the kernels
@@ -33,12 +33,33 @@ The message lists what was tried, for example:
 
 ```{code-block} text
 :class: fw-output
-no usable GPU adapter: Backends(VULKAN): 1 adapter(s), none eligible; Backends(DX12): 2 adapter(s), none eligible; adapter filter 'no-such-gpu'; software adapters not allowed (FASTWARP_GPU_ALLOW_SOFTWARE=1)
+no usable GPU adapter: Backends(VULKAN): 1 adapter(s), none eligible; Backends(DX12): 2 adapter(s), none eligible; software adapters not allowed (FASTWARP_GPU_ALLOW_SOFTWARE=1)
 ```
 
 {func}`~fastwarp.gpu_available` and {func}`~fastwarp.fits_gpu` return `False` in these cases
 instead of raising. [Troubleshooting](troubleshooting.md#no-gpu-is-found) explains each part of
 the message.
+
+## AdapterNotFoundError
+
+Raised by every function that opens the GPU when `adapter=` (`--adapter`) or
+`FASTWARP_GPU_ADAPTER` names no adapter that exists: no adapter of the graphics APIs tried has a
+name that contains the text, ignoring case. It is an error for every engine choice:
+`engine="auto"` does not fall back to the CPU engine for it, `fastwarp.ants` with
+`fallback="ants"` does not fall back to ANTs, and {func}`~fastwarp.gpu_available` and
+{func}`~fastwarp.fits_gpu` raise it instead of returning `False`. The message lists the adapters
+found and, when one is close (a small typo, other spacing, the words in another order), suggests
+it:
+
+```{code-block} text
+:class: fw-output
+the adapter name 'nvidai rtx' matches no GPU adapter; adapters found: NVIDIA RTX PRO 6000 Blackwell (Vulkan), Microsoft Basic Render Driver (Dx12); did you mean 'NVIDIA RTX PRO 6000 Blackwell'?
+```
+
+It is a subclass of {class}`~fastwarp.GpuUnavailableError`, so code that catches that one still
+catches it. An adapter that exists but cannot be used (a software adapter without
+`FASTWARP_GPU_ALLOW_SOFTWARE=1`, a failed self-test) raises
+{class}`~fastwarp.GpuUnavailableError` itself.
 
 ## GpuCapacityError
 
@@ -102,6 +123,6 @@ The message names the argument or the recipe field, for example
 
 The [command line](cli.md) reports the same errors as exit status: 2 for invalid arguments, 3
 for a file error, 4 for {class}`~fastwarp.GpuUnavailableError`, 5 for
-{class}`~fastwarp.GpuCapacityError`, 7 for {class}`~fastwarp.HostMemoryError`, 1 for other
-failures. See
+{class}`~fastwarp.GpuCapacityError`, 7 for {class}`~fastwarp.HostMemoryError`, 8 for
+{class}`~fastwarp.AdapterNotFoundError`, 1 for other failures. See
 [Exit status](cli.md#exit-status).

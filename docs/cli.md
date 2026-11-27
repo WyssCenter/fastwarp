@@ -364,7 +364,9 @@ names. This is {func}`fastwarp.register_syn`; see [Normalization](guide/normaliz
   `cpu` runs the [CPU engine](guide/cpu.md): much slower than the GPU, with results that agree
   with the GPU's within tolerance, not bit for bit. `auto` uses the GPU, or the CPU engine with
   a warning on standard error when there is no usable GPU.
-- `--adapter NAME`: use the GPU whose name contains NAME (refused with `--engine cpu`).
+- `--adapter NAME`: use the GPU whose name contains NAME, ignoring case (refused with
+  `--engine cpu`). A NAME that matches no adapter stops with exit status 8, also with
+  `--engine auto`.
 - `--json`: print the timings and diagnostics as JSON: the keys of the dictionary
   `register_syn` returns (`files` among them), with `levels` as a list of objects (each with
   `stage`, the index of its SyN stage from 0, as well), `syn_stages` as one such list per SyN
@@ -811,6 +813,7 @@ votes and labels, can differ from those of a particular ANTs build.
 | 5 | The grid does not fit the GPU (`GpuCapacityError` in Python); for `bench`, every size. |
 | 6 | The run was cancelled (`RegistrationCancelled` in Python). |
 | 7 | On the CPU engine, the registration does not fit the available memory (`HostMemoryError` in Python); for `bench`, every size. |
+| 8 | `--adapter` or `FASTWARP_GPU_ADAPTER` names no GPU adapter, whatever the engine; the message lists the adapters found and suggests a close match (`AdapterNotFoundError` in Python). |
 
 Status 4 and 5 mean that the GPU cannot run this registration, and 7 that the CPU engine cannot,
 so a script can run ANTs instead ([Fall back to ANTs](guide/gpu.md#fall-back-to-ants)). Errors are printed as one line on

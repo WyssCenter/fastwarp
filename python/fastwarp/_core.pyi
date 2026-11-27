@@ -18,10 +18,20 @@ VERSION: str
 class GpuUnavailableError(RuntimeError):
     """No usable GPU.
 
-    Raised before any work when no hardware GPU opens for the graphics APIs tried, when the
-    ``adapter`` filter matches none, when ``FASTWARP_GPU_BACKEND`` has an unknown value, or when
-    the device or its self-test fails. Software adapters count only with
-    ``FASTWARP_GPU_ALLOW_SOFTWARE=1``. A caller can catch it and run ANTs instead.
+    Raised before any work when no hardware GPU opens for the graphics APIs tried, when
+    ``FASTWARP_GPU_BACKEND`` has an unknown value, or when the device or its self-test fails; an
+    ``adapter`` name that matches no adapter raises the subclass ``AdapterNotFoundError``.
+    Software adapters count only with ``FASTWARP_GPU_ALLOW_SOFTWARE=1``. A caller can catch it and
+    run ANTs instead.
+    """
+
+class AdapterNotFoundError(GpuUnavailableError):
+    """The requested adapter name matches no GPU adapter.
+
+    Raised before any work when ``adapter=`` or ``FASTWARP_GPU_ADAPTER`` names no adapter that
+    exists, for every engine choice: ``engine="auto"`` does not fall back to the CPU for it.
+    The message lists the adapters found and suggests a close match. A subclass of
+    ``GpuUnavailableError``.
     """
 
 class GpuCapacityError(RuntimeError):

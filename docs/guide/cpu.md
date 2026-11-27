@@ -22,8 +22,9 @@ An argument wins over the variable. Without either, the engine is the GPU, as be
   4), before any work.
 - `"cpu"`: the CPU engine. `adapter=` (`--adapter`) picks a GPU, so it is refused with it.
 - `"auto"`: the GPU when there is a usable one, otherwise the CPU engine. An `adapter` that
-  matches no GPU counts as no usable GPU, so check its spelling. The switch is announced before
-  the run starts: a `UserWarning` in Python, a `fastwarp: warning:` line on
+  matches no GPU adapter is not a reason to fall back: it raises
+  {class}`~fastwarp.AdapterNotFoundError` (exit status 8), as with `"gpu"`. The switch is
+  announced before the run starts: a `UserWarning` in Python, a `fastwarp: warning:` line on
   standard error on the command line. With warnings turned into errors
   (`python -W error`), the warning stops the call before any work. A GPU that is present but
   too small still raises {class}`~fastwarp.GpuCapacityError`: `"auto"` does not move a

@@ -890,7 +890,8 @@ def test_t4_return_dict_is_antspys(ants, tmp_path, monkeypatch, t, kw, pixeltype
     if masked and t != "SyNOnly":
         assert skipped, "the coarse masked levels have too few samples and are skipped"
         assert all("level" in w and "candidate points" in w for w in skipped)
-    assert set(mine) == set(theirs)
+    assert set(mine) == set(theirs) | {"fastwarp_engine"}
+    assert mine["fastwarp_engine"] in ("gpu", "cpu")
     assert _suffixes(mine, str(tmp_path / "f_")) == _suffixes(theirs, str(tmp_path / "a_"))
     for key in ("fwdtransforms", "invtransforms"):
         files = mine[key] if isinstance(mine[key], list) else [mine[key]]

@@ -13,7 +13,13 @@
   against the memory the computer has available: `HostMemoryError` (exit status 7) refuses a
   run that does not fit. Results record the engine (`engine`, and `adapter` reads
   `cpu (f64, N threads)`); `peak_gpu_bytes` and `memory_budget_bytes` are `None` on the CPU
-  engine. The user guide has a new page on the CPU engine.
+  engine, and `fastwarp.ants.registration` results gain `fastwarp_engine` (`"gpu"` or `"cpu"`).
+  The user guide has a new page on the CPU engine.
+- Changed: an adapter name (`adapter=`, `--adapter`, `FASTWARP_GPU_ADAPTER`) that matches no GPU
+  adapter raises the new `AdapterNotFoundError` (a subclass of `GpuUnavailableError`; exit status
+  8 instead of 4) for every engine choice, also `"auto"`, and `gpu_available`, `fits_gpu` and
+  `fastwarp.ants` with `fallback="ants"` no longer treat it as a missing GPU. The message lists
+  the adapters found and suggests a close match ("did you mean ...?").
 - Fixed: when the browser loses the GPU device during a run, the browser demo no longer says that
   GPU memory most likely ran out unless something points to it: an out-of-memory error caught during
   the run, a failed allocation of the WebAssembly module, or a planned GPU memory and WebAssembly

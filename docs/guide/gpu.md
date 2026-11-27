@@ -71,7 +71,9 @@ print(fastwarp.gpu_info(adapter="arc")["name"])
 Intel(R) Arc(TM) 140V GPU (16GB)
 ```
 
-With a name that matches no adapter, the call raises {class}`~fastwarp.GpuUnavailableError`.
+With a name that matches no adapter, the call raises {class}`~fastwarp.AdapterNotFoundError`
+(exit status 8 on the command line), whatever the engine; its message lists the adapters found
+and suggests a close match.
 
 All environment variables are listed under [Environment variables](../environment.md).
 

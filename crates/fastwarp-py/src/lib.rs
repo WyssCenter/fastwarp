@@ -41,6 +41,12 @@ create_exception!(
 );
 create_exception!(
     fastwarp,
+    AdapterNotFoundError,
+    GpuUnavailableError,
+    "The requested adapter name matches no GPU adapter; raised before any work, for every engine choice (also 'auto'). The message lists the adapters found and a close match."
+);
+create_exception!(
+    fastwarp,
     GpuCapacityError,
     PyRuntimeError,
     "The registration does not fit the GPU's memory budget or buffer limit; raised by register_syn before any work."
@@ -76,6 +82,7 @@ fn py_err(f: Failure) -> PyErr {
     match f {
         Failure::Invalid(_) => PyValueError::new_err(msg),
         Failure::GpuUnavailable(_) => GpuUnavailableError::new_err(msg),
+        Failure::AdapterNotFound(_) => AdapterNotFoundError::new_err(msg),
         Failure::GpuCapacity(_) => GpuCapacityError::new_err(msg),
         Failure::HostMemory(_) => HostMemoryError::new_err(msg),
         Failure::Cancelled => RegistrationCancelled::new_err(msg),
@@ -688,6 +695,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("UnsupportedArgument", py.get_type::<UnsupportedArgument>())?;
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
+    m.add(
+        "AdapterNotFoundError",
+        py.get_type::<AdapterNotFoundError>(),
+    )?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;
     m.add("HostMemoryError", py.get_type::<HostMemoryError>())?;
     m.add("RegistrationError", py.get_type::<RegistrationError>())?;

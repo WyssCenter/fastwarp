@@ -704,15 +704,22 @@ fn the_cpu_engine_registers_and_records_itself_without_a_gpu() {
     assert_eq!(w["affine_parameters"], v["affine_parameters"]);
 
     let o = register(
-        &[("FASTWARP_ENGINE", "gpu")],
-        &["--engine", "auto", "--adapter", "no such adapter 7f3c"],
+        &[
+            ("FASTWARP_ENGINE", "gpu"),
+            ("FASTWARP_GPU_BACKEND", "none-such"),
+        ],
+        &["--engine", "auto"],
     );
     assert_eq!(code(&o), 0, "{}", text(&o.stderr));
     let a: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(a["engine"], "cpu");
     assert_eq!(a["affine_parameters"], v["affine_parameters"]);
     let err = text(&o.stderr);
-    assert!(err.contains("fastwarp: warning: no usable GPU"), "{err}");
+    assert_eq!(
+        err.matches("fastwarp: warning: no usable GPU").count(),
+        1,
+        "{err}"
+    );
     assert!(err.contains("much slower"), "{err}");
     assert!(a["warnings"].as_array().unwrap().is_empty(), "{a}");
 
@@ -794,17 +801,18 @@ fn engine_mistakes_and_a_host_memory_overrun_are_refused_before_any_work() {
         let o = run(&["fits", s(&f), "--engine", "cpu", "--iso-mm", "0.01"]);
         assert_eq!(code(&o), 7, "{}", text(&o.stderr));
         assert!(text(&o.stdout).starts_with("does not fit"));
-        let o = run(&[
-            "fits",
-            s(&f),
-            "--engine",
-            "auto",
-            "--adapter",
-            "no such adapter 7f3c",
-            "--iso-mm",
-            "0.01",
-            "--json",
-        ]);
+        let o = run_env(
+            &[
+                "fits",
+                s(&f),
+                "--engine",
+                "auto",
+                "--iso-mm",
+                "0.01",
+                "--json",
+            ],
+            &[("FASTWARP_GPU_BACKEND", "none-such")],
+        );
         assert_eq!(code(&o), 7, "{}", text(&o.stderr));
         let v: Value = serde_json::from_slice(&o.stdout).unwrap();
         assert_eq!(v["engine"], "cpu");
@@ -812,6 +820,70 @@ fn engine_mistakes_and_a_host_memory_overrun_are_refused_before_any_work() {
         assert!(text(&o.stderr).contains("warning: no usable GPU"));
     }
     assert!(!prefix.parent().unwrap().join("sub_Composite.h5").exists());
+}
+
+/// The first word of `name` with its second character replaced: a close miss.
+fn misspelled(name: &str) -> String {
+    let word: Vec<char> = name
+        .split_whitespace()
+        .next()
+        .unwrap_or(name)
+        .chars()
+        .collect();
+    let mut out = word.clone();
+    out[1] = if word[1].eq_ignore_ascii_case(&'q') {
+        'z'
+    } else {
+        'q'
+    };
+    out.into_iter().collect()
+}
+
+#[test]
+fn a_missing_adapter_is_an_error_with_the_adapters_found_and_a_suggestion() {
+    let dir = tmp("adapter_not_found");
+    let (f, m, recipe) = tiny_pair(&dir);
+    let prefix = dir.join("out").join("sub_");
+    let o = run(&["fits", s(&f), "--adapter", "zzqx 9000 7f3c"]);
+    assert_eq!(code(&o), 8, "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    assert!(
+        err.contains("the adapter name 'zzqx 9000 7f3c' matches no GPU adapter"),
+        "{err}"
+    );
+    assert!(!err.contains("did you mean"), "{err}");
+    for engine in ["auto", "gpu"] {
+        let o = run(&[
+            "register",
+            s(&f),
+            s(&m),
+            "-o",
+            s(&prefix),
+            "--recipe",
+            s(&recipe),
+            "--engine",
+            engine,
+            "--adapter",
+            "zzqx 9000 7f3c",
+        ]);
+        assert_eq!(code(&o), 8, "{engine}: {}", text(&o.stderr));
+        assert!(!text(&o.stderr).contains("warning"), "{}", text(&o.stderr));
+    }
+    assert!(!prefix.parent().unwrap().join("sub_Composite.h5").exists());
+    if !gpu() {
+        return;
+    }
+    let info: Value = serde_json::from_slice(&run(&["gpu-info"]).stdout).unwrap();
+    let name = info["name"].as_str().unwrap().to_string();
+    let typo = misspelled(&name);
+    let o = run(&["fits", s(&f), "--engine", "auto", "--adapter", &typo]);
+    assert_eq!(code(&o), 8, "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    assert!(
+        err.contains(&format!("did you mean '{name}'?")),
+        "{typo}: {err}"
+    );
+    assert!(err.contains("adapters found: "), "{err}");
 }
 
 #[test]

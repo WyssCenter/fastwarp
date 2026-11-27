@@ -11,7 +11,8 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 ///
 /// Exit status: 0 success, 1 registration failed, 2 invalid arguments, 3 file could not be read
 /// or written, 4 no usable GPU, 5 the grid does not fit the GPU, 6 cancelled, 7 the registration
-/// does not fit the host memory (CPU engine).
+/// does not fit the host memory (CPU engine), 8 the --adapter name (or FASTWARP_GPU_ADAPTER)
+/// matches no GPU adapter.
 #[derive(Parser, Debug)]
 #[command(
     name = "fastwarp",

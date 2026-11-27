@@ -24,9 +24,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::{
-    recipe, to_grid, to_volume, CancelToken, GpuCapacityError, GpuUnavailableError, GridArgs,
-    HostMemoryError, ImageArgs, PyEngine, RegistrationCancelled, RegistrationError,
-    UnsupportedArgument,
+    recipe, to_grid, to_volume, AdapterNotFoundError, CancelToken, GpuCapacityError,
+    GpuUnavailableError, GridArgs, HostMemoryError, ImageArgs, PyEngine, RegistrationCancelled,
+    RegistrationError, UnsupportedArgument,
 };
 
 const REGISTRATION: &str = "fastwarp.ants.registration";
@@ -52,6 +52,7 @@ fn failed(program: &str, e: CliError) -> PyErr {
     match e.status {
         ExitStatus::Usage => usage(program, &e.message, e.unsupported),
         ExitStatus::GpuUnavailable => GpuUnavailableError::new_err(e.message),
+        ExitStatus::AdapterNotFound => AdapterNotFoundError::new_err(e.message),
         ExitStatus::GpuCapacity => GpuCapacityError::new_err(e.message),
         ExitStatus::HostMemory => HostMemoryError::new_err(e.message),
         ExitStatus::Cancelled => RegistrationCancelled::new_err(e.message),

@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 
 from ._core import (
+    AdapterNotFoundError,
     CancelToken,
     GpuUnavailableError,
     RegistrationCancelled,
@@ -207,6 +208,10 @@ def register_syn(
         stage, or a mask that every stage switches off). Checked before the GPU is opened.
     GpuUnavailableError
         No usable GPU. Raised before any work, so the caller can run ANTs instead.
+    AdapterNotFoundError
+        ``adapter`` (or ``FASTWARP_GPU_ADAPTER``) matches no GPU adapter, whatever the
+        engine (``"auto"`` does not fall back to the CPU for it). A subclass of
+        ``GpuUnavailableError``; the message lists the adapters found and a close match.
     GpuCapacityError
         The stages of the recipe do not fit the GPU's memory. Raised before any work.
     HostMemoryError
@@ -396,6 +401,8 @@ def fits_gpu(
         or not equal to the number of fixed images in a list, ``iso_mm`` not positive, an
         invalid recipe, a mask that is not 3D, or a mask that no stage would use (a moving mask
         for a recipe without a SyN stage, or a mask that every stage switches off).
+    AdapterNotFoundError
+        ``adapter`` (or ``FASTWARP_GPU_ADAPTER``) matches no GPU adapter.
 
     See Also
     --------
@@ -432,6 +439,8 @@ def fits_gpu(
             None if fixed_mask is None else _mask_dims(fixed_mask),
             None if moving_mask is None else _mask_dims(moving_mask),
         )
+    except AdapterNotFoundError:
+        raise
     except GpuUnavailableError:
         return False
 
@@ -460,9 +469,16 @@ def gpu_available(adapter: str | None = None) -> bool:
     -------
     bool
         ``True`` when :func:`gpu_info` would succeed.
+
+    Raises
+    ------
+    AdapterNotFoundError
+        ``adapter`` (or ``FASTWARP_GPU_ADAPTER``) matches no GPU adapter.
     """
     try:
         gpu_info(adapter)
+    except AdapterNotFoundError:
+        raise
     except GpuUnavailableError:
         return False
     return True

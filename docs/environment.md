@@ -18,7 +18,7 @@ Switches such as `FASTWARP_GPU_ALLOW_SOFTWARE` are on when their value is `1`, `
 | --- | --- | --- |
 | `FASTWARP_ENGINE` | `gpu` | The engine when a call does not name one: `gpu`, `cpu` or `auto`, in any case; empty means `gpu`. An `engine=` argument or `--engine` takes precedence. Another value raises `ValueError` (exit status 2). See [CPU engine](guide/cpu.md). |
 | `FASTWARP_GPU_BACKEND` | `auto` | Graphics API: `vulkan` (or `vk`), `dx12` (or `d3d12`), `metal` or `auto`, in any case. `auto` tries Vulkan on Linux, Vulkan then DirectX 12 on Windows, and Metal on macOS. An unknown value raises {class}`~fastwarp.GpuUnavailableError`. |
-| `FASTWARP_GPU_ADAPTER` | unset | Use the adapter whose name contains this text, ignoring case. The `adapter=` argument of a function takes precedence. |
+| `FASTWARP_GPU_ADAPTER` | unset | Use the adapter whose name contains this text, ignoring case. The `adapter=` argument of a function takes precedence. A name that matches no adapter raises {class}`~fastwarp.AdapterNotFoundError` (exit status 8), whatever the engine. |
 | `FASTWARP_GPU_ALLOW_SOFTWARE` | off | Accept a software adapter (Mesa lavapipe, Microsoft WARP). Slow; meant for tests on machines without a GPU. |
 | `FASTWARP_GPU_MEMORY_BUDGET_MB` | unset | The memory budget of the {term}`capacity check`, in mebibytes (MiB, 1024 × 1024 bytes), in place of the figure the graphics API reports; nothing is subtracted from it. A value that is not a whole number is ignored. See [GPU and memory](guide/gpu.md#the-memory-budget). |
 | `FASTWARP_GPU_WAIT_TIMEOUT_S` | `300` | Seconds to wait for submitted GPU work before failing with {class}`~fastwarp.RegistrationError`. A value that is not a positive number is ignored. |

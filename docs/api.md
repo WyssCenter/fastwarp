@@ -128,6 +128,10 @@ When each one is raised: [Errors](errors.md).
 ```
 
 ```{eval-rst}
+.. autoapiexception:: fastwarp.AdapterNotFoundError
+```
+
+```{eval-rst}
 .. autoapiexception:: fastwarp.GpuCapacityError
 ```
 

@@ -45,6 +45,8 @@ pub enum ExitStatus {
     Cancelled = 6,
     /// The registration does not fit the host memory (CPU engine).
     HostMemory = 7,
+    /// The requested GPU adapter name matches no adapter.
+    AdapterNotFound = 8,
 }
 
 impl ExitStatus {
@@ -91,6 +93,7 @@ impl From<Failure> for CliError {
         let status = match &f {
             Failure::Invalid(_) => ExitStatus::Usage,
             Failure::GpuUnavailable(_) => ExitStatus::GpuUnavailable,
+            Failure::AdapterNotFound(_) => ExitStatus::AdapterNotFound,
             Failure::GpuCapacity(_) => ExitStatus::GpuCapacity,
             Failure::HostMemory(_) => ExitStatus::HostMemory,
             Failure::Registration(_) => ExitStatus::Registration,
@@ -354,6 +357,7 @@ mod tests {
             (Failure::GpuCapacity("x".into()), 5),
             (Failure::Cancelled, 6),
             (Failure::HostMemory("x".into()), 7),
+            (Failure::AdapterNotFound("x".into()), 8),
         ];
         for (f, code) in cases {
             assert_eq!(CliError::from(f.clone()).status.code(), code, "{f:?}");
