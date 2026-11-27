@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 
 import pytest
 
-from benchmarks.accuracy import datasets, post, recipes, run
+from benchmarks.accuracy import datasets, evaluate, post, recipes, run
 
 COHORT_ARGV = [
     "--dimensionality",
@@ -92,10 +93,92 @@ def test_recipes_are_copies_and_bad_inputs_are_refused():
     two["syn"]["channel_weights"] = [0.5, 0.5]
     with pytest.raises(ValueError, match="one channel"):
         recipes.ants_argv(two, "/f", "/m", "/o/")
-    mi = recipes.recipe("cohort")
-    mi["syn"]["channel_metrics"] = ["mi"]
-    with pytest.raises(ValueError, match="SyN on CC"):
-        recipes.ants_argv(mi, "/f", "/m", "/o/")
+    gc = recipes.recipe("cohort")
+    gc["syn"]["channel_metrics"] = ["gc"]
+    with pytest.raises(ValueError, match="SyN on CC or MI"):
+        recipes.ants_argv(gc, "/f", "/m", "/o/")
+    with pytest.raises(ValueError, match="not an ANTsPy call"):
+        recipes.ants_argv(recipes.recipe("antspy-syn"), "/f", "/m", "/o/")
+
+
+def test_cohort_mi_is_the_cohort_command_with_mi_in_syn():
+    argv = recipes.ants_argv(recipes.recipe("cohort-mi"), "/f.nii.gz", "/m.nii.gz", "/w/p/")
+    want = list(COHORT_ARGV)
+    want[want.index("CC[/f.nii.gz,/m.nii.gz,1,4]")] = "MI[/f.nii.gz,/m.nii.gz,1,32]"
+    assert argv == want
+    a, b = recipes.recipe("cohort"), recipes.recipe("cohort-mi")
+    assert {k for k in a["syn"] if a["syn"][k] != b["syn"][k]} == {"channel_metrics"}
+    seeded = recipes.ants_argv(b, "/f", "/m", "/o/", seed=7)
+    assert seeded[seeded.index("--random-seed") + 1] == "7"
+
+
+def test_the_antspy_call_recipes_carry_only_the_call_arguments():
+    for name, t in (("antspy-syn", "SyN"), ("synquick-s", "antsRegistrationSyNQuick[s]")):
+        rec = recipes.recipe(name)
+        assert recipes.is_antspy(rec) and recipes.antspy_kwargs(rec) == {"type_of_transform": t}
+        assert recipes.antspy_seed(rec) == 20260910
+        assert recipes.normalized(rec) == rec and recipes.same_recipe(rec, recipes.recipe(name))
+    assert not recipes.is_antspy(recipes.recipe("cohort"))
+    with pytest.raises(ValueError, match="not an ANTsPy-call recipe"):
+        recipes.antspy_kwargs(recipes.recipe("cohort"))
+
+
+def test_the_ants_version_check_applies_only_where_antsregistration_runs():
+    env = {"ants_version": "2.5.1.post12", "ants_program": "ANTsPy"}
+    cohort, call = recipes.recipe("cohort-mi"), recipes.recipe("synquick-s")
+    run.check_ants_version(env, None, cohort, ("fastwarp", "ants"))
+    run.check_ants_version(env, "2.6.5", cohort, ("fastwarp",))
+    run.check_ants_version(env, None, call, ("fastwarp", "ants"))
+    run.check_ants_version({"ants_version": "2.6.5-gfdce4d2"}, "2.6.5", cohort, ("ants",))
+    with pytest.raises(RuntimeError, match="not 2.6.5"):
+        run.check_ants_version(env, "2.6.5", cohort, ("fastwarp", "ants_repeat"))
+    with pytest.raises(ValueError, match="ANTsPy's own ANTs"):
+        run.check_ants_version(env, "2.6.5", call, ("fastwarp", "ants"))
+
+
+def test_an_antspy_call_recipe_refuses_another_ants_before_any_work(tmp_path):
+    for kw in ({"ants_version": "2.6.5"}, {"ants_dir": tmp_path}):
+        with pytest.raises(ValueError, match="ANTsPy's own ANTs"):
+            run.run(
+                data=tmp_path,
+                work=tmp_path / "w",
+                keys=["mindboggle"],
+                recipe_name="synquick-s",
+                **kw,
+            )
+    assert not (tmp_path / "w").exists()
+
+
+def test_two_ants_runs_of_different_ants_are_not_compared():
+    a = {"program": "C:/ants/antsRegistration.exe", "ants_version": "2.6.5-gfdce4d2"}
+    old = {"program": a["program"], "environment": {"ants_version": "2.6.5-gfdce4d2"}}
+    run.check_same_ants(a, old)
+    for other in (
+        {**a, "ants_version": "2.5.1"},
+        {**a, "program": "ANTsPy"},
+        {"program": a["program"], "environment": {"ants_version": "2.6.4"}},
+    ):
+        with pytest.raises(ValueError, match="different ANTs"):
+            run.check_same_ants(a, other)
+    spelled = {**a, "program": "c:\\ants\\..\\ants\\ANTSREGISTRATION.EXE"}
+    if sys.platform == "win32":
+        run.check_same_ants(a, spelled)
+    run.check_same_ants({**a, "program": "ANTsPy"}, {**a, "program": "ANTsPy"})
+    for unknown in ({**a, "ants_version": None}, {"ants_version": "2.6.5-gfdce4d2"}, {}):
+        with pytest.raises(ValueError, match="unknown"):
+            run.check_same_ants(a, unknown)
+        with pytest.raises(ValueError, match="unknown"):
+            run.check_same_ants(unknown, a)
+
+
+def test_a_second_ants_run_of_another_ants_is_skipped_with_the_reason(tmp_path):
+    record = {"program": "ANTsPy", "ants_version": "v2.5.1"}
+    for engine, rec in (("ants", record), ("ants_repeat", {**record, "ants_version": "v2.6.0"})):
+        (tmp_path / engine).mkdir()
+        (tmp_path / engine / "run.json").write_text(json.dumps(rec))
+    assert "different ANTs" in evaluate.repeat_problem(tmp_path)
+    (tmp_path / "ants_repeat" / "run.json").write_text(json.dumps(record))
+    assert evaluate.repeat_problem(tmp_path) is None
 
 
 def _ds(n: int, protocol: str = "pairwise") -> datasets.Dataset:

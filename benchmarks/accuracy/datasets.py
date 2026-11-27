@@ -65,13 +65,16 @@ DEEP_NUCLEI = {
 class Download:
     """One pinned file. ``path`` is where it is stored under the dataset folder; an archive
     lists ``extract`` rules ``(member regex, output path template)`` and is deleted after
-    extraction unless ``--keep-archives`` is given."""
+    extraction unless ``--keep-archives`` is given; a ``stream`` archive is never stored: it is
+    hashed and extracted while it downloads, and its members are kept only when the hash
+    matches."""
 
     path: str
     url: str
     sha256: str | None
     size: int | None
     extract: tuple[tuple[str, str], ...] = ()
+    stream: bool = False
 
     def select(self, member: str) -> str | None:
         """Output path of an archive member (first matching rule), or ``None`` to skip it."""
@@ -86,7 +89,9 @@ class Download:
 class Subject:
     """One image with its ground truth, paths relative to the dataset folder: a label map
     (``labels``), one binary mask per structure (``masks``: ``(label, path)``), or landmarks.
-    ``mask`` is the brain mask the field statistics are taken in."""
+    ``mask`` is the brain mask the field statistics are taken in. ``align_to``: another image of
+    the same subject and session that the image is first aligned to rigidly and resampled onto,
+    before either engine sees it."""
 
     id: str
     image: str
@@ -94,6 +99,7 @@ class Subject:
     landmarks: str | None = None
     mask: str | None = None
     masks: tuple[tuple[int, str], ...] = ()
+    align_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,7 @@ class Dataset:
     quick_pairs: int = 1
     in_default_run: bool = True
     note: str = ""
+    data_folder: str | None = None
 
     def subject(self, sid: str) -> Subject:
         """The subject (or template) with id ``sid``."""
@@ -123,6 +130,17 @@ class Dataset:
             if s.id == sid:
                 return s
         raise KeyError(f"{self.key} has no subject {sid!r}")
+
+    @property
+    def folder(self) -> str:
+        """The folder under the data folder that holds the files (``data_folder``, else the
+        key); datasets that share one hold the same downloads."""
+        return self.data_folder or self.key
+
+    def fetched_marker(self, data: Path) -> Path:
+        """The file ``fetch`` writes when every file of this dataset is in place."""
+        name = ".fetched.json" if self.folder == self.key else f".fetched-{self.key}.json"
+        return Path(data) / self.folder / name
 
     @property
     def ground_truth(self) -> str:
@@ -150,7 +168,9 @@ def _files(source: str, *, prefix: str = "") -> list[Download]:
 
 def _archive(source: str, extract: tuple[tuple[str, str], ...]) -> list[Download]:
     return [
-        Download(f["path"], f["url"], f.get("sha256"), f.get("size"), extract)
+        Download(
+            f["path"], f["url"], f.get("sha256"), f.get("size"), extract, f.get("stream", False)
+        )
         for f in _pins()[source]
     ]
 
@@ -297,11 +317,64 @@ def _deep7t() -> Dataset:
     )
 
 
+#: The IXI subjects of the multimodal check: the first ten subject numbers of Guy's Hospital
+#: (Philips 1.5 T) in the T1 and T2 archives.
+IXI_SUBJECTS = (
+    "IXI002",
+    "IXI016",
+    "IXI017",
+    "IXI019",
+    "IXI020",
+    "IXI021",
+    "IXI022",
+    "IXI023",
+    "IXI024",
+    "IXI025",
+)
+
+
+def _ixi_archive(source: str, modality: str) -> list[Download]:
+    ids = "|".join(IXI_SUBJECTS)
+    return _archive(
+        source, ((rf"({ids})-Guys-\d+-{modality}\.nii\.gz", rf"\1/{modality.lower()}.nii.gz"),)
+    )
+
+
+def _ixi(modality: str) -> Dataset:
+    t1 = _ixi_archive("ixi_t1", "T1")
+    tpl_files, tpl = _mni2009c("template/")
+    if modality == "T1":
+        downloads = (*t1, *tpl_files)
+        subjects = tuple(Subject(id=sid, image=f"{sid}/t1.nii.gz") for sid in IXI_SUBJECTS)
+        what = "T1w onto MNI 2009c (the reference warps of the multimodal check)"
+    else:
+        downloads = (*t1, *_ixi_archive("ixi_t2", "T2"), *tpl_files)
+        subjects = tuple(
+            Subject(id=sid, image=f"{sid}/t2.nii.gz", align_to=f"{sid}/t1.nii.gz")
+            for sid in IXI_SUBJECTS
+        )
+        what = "T2w, aligned rigidly to the T1w, onto the MNI 2009c T1w"
+    return Dataset(
+        key=f"ixi_{modality.lower()}",
+        title=f"IXI (Guy's Hospital, 1.5 T): {what}",
+        licence="images CC BY-SA 3.0; template: MNI ICBM 2009c licence",
+        downloads=downloads,
+        subjects=subjects,
+        protocol="template",
+        template=tpl,
+        default_pairs=10,
+        quick_pairs=1,
+        in_default_run=False,
+        note="multimodal check; no ground truth, see the multimodal command",
+        data_folder="ixi",
+    )
+
+
 @cache
 def registry() -> dict[str, Dataset]:
     """Every dataset by key."""
     out = {}
-    for make in (_mindboggle, _deep7t, _snsx, _lhscpd):
+    for make in (_mindboggle, _deep7t, _snsx, _lhscpd, lambda: _ixi("T1"), lambda: _ixi("T2")):
         d = make()
         out[d.key] = d
     return out

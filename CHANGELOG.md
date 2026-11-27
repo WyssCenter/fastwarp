@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: the accuracy benchmark (`benchmarks/accuracy`) compares Mattes MI in SyN with ANTs
+  (`--recipe cohort-mi`), ANTsPy's default `ants.registration(fixed, moving)` and
+  `antsRegistrationSyNQuick[s]` run by `fastwarp.ants` and by ANTsPy (`--recipe antspy-syn`,
+  `synquick-s`), and a second ANTs run of a pair (`--engine ants_repeat`) to read the differences
+  against. A multimodal check on IXI registers each subject's T2w with MI onto the MNI template and
+  measures how far that warp is from the same subject's T1w warp with CC (`multimodal`). The IXI
+  archives are hashed and extracted while they download, without being stored. `run
+  --ants-version` refuses an `antsRegistration` of another version.
 - New: the browser demo's diagnostic report holds what the engine knows: the GPU limits it saw,
   requested and was granted, the self-test result, and for a failed run the step it reached, the
   planned GPU memory, the GPU memory in use and the GPU's errors; after an internal error it holds

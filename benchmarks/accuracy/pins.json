@@ -1030,5 +1030,23 @@
    "size": 2848439260,
    "sha256": "7375fd90625c54ac2712b9dc3a6557d77d174576a329c216d7f28647dcc6b606"
   }
+ ],
+ "ixi_t1": [
+  {
+   "path": "IXI-T1.tar",
+   "url": "https://biomedic.doc.ic.ac.uk/brain-development/downloads/IXI/IXI-T1.tar",
+   "size": null,
+   "sha256": null,
+   "stream": true
+  }
+ ],
+ "ixi_t2": [
+  {
+   "path": "IXI-T2.tar",
+   "url": "https://biomedic.doc.ic.ac.uk/brain-development/downloads/IXI/IXI-T2.tar",
+   "size": null,
+   "sha256": null,
+   "stream": true
+  }
  ]
 }

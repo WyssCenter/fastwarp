@@ -7,8 +7,10 @@ Both engines' composites go through the same ANTsPy calls (``antsApplyTransforms
 moving labels are warped onto the fixed evaluation grid with nearest-neighbour interpolation,
 and the forward composite is composed into one displacement field on that grid, which moves
 the fixed landmarks into the moving image (``p + u(p)``, trilinear) and gives the Jacobian
-determinant. Each pair's result is cached in ``evaluation.json``; :func:`collect` writes the
-CSV tables.
+determinant. A second ANTs run of the pair (``ants_repeat``), where there is one and it ran the
+same ANTs program and version, is compared with the first the same way (the ``ants_vs_ants_*``
+columns of ``agreement.csv``). Each pair's result is cached in ``evaluation.json``;
+:func:`collect` writes the CSV tables.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from typing import Any
 import numpy as np
 
 from . import datasets, landmarks, metrics
-from .run import ENGINES, engine_done, pair_id, select_pairs
+from .run import ALL_ENGINES, ENGINES, REPEAT, check_same_ants, engine_done, pair_id, select_pairs
 from .run import composite as run_composite
 
 
@@ -52,6 +54,19 @@ def _warp(ref, moving, composite: Path) -> np.ndarray:
     ).numpy()
 
 
+def repeat_problem(folder: Path) -> str | None:
+    """Why the second ANTs run of a pair folder cannot be compared with the first (different or
+    unknown ANTs, see :func:`.run.check_same_ants`), or ``None``."""
+    try:
+        check_same_ants(
+            json.loads((folder / "ants" / "run.json").read_text(encoding="utf-8")),
+            json.loads((folder / REPEAT / "run.json").read_text(encoding="utf-8")),
+        )
+    except ValueError as e:
+        return str(e)
+    return None
+
+
 def evaluate_pair(
     ds: datasets.Dataset,
     folder: Path,
@@ -69,7 +84,7 @@ def evaluate_pair(
     mask = ants.image_read(files["mask"]).numpy() > 0
     fixed_s, moving_s = ds.subject(pair["fixed"]), ds.subject(pair["moving"])
     groups = _label_groups(ds)
-    root = data / ds.key
+    root = data / ds.folder
     moving_labels = ants.image_read(str(root / moving_s.labels)) if moving_s.labels else None
     moving_masks = {label: ants.image_read(str(root / rel)) for label, rel in moving_s.masks}
     fixed_masks = {
@@ -168,6 +183,32 @@ def evaluate_pair(
         if rows:
             agreement["labels"] = rows
         out["agreement"] = agreement
+    repeat_dir = folder / REPEAT
+    if "ants" in fields and engine_done(repeat_dir, pair.get("recipe"), pair.get("iso_mm")):
+        problem = repeat_problem(folder)
+        if problem is not None:
+            out["ants_repeat_skipped"] = problem
+        else:
+            repeat = metrics.field_difference(
+                fields["ants"], _field(ref, run_composite(repeat_dir), repeat_dir / "eval_"), mask
+            )
+            rows = []
+            if "ants" in warped_maps:
+                w = _warp(ref, moving_labels, run_composite(repeat_dir))
+                r = ref.numpy()
+                for label in sorted(groups):
+                    if (r == label).any():
+                        d = metrics.dice(warped_maps["ants"] == label, w == label)
+                        rows.append({"label": label, "dice": d, "group": groups[label]})
+            if "ants" in warped_masks:
+                for label, a in sorted(warped_masks["ants"].items()):
+                    b = _warp(ref, moving_masks[label], run_composite(repeat_dir)) > 0
+                    rows.append(
+                        {"label": label, "dice": metrics.dice(a, b), "group": groups[label]}
+                    )
+            if rows:
+                repeat["labels"] = rows
+            out["ants_repeat_agreement"] = repeat
     out["wall_s"] = time.perf_counter() - t0
     return out
 
@@ -190,7 +231,7 @@ def evaluate(
         n = pairs if pairs is not None else (ds.quick_pairs if quick else ds.default_pairs)
         for fixed_id, moving_id in select_pairs(ds, n):
             folder = work / ds.key / recipe_name / pair_id(fixed_id, moving_id)
-            runs = [folder / e / "run.json" for e in ENGINES if engine_done(folder / e)]
+            runs = [folder / e / "run.json" for e in ALL_ENGINES if engine_done(folder / e)]
             if not runs:
                 continue
             target = folder / "evaluation.json"
@@ -215,6 +256,8 @@ def evaluate(
                     "error": error,
                     "engines": {},
                 }
+            if result.get("ants_repeat_skipped"):
+                log(f"    second ANTs run not compared: {result['ants_repeat_skipped']}")
             tmp = target.with_name(target.name + ".tmp")
             tmp.write_text(json.dumps(result, indent=1), encoding="utf-8")
             tmp.replace(target)
@@ -286,13 +329,17 @@ def collect(
                     row["landmark_max_mm"] = float(np.max(errs))
                 row.update(res.get("jacobian", {}))
                 pair_rows.append(row)
-            ag = ev.get("agreement")
-            if ag:
-                row = {**base, **{k: v for k, v in ag.items() if k != "labels"}}
+            row = dict(base)
+            for key, prefix in (("agreement", ""), ("ants_repeat_agreement", "ants_vs_ants_")):
+                ag = ev.get(key)
+                if not ag:
+                    continue
+                row.update({prefix + k: v for k, v in ag.items() if k != "labels"})
                 for group in ds.groups:
                     sel = [r["dice"] for r in ag.get("labels", []) if r["group"] == group]
                     if sel:
-                        row[f"agreement_dice_{group}"] = _mean(sel)
+                        row[f"{prefix}agreement_dice_{group}"] = _mean(sel)
+            if len(row) > len(base):
                 agreement_rows.append(row)
     out = work / "results" / recipe_name
     _write_csv(out / "labels.csv", label_rows)

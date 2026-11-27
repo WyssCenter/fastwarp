@@ -187,8 +187,126 @@ def test_every_pin_is_https_with_a_sha256_and_size():
         for f in files:
             assert f["url"].startswith("https://"), f
             assert f["sha256"] is None or re.fullmatch(r"[0-9a-f]{64}", f["sha256"]), f
-            assert isinstance(f["size"], int) and f["size"] > 0, f
+            if f["sha256"] is None and f.get("stream"):
+                assert f["size"] is None, f
+            else:
+                assert isinstance(f["size"], int) and f["size"] > 0, f
             fetch.safe_member_path(f["path"])
+
+
+def test_the_default_run_needs_no_unpinned_file():
+    for key in datasets.default_keys():
+        assert all(d.sha256 for d in datasets.get(key).downloads), key
+
+
+def test_the_ixi_datasets_share_one_folder_and_their_archive_rules():
+    t1, t2 = datasets.get("ixi_t1"), datasets.get("ixi_t2")
+    assert t1.folder == t2.folder == "ixi" and t1.template.id == t2.template.id
+    assert not t1.in_default_run and not t2.in_default_run
+    assert t1.fetched_marker(Path("d")) == Path("d", "ixi", ".fetched-ixi_t1.json")
+    assert datasets.get("mindboggle").fetched_marker(Path("d")) == Path(
+        "d", "mindboggle", ".fetched.json"
+    )
+    archives = {d.path: d for d in t2.downloads if d.extract}
+    assert set(archives) == {"IXI-T1.tar", "IXI-T2.tar"} and all(
+        d.stream for d in archives.values()
+    )
+    assert archives["IXI-T1.tar"].select("IXI002-Guys-0828-T1.nii.gz") == "IXI002/t1.nii.gz"
+    assert archives["IXI-T2.tar"].select("IXI002-Guys-0828-T2.nii.gz") == "IXI002/t2.nii.gz"
+    assert archives["IXI-T1.tar"].select("IXI002-Guys-0828-T2.nii.gz") is None
+    assert archives["IXI-T1.tar"].select("IXI012-HH-1211-T1.nii.gz") is None
+    assert archives["IXI-T1.tar"].select("IXI0021-Guys-0828-T1.nii.gz") is None
+    s = t2.subject("IXI002")
+    assert (s.image, s.align_to) == ("IXI002/t2.nii.gz", "IXI002/t1.nii.gz")
+    assert t1.subject("IXI002").image == "IXI002/t1.nii.gz" and len(t1.subjects) == 10
+
+
+def _tar_bytes(members: list[tuple[str, bytes]]) -> bytes:
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w") as tf:
+        for name, data in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def _select_img(name: str) -> str | None:
+    m = re.fullmatch(r"(s\d)-img\.nii", name)
+    return f"{m.group(1)}/img.nii" if m else None
+
+
+def test_a_streamed_archive_is_extracted_without_being_stored(tmp_path, monkeypatch):
+    blob = _tar_bytes(
+        [("s1-img.nii", b"one" * 1000), ("s2-skip.txt", b"x"), ("s2-img.nii", b"two")]
+    )
+    calls = []
+
+    def fake_open(url, offset, timeout):
+        calls.append(offset)
+        data = blob[offset:]
+        if len(calls) == 1:
+            data = data[:700]
+
+            class Dropping(_Response):
+                def read(self, n=-1):
+                    block = super().read(n)
+                    if not block:
+                        raise ConnectionResetError("dropped")
+                    return block
+
+            return Dropping(data, 200)
+        return _Response(data, 206)
+
+    monkeypatch.setattr(fetch, "_open", fake_open)
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    sha = hashlib.sha256(blob).hexdigest()
+    written = fetch.stream_extract_tar("https://h/a.tar", tmp_path, _select_img, sha, len(blob))
+    assert calls == [0, 700]
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in written) == [
+        "s1/img.nii",
+        "s2/img.nii",
+    ]
+    assert (tmp_path / "s1" / "img.nii").read_bytes() == b"one" * 1000
+    files = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file())
+    assert files == ["s1/img.nii", "s2/img.nii"]
+
+
+def test_a_streamed_archive_that_does_not_match_its_pin_leaves_nothing(tmp_path, monkeypatch):
+    blob = _tar_bytes([("s1-img.nii", b"one")])
+    monkeypatch.setattr(fetch, "_open", lambda url, offset, timeout: _Response(blob[offset:], 200))
+    with pytest.raises(fetch.HashMismatchError):
+        fetch.stream_extract_tar("https://h/a.tar", tmp_path, _select_img, "0" * 64)
+    assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+    with pytest.raises(fetch.UnpinnedError):
+        fetch.stream_extract_tar("https://h/a.tar", tmp_path, _select_img, None)
+    with pytest.raises(ValueError, match="only HTTPS"):
+        fetch.stream_extract_tar("http://h/a.tar", tmp_path, _select_img, "0" * 64)
+
+
+def test_a_streamed_archive_cannot_restart_from_the_beginning(tmp_path, monkeypatch):
+    blob = _tar_bytes([("s1-img.nii", b"one" * 2000)])
+    calls = []
+
+    def ignore_range(url, offset, timeout):
+        calls.append(offset)
+        data = blob if len(calls) > 1 else blob[:600]
+
+        class Dropping(_Response):
+            def read(self, n=-1):
+                block = super().read(n)
+                if not block and len(calls) == 1:
+                    raise ConnectionResetError("dropped")
+                return block
+
+        return Dropping(data, 200)
+
+    monkeypatch.setattr(fetch, "_open", ignore_range)
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    sha = hashlib.sha256(blob).hexdigest()
+    with pytest.raises(ConnectionError, match="cannot start again"):
+        fetch.stream_extract_tar("https://h/a.tar", tmp_path, _select_img, sha, len(blob))
+    assert not [p for p in tmp_path.rglob("*") if p.is_file()]
 
 
 def test_every_subject_file_comes_from_a_download():
