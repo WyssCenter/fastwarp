@@ -75,6 +75,9 @@ const SCALAR_STAGING_BYTES: u64 = 256;
 /// Storage buffers `k_cc_deriv` binds: the five split window-sum planes, the fixed and moving
 /// images and the derivative field.
 const CC_DERIV_STORAGE_BUFFERS: u32 = 8;
+const REFERENCE_SAMPLES: usize = 1 << 18;
+const REFERENCE_SHARE: usize = 16;
+const REFERENCE_NEGLIGIBLE: f32 = 1.0 / 1024.0;
 
 fn bad(message: impl Into<String>) -> RegError {
     RegError::Invalid {
@@ -116,6 +119,7 @@ impl Drop for PoolBuf {
 pub struct GpuImage {
     buf: PoolBuf,
     grid: Grid,
+    reference: f32,
 }
 
 impl GpuImage {
@@ -1206,6 +1210,10 @@ impl WgpuBackend {
         };
         let r = radius as u32;
         let uniform = cc_uniform(&grid, r)?;
+        let shifts = [
+            [fixed.reference, moving.reference],
+            [moving.reference, fixed.reference],
+        ];
         let label = if swapped {
             "cc_value_derivative_pair"
         } else {
@@ -1226,7 +1234,8 @@ impl WgpuBackend {
                 ],
                 &CcPlanesU {
                     n: n as u32,
-                    pad: [0; 3],
+                    shift: [fixed.reference, moving.reference],
+                    pad: 0,
                 },
                 self.groups_1d(n as u64)?,
             )?;
@@ -1250,6 +1259,10 @@ impl WgpuBackend {
                 } else {
                     (moving.buf.buffer(), fixed.buf.buffer())
                 };
+                let shifted = CcFinalU {
+                    shift: shifts[d],
+                    ..uniform
+                };
                 self.launch(
                     pass,
                     &self.kernels.cc_deriv,
@@ -1263,7 +1276,7 @@ impl WgpuBackend {
                         src_moving,
                         out.buffer(),
                     ],
-                    &uniform,
+                    &shifted,
                     g3,
                 )?;
                 self.launch(
@@ -1394,8 +1407,13 @@ impl WgpuBackend {
         let uniform = cc_uniform(&grid, r)?;
         let elementwise = CcPlanesU {
             n: n as u32,
-            pad: [0; 3],
+            shift: [fixed.reference, moving.reference],
+            pad: 0,
         };
+        let shifts = [
+            [fixed.reference, moving.reference],
+            [moving.reference, fixed.reference],
+        ];
         let groups = self.groups_1d(n as u64)?;
         self.run_pass("cc_value_derivative_pair_masked", |pass| {
             self.launch(
@@ -1454,6 +1472,10 @@ impl WgpuBackend {
                 } else {
                     (moving.buf.buffer(), fixed.buf.buffer())
                 };
+                let shifted = CcFinalU {
+                    shift: shifts[d],
+                    ..uniform
+                };
                 self.launch(
                     pass,
                     &self.kernels.cc_deriv_masked,
@@ -1467,7 +1489,7 @@ impl WgpuBackend {
                         src_moving,
                         out.buffer(),
                     ],
-                    &uniform,
+                    &shifted,
                     g3,
                 )?;
                 self.launch(
@@ -1709,7 +1731,12 @@ impl Backend for WgpuBackend {
             .write_buffer(buf.buffer(), 0, bytemuck::cast_slice(&data));
         self.uploads.fetch_add(1, Ordering::Relaxed);
         self.forget_trim();
-        Ok(GpuImage { buf, grid })
+        let reference = intensity_reference(&data);
+        Ok(GpuImage {
+            buf,
+            grid,
+            reference,
+        })
     }
 
     async fn zero_field(&self, grid: &Grid) -> RegResult<GpuField> {
@@ -1830,7 +1857,11 @@ impl Backend for WgpuBackend {
                 )
             })
             .await?;
-            return Ok(GpuImage { buf: out, grid });
+            return Ok(GpuImage {
+                buf: out,
+                grid,
+                reference: source.reference,
+            });
         }
         let uniform = warp_uniform(&grid, &source.grid, affine, true, 1)?;
         self.run_pass("warp", |pass| {
@@ -1843,7 +1874,11 @@ impl Backend for WgpuBackend {
             )
         })
         .await?;
-        Ok(GpuImage { buf: out, grid })
+        Ok(GpuImage {
+            buf: out,
+            grid,
+            reference: source.reference,
+        })
     }
 
     async fn warp_mask_through_field(
@@ -1880,7 +1915,11 @@ impl Backend for WgpuBackend {
                 )
             })
             .await?;
-            return Ok(GpuImage { buf: out, grid });
+            return Ok(GpuImage {
+                buf: out,
+                grid,
+                reference: 0.0,
+            });
         }
         let mut uniform = warp_uniform(&grid, &mask.grid, affine, true, 1)?;
         uniform.flags |= flags;
@@ -1894,7 +1933,11 @@ impl Backend for WgpuBackend {
             )
         })
         .await?;
-        Ok(GpuImage { buf: out, grid })
+        Ok(GpuImage {
+            buf: out,
+            grid,
+            reference: 0.0,
+        })
     }
 
     async fn cc_value_derivative_pair_masked(
@@ -2346,10 +2389,41 @@ fn cc_uniform(grid: &Grid, radius: u32) -> RegResult<CcFinalU> {
         dims: [nx as u32, ny as u32, nz as u32, grid.num_voxels() as u32],
         radius,
         part_base: 0,
-        pad: [0; 2],
+        shift: [0.0; 2],
         o: offsets,
         sp: spacing4(grid),
     })
+}
+
+/// The value `k_cc_planes` and the CC derivative kernels subtract from an image before the window
+/// sums (the CC is invariant to it): the most frequent value of at most `REFERENCE_SAMPLES`
+/// evenly strided finite voxels when it holds at least `1 / REFERENCE_SHARE` of them, such as a
+/// constant background, which then enters the `f32` sums as exact zeros instead of an offset
+/// that cancels in the sums of squares. Zero when no value is that frequent, or when the most
+/// frequent one is at most `2^-10` times the largest magnitude; the image then enters the
+/// kernels unchanged. Signed zeros count as one value.
+fn intensity_reference(data: &[f32]) -> f32 {
+    let stride = data.len().div_ceil(REFERENCE_SAMPLES).max(1);
+    let mut samples: Vec<f32> = data
+        .iter()
+        .step_by(stride)
+        .copied()
+        .filter(|v| v.is_finite())
+        .map(|v| if v == 0.0 { 0.0 } else { v })
+        .collect();
+    samples.sort_unstable_by(f32::total_cmp);
+    let (mut mode, mut count) = (0.0f32, 0usize);
+    for run in samples.chunk_by(|x, y| x.to_bits() == y.to_bits()) {
+        if run.len() > count {
+            (mode, count) = (run[0], run.len());
+        }
+    }
+    let largest = samples.iter().fold(0.0f32, |a, v| a.max(v.abs()));
+    if count * REFERENCE_SHARE < samples.len() || mode.abs() <= largest * REFERENCE_NEGLIGIBLE {
+        0.0
+    } else {
+        mode
+    }
 }
 
 fn cc_pair(mut out: Vec<MetricEvaluation<GpuField>>) -> RegResult<MetricPair<GpuField>> {
@@ -2367,5 +2441,40 @@ fn invert_stats(words: &[u32]) -> InvertStats {
         iterations: executed,
         mean_error_norm: if executed == 0 { 0.0 } else { mean_error },
         max_error_norm: if executed == 0 { 0.0 } else { max_error },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::intensity_reference;
+
+    #[test]
+    fn the_reference_is_a_frequent_value_or_zero() {
+        assert_eq!(intensity_reference(&[]).to_bits(), 0.0f32.to_bits());
+        assert_eq!(
+            intensity_reference(&[f32::NAN; 8]).to_bits(),
+            0.0f32.to_bits()
+        );
+        let distinct: Vec<f32> = (0..64).map(|i| 100.0 + i as f32).collect();
+        assert_eq!(intensity_reference(&distinct), 0.0);
+        let mut background = distinct.clone();
+        background.extend([1000.0; 5]);
+        assert_eq!(intensity_reference(&background), 1000.0);
+        background.truncate(64);
+        background.extend([1000.0; 4]);
+        assert_eq!(intensity_reference(&background), 0.0);
+        let mut signed = vec![-0.0f32; 20];
+        signed.extend([0.0; 20]);
+        signed.extend([5.0; 30]);
+        assert_eq!(intensity_reference(&signed).to_bits(), 0.0f32.to_bits());
+        let mut tiny = vec![5e-4f32; 40];
+        tiny.push(1.0);
+        assert_eq!(intensity_reference(&tiny), 0.0);
+        let mut small = vec![2e-3f32; 40];
+        small.push(1.0);
+        assert_eq!(intensity_reference(&small), 2e-3);
+        let mut tie = vec![3.0f32; 10];
+        tie.extend([2.0; 10]);
+        assert_eq!(intensity_reference(&tie), 2.0);
     }
 }

@@ -142,7 +142,8 @@ pub struct InvUpdateU {
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct CcPlanesU {
     pub n: u32,
-    pub pad: [u32; 3],
+    pub shift: [f32; 2],
+    pub pad: u32,
 }
 
 /// Uniform of the CC derivative and value kernels (`k_cc_deriv`, `k_cc_value` and their masked
@@ -153,7 +154,7 @@ pub struct CcFinalU {
     pub dims: [u32; 4],
     pub radius: u32,
     pub part_base: u32,
-    pub pad: [u32; 2],
+    pub shift: [f32; 2],
     pub o: [[f32; 4]; 3],
     pub sp: [f32; 4],
 }
