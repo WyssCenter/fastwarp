@@ -53,7 +53,7 @@ use crate::device::{block_gpu, blocking_unavailable, BackendSelect, GpuContext, 
 use crate::error::{GpuError, GpuResult};
 use crate::kernels::{BoxParams, BOX_RADIUS_MAX};
 use crate::parity;
-use crate::pool::{acquire_from, BufferPool};
+use crate::pool::{acquire_from, BufferPool, STORAGE_USAGE};
 mod mi;
 
 pub use mi::GpuMiLevel;
@@ -99,7 +99,7 @@ pub(crate) fn block_reg<T>(what: &str, future: impl Future<Output = RegResult<T>
 
 struct PoolBuf {
     buf: wgpu::Buffer,
-    pool: Arc<Mutex<BufferPool>>,
+    pool: Option<Arc<Mutex<BufferPool>>>,
 }
 
 impl PoolBuf {
@@ -110,12 +110,23 @@ impl PoolBuf {
 
 impl Drop for PoolBuf {
     fn drop(&mut self) {
-        let mut pool = self.pool.lock().unwrap_or_else(|p| p.into_inner());
-        pool.release(self.buf.clone());
+        if let Some(pool) = &self.pool {
+            let mut pool = pool.lock().unwrap_or_else(|p| p.into_inner());
+            pool.release(self.buf.clone());
+        }
     }
 }
 
 /// A scalar volume resident on the device (`f32`, x-fastest).
+///
+/// # Buffer layout
+///
+/// The storage buffer ([`Self::buffer`]) holds `n = grid.num_voxels()` values of type `f32`
+/// (WGSL `array<f32>`) and nothing else: no header, no padding, no stride. Voxel `(i, j, k)` of a
+/// grid of size `[nx, ny, nz]` is element `i + nx * (j + ny * k)` (x fastest, then y, then z).
+/// The buffer is exactly `4 * n` bytes and has at least the usages of [`STORAGE_USAGE`]. The
+/// grid (size, spacing, origin and direction) is not in the buffer; it stays on the host
+/// ([`Self::grid`]).
 pub struct GpuImage {
     buf: PoolBuf,
     grid: Grid,
@@ -127,12 +138,58 @@ impl GpuImage {
     pub fn grid(&self) -> &Grid {
         &self.grid
     }
+
+    /// The storage buffer of the image, laid out as described on [`GpuImage`], for compute
+    /// kernels of the caller on the device of the backend that holds the image
+    /// ([`WgpuBackend::context`]).
+    ///
+    /// The image keeps ownership. A buffer the backend allocated returns to the backend's pool
+    /// when the image is dropped and is then reused for other data, so a clone of it must not be
+    /// used after the image is gone, nor passed to [`WgpuBackend::image_from_buffer`] or
+    /// [`WgpuBackend::field_from_buffer`]. Submit the kernels on the backend's queue
+    /// (`backend.context().queue`) so that they run in order with the backend's own operations.
+    /// A kernel may overwrite the intensities; the CC metric then still subtracts the background
+    /// value found when the image was uploaded (zero for [`WgpuBackend::image_from_buffer`]),
+    /// which changes its results only by `f32` rounding.
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        self.buf.buffer()
+    }
 }
 
 /// A displacement field resident on the device (`f32`, three planes of `n` values).
+///
+/// # Buffer layout
+///
+/// The storage buffer ([`Self::buffer`]) holds `3 * n` values of type `f32` (WGSL
+/// `array<f32>`), `n = grid.num_voxels()`, as three planes one after the other rather than
+/// interleaved vectors: elements `0..n` are the x components, `n..2n` the y components and
+/// `2n..3n` the z components. Within a plane, voxel `(i, j, k)` of a grid of size `[nx, ny, nz]`
+/// is element `i + nx * (j + ny * k)`. The components are displacements in LPS millimetres, as in
+/// [`VectorField`]. There is no header and no padding: the buffer is exactly `12 * n` bytes and
+/// has at least the usages of [`STORAGE_USAGE`]. The grid stays on the host ([`Self::grid`]).
 pub struct GpuField {
     buf: PoolBuf,
     grid: Grid,
+}
+
+impl GpuField {
+    /// The grid of the field.
+    pub fn grid(&self) -> &Grid {
+        &self.grid
+    }
+
+    /// The storage buffer of the field, laid out as described on [`GpuField`], for compute
+    /// kernels of the caller on the device of the backend that holds the field
+    /// ([`WgpuBackend::context`]).
+    ///
+    /// The field keeps ownership. A buffer the backend allocated returns to the backend's pool
+    /// when the field is dropped and is then reused for other data, so a clone of it must not be
+    /// used after the field is gone, nor passed to [`WgpuBackend::image_from_buffer`] or
+    /// [`WgpuBackend::field_from_buffer`]. Submit the kernels on the backend's queue
+    /// (`backend.context().queue`) so that they run in order with the backend's own operations.
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        self.buf.buffer()
+    }
 }
 
 struct TapSet {
@@ -730,7 +787,7 @@ impl WgpuBackend {
             .map_err(gerr)?;
         Ok(PoolBuf {
             buf,
-            pool: self.pool.clone(),
+            pool: Some(self.pool.clone()),
         })
     }
 
@@ -916,6 +973,138 @@ impl WgpuBackend {
             .await
             .map_err(gerr)?;
         Ok(data.into_iter().map(f64::from).collect())
+    }
+
+    /// Wraps `buffer`, which the caller created on this backend's device, as an image on `grid`
+    /// without copying it; an error on wasm32 (use [`Self::image_from_buffer_async`]).
+    ///
+    /// The buffer holds the layout described on [`GpuImage`]: exactly `4 * grid.num_voxels()`
+    /// bytes and at least the usages of [`STORAGE_USAGE`]. A buffer of another size, without one
+    /// of those usages, larger than the device binds, destroyed, or created on another device of
+    /// the same `wgpu::Instance` is an error. Not checked, and up to the caller: the buffer is not
+    /// mapped, it was created with `self.context().device` (wgpu cannot tell the buffers of a
+    /// separate `wgpu::Instance` apart), it is not the buffer of another image or field, and no
+    /// other wrapped image or field holds it.
+    ///
+    /// The image takes ownership of the buffer. It never enters the backend's pool: dropping the
+    /// image drops this handle, and wgpu frees the memory once the caller's clones are gone too.
+    /// [`Self::allocated_bytes`], [`Self::peak_allocated_bytes`] and the capacity plans
+    /// ([`crate::capacity`]) do not count it, so the caller budgets for it. Results the backend
+    /// computes from the image are new pooled buffers. The CC metric subtracts no background value
+    /// from a wrapped image (see [`GpuImage::buffer`]).
+    pub fn image_from_buffer(&self, buffer: wgpu::Buffer, grid: &Grid) -> RegResult<GpuImage> {
+        block_reg(
+            "WgpuBackend::image_from_buffer",
+            self.image_from_buffer_async(buffer, grid),
+        )
+    }
+
+    /// Async [`Self::image_from_buffer`].
+    pub async fn image_from_buffer_async(
+        &self,
+        buffer: wgpu::Buffer,
+        grid: &Grid,
+    ) -> RegResult<GpuImage> {
+        let bytes = grid.num_voxels() as u64 * 4;
+        let buf = self.wrap_buffer("image_from_buffer", buffer, bytes).await?;
+        Ok(GpuImage {
+            buf,
+            grid: *grid,
+            reference: 0.0,
+        })
+    }
+
+    /// Wraps `buffer`, which the caller created on this backend's device, as a displacement field
+    /// on `grid` without copying it; an error on wasm32 (use [`Self::field_from_buffer_async`]).
+    ///
+    /// The buffer holds the layout described on [`GpuField`]: exactly `12 * grid.num_voxels()`
+    /// bytes and at least the usages of [`STORAGE_USAGE`]. The checks, what is left to the caller
+    /// and the ownership are those of [`Self::image_from_buffer`]: the field owns the buffer,
+    /// which never enters the backend's pool and which the memory figures and capacity plans do
+    /// not count. Operations that work in place ([`Backend::scale`], [`Backend::axpy`]) write
+    /// into it. Operations that take a field by value ([`Backend::smooth_field`],
+    /// [`Backend::invert`], [`Backend::invert_pair`]) may write into it and return it, or return
+    /// a pooled buffer and drop it. Results computed from a borrowed field are pooled buffers.
+    pub fn field_from_buffer(&self, buffer: wgpu::Buffer, grid: &Grid) -> RegResult<GpuField> {
+        block_reg(
+            "WgpuBackend::field_from_buffer",
+            self.field_from_buffer_async(buffer, grid),
+        )
+    }
+
+    /// Async [`Self::field_from_buffer`].
+    pub async fn field_from_buffer_async(
+        &self,
+        buffer: wgpu::Buffer,
+        grid: &Grid,
+    ) -> RegResult<GpuField> {
+        let bytes = grid.num_voxels() as u64 * 12;
+        let buf = self.wrap_buffer("field_from_buffer", buffer, bytes).await?;
+        Ok(GpuField { buf, grid: *grid })
+    }
+
+    async fn wrap_buffer(
+        &self,
+        what: &'static str,
+        buffer: wgpu::Buffer,
+        bytes: u64,
+    ) -> RegResult<PoolBuf> {
+        let size = buffer.size();
+        if size != bytes {
+            return Err(bad(format!(
+                "{what}: the buffer has {size} bytes, the grid needs exactly {bytes}"
+            )));
+        }
+        let limit = self.ctx.caps.max_storage_buffer_binding_size;
+        if bytes > limit {
+            return Err(bad(format!(
+                "{what}: the buffer has {bytes} bytes, the device binds at most {limit} bytes per \
+                 storage buffer"
+            )));
+        }
+        let usage = buffer.usage();
+        if !usage.contains(STORAGE_USAGE) {
+            return Err(bad(format!(
+                "{what}: the buffer's usage {usage:?} lacks {:?}",
+                STORAGE_USAGE.difference(usage)
+            )));
+        }
+        let device = &self.ctx.device;
+        self.ctx
+            .scoped_async(what, 0, || {
+                let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("fastwarp-gpu wrapped buffer"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("fastwarp-gpu wrapped buffer"),
+                    layout: &layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
+            })
+            .await
+            .map_err(|e| {
+                bad(format!(
+                    "{what}: the buffer cannot be bound on this backend's device (was it created \
+                     on another device, or destroyed?): {e}"
+                ))
+            })?;
+        Ok(PoolBuf {
+            buf: buffer,
+            pool: None,
+        })
     }
 
     fn groups_3d(&self, g: &Grid) -> [u32; 3] {
