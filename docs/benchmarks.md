@@ -43,6 +43,7 @@ repository. Licences were read on the primary sources on 2026-11-12; quotes are 
 | `deep7t` | manual STN, SN, RN, GPe, GPi masks | 7 T MP2RAGE T1w, skull-stripped, 0.7 × 0.64 × 0.64 mm | 10 | 2.85 GB | yes |
 | `snsx` | 32 anatomical fiducials (AFIDs) | 7 T MP2RAGE T1w, 0.7 mm | 32 | 1.09 GB | yes |
 | `lhscpd` | 32 anatomical fiducials (AFIDs) | 1.5 T contrast-enhanced T1w | 40 | 0.34 GB | optional |
+| `ixi_t1`, `ixi_t2` | none (multimodal check, see [Multimodal check](#multimodal-check)) | 1.5 T T1w and T2w of one session | 10 | streamed, not stored | optional |
 
 Open a dataset below for its source, images, ground truth, licence and citation.
 
@@ -147,6 +148,25 @@ default run, because contrast enhancement makes the images unlike the template; 
 et al. (2023).
 :::
 
+:::{dropdown} IXI: T1w and T2w of one session (multimodal check, optional)
+- Source: the IXI dataset, <https://brain-development.org/ixi-dataset/>, archives `IXI-T1.tar` and
+  `IXI-T2.tar` (<https://biomedic.doc.ic.ac.uk/brain-development/downloads/IXI/>). Each archive is
+  streamed through SHA-256 and only the selected subjects' files are extracted; the archives
+  (several GB each) are never stored.
+- Images: the T1w and T2w images of the first ten subject numbers of Guy's Hospital (Philips
+  1.5 T), whole head, as distributed.
+- Ground truth: none. See [Multimodal check](#multimodal-check) for what is measured instead.
+- Template: MNI ICBM 2009c, as for SNSX.
+- Pins: IXI publishes no checksums, so a pin can only be trusted on first use. To fill one in,
+  stream each archive twice (`pin --dataset ixi_t2`), from two different networks or on two
+  different days, over a valid HTTPS connection, and take the SHA-256 only when both agree. Until
+  then the pins are placeholders that `fetch` refuses (the host's certificate had expired when
+  this dataset was added).
+
+- Licence: the IXI page: "This data is made available under the Creative Commons CC BY-SA 3.0
+  license" (<https://creativecommons.org/licenses/by-sa/3.0/legalcode>).
+:::
+
 :::{dropdown} Considered and not used
 | Dataset | Why not (or how to add it) |
 | --- | --- |
@@ -187,7 +207,8 @@ et al. (2023).
   registration grid itself, while ANTs samples the native image, and the two would see different
   inputs (this matters for the 0.7 mm 7 T images). The labels, masks and landmarks used for the
   evaluation stay the original files; only physical space matters for them.
-- T1w only (one channel): none of the default datasets has a T2w aligned to the T1w.
+- T1w only (one channel): none of the default datasets has a T2w aligned to the T1w. The
+  multimodal check registers IXI's T2w images instead (see [Multimodal check](#multimodal-check)).
 - No bias-field correction, no histogram matching, winsorising to the [0.005, 0.995] quantiles
   in both engines.
 
@@ -208,12 +229,48 @@ ANTs tag `v2.6.5`; older versions of the script used 0.1 and 4). Both engines ru
 `fastwarp.cohort_recipe(1)`. `--verbose 1` only makes ANTs print its progress and stage times,
 which the benchmark reads (see [Timings](#timings)); it does not change the registration.
 
+`--recipe cohort-mi` is the cohort recipe with Mattes mutual information instead of CC in the SyN
+stage (`channel_metrics` `["mi"]`, 32 bins): ANTs gets `MI[fixed,moving,1,32]` in place of
+`CC[fixed,moving,1,4]`, dense as FastWarp.
+
+`--recipe antspy-syn` and `--recipe synquick-s` are ANTsPy calls rather than schedules:
+`ants.registration(fixed, moving)` with its defaults (`type_of_transform="SyN"`) and with
+`type_of_transform="antsRegistrationSyNQuick[s]"`. FastWarp runs `fastwarp.ants.registration` with
+the same arguments, ANTs runs ANTsPy's `ants.registration` (its bundled ANTs, in a child process,
+`verbose=True` for the stage times), both with `write_composite_transform=True` and the random seed
+20260910 (`ants.config._random_seed`). `--ants-dir` and `--ants-version` are refused with them, and
+they have no `linear` step.
+
+**ANTs against ANTs.** `--engine ants_repeat` registers a pair with ANTs a second time with
+another random seed (20260911; ANTsPy calls: `ants.config._random_seed`). `evaluate` compares the
+two ANTs runs like FastWarp and ANTs (the `ants_vs_ants_*` columns of `agreement.csv` and the
+agreement table of the report), and refuses when the two ran different ANTs programs or versions
+(each ANTs `run.json` records `ants_version`), so the FastWarp-ANTs differences can be read against the spread of
+ANTs itself.
+
 ANTs runs as a child process, one at a time, never at the same time as FastWarp, on all cores
 unless `--threads` caps it (see [Timings](#timings)). By default it is ANTsPy's
 bundled `antsRegistration`; `--ants-dir` runs an `antsRegistration` program instead (for example
-the ANTs 2.6.5 release the CI uses). Precision is ANTs' default (double). A fixed seed does not
+the ANTs 2.6.5 release the CI uses), and `--ants-version 2.6.5` refuses to start when that program
+reports another version. Precision is ANTs' default (double). A fixed seed does not
 make ANTs repeatable with more than one thread, because its threads sum in any order; FastWarp
 runs are deterministic on one GPU.
+
+### Multimodal check
+
+IXI has no labels, so the T2w registration is checked against the T1w of the same subject and
+session. The subject's T2w is first aligned rigidly to its T1w (ANTsPy `Rigid`, Mattes MI, seed
+20260910) and
+resampled onto it, once, and both engines register that image onto the MNI 2009c T1w template with
+`cohort-mi` (`--dataset ixi_t2`); the T1w is registered onto the template with `cohort`
+(`--dataset ixi_t1`). Both warps take the template into the subject's T1w space, so where both are
+right they agree. `multimodal` composes each forward transform into a displacement field on the
+template grid and reports the difference (RMS, mean, 95th percentile, maximum, in mm) inside the
+template's brain mask between each engine's T2w MI warp and the T1w CC warp of the same engine
+(`vs_own`) and of each engine (`vs_ants`, `vs_fastwarp`). Only `vs_own` gets the paired
+FastWarp-minus-ANTs summary; against one engine's T1w warp, that engine's own T2w warp shares its
+implementation, so `vs_ants` and `vs_fastwarp` are reported as means only. `evaluate` and `report` on `ixi_t2` give the FastWarp-ANTs
+agreement and the regularity of the warps as for the other datasets.
 
 ### Evaluation
 
@@ -391,9 +448,11 @@ $B report --work ~/fastwarp-bench/work
   that does not read, an engine that fails) is recorded in its `run.json` and the run goes on. A
   lock file stops two runs from sharing a work folder.
 - `--dataset KEY` (repeatable) selects datasets, `--pairs N` the number of pairs, `--recipe
-  syn-sh` the other recipe, `--engine fastwarp` or `--engine ants` one engine, `--threads N` a
+  syn-sh` (or `cohort-mi`, `antspy-syn`, `synquick-s`) another recipe, `--engine fastwarp` or
+  `--engine ants` one engine (`--engine ants_repeat` a second ANTs run), `--threads N` a
   cap on the CPU threads of ANTs and of FastWarp's CPU work (default: all cores; see
-  [Timings](#timings)), `--ants-dir DIR` an ANTs installation, `--adapter NAME` a GPU,
+  [Timings](#timings)), `--ants-dir DIR` an ANTs installation, `--ants-version V` the version it
+  must report, `--adapter NAME` a GPU,
   `--iso-mm` the registration grid (default 1.0).
 - `linear` takes the same selection options as `run` (default dataset `snsx`, the default-run
   dataset with landmarks; `--dataset` chooses others), `--engine`, `--threads`, `--ants-dir`
@@ -407,6 +466,11 @@ $B report --work ~/fastwarp-bench/work
   `--ants-dir` must hold `antsApplyTransforms` as well as `antsRegistration`.
 - `plan` estimates `run`, `evaluate`, `post` and `linear` together (`linear` on its default
   datasets unless `--dataset` is given).
+- `multimodal --work DIR` compares the finished `ixi_t2` (`cohort-mi`) and `ixi_t1` (`cohort`)
+  warps (see [Multimodal check](#multimodal-check)); it caches each subject in `multimodal.json`
+  and writes `multimodal.csv`, `multimodal_paired.csv`, `multimodal_descriptive.csv` and
+  `summary.md` under
+  `<work>/results/multimodal/`.
 - `evaluate` caches each pair's result in `evaluation.json` and writes `labels.csv` (one row per
   structure, pair and engine), `landmarks.csv`, `pairs.csv` and `agreement.csv` under
   `<work>/results/<recipe>/`; `--no-surface` skips HD95 and ASSD (a later run without it
@@ -462,6 +526,10 @@ it). Leave `--threads` out for the timings to report; with it, say so next to th
 - Downloads use HTTPS only (redirects included) and stream into a `.part` file that becomes the
   file only when size and SHA-256 match the pin; a mismatch deletes it and stops. An interrupted
   download resumes with an HTTP range request.
+- An archive too large to keep (IXI) is streamed: hashed and extracted in one pass into a staging
+  folder, whose files are moved into place only when size and SHA-256 match the pin; a mismatch
+  deletes them and stops. A dropped connection resumes with a range request; a server that starts
+  the archive again from the beginning stops the fetch.
 - Archives are extracted member by member: only the members the dataset's rules select, only
   regular files, names and output paths checked to stay inside the data folder; links and
   devices are refused. Nothing is taken from the archive's permissions.

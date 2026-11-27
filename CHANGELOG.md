@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: the accuracy benchmark (`benchmarks/accuracy`) compares Mattes MI in SyN with ANTs
+  (`--recipe cohort-mi`), ANTsPy's default `ants.registration(fixed, moving)` and
+  `antsRegistrationSyNQuick[s]` run by `fastwarp.ants` and by ANTsPy (`--recipe antspy-syn`,
+  `synquick-s`), and a second ANTs run of a pair (`--engine ants_repeat`) to read the differences
+  against. A multimodal check on IXI registers each subject's T2w with MI onto the MNI template and
+  measures how far that warp is from the same subject's T1w warp with CC (`multimodal`). The IXI
+  archives are hashed and extracted while they download, without being stored. `run
+  --ants-version` refuses an `antsRegistration` of another version.
 - New: SyN stages can use Mattes mutual information, for images of different contrast. A recipe
   names the metric of each SyN channel in `channel_metrics` (`"cc"` or `"mi"`, with `mi_bins`
   histogram bins, 5 to 32), and channels may mix the two as in `antsRegistration`.

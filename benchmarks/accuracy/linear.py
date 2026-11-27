@@ -70,6 +70,7 @@ MULTISTART: dict[str, Any] = {
 def config(rec: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """What a linear run depends on: the recipe's rigid and affine stages, the winsorizing
     quantiles and the multi-start."""
+    recipes.require_schedule(rec, "the linear fits")
     return {
         "rigid": rec["rigid"],
         "affine": rec["affine"],
@@ -349,7 +350,7 @@ def compare(
     fixed_s, moving_s = ds.subject(pair["fixed"]), ds.subject(pair["moving"])
     lm = None
     if fixed_s.landmarks and moving_s.landmarks:
-        root = data / ds.key
+        root = data / ds.folder
         a = landmarks.read_fcsv(root / fixed_s.landmarks)
         b = landmarks.read_fcsv(root / moving_s.landmarks)
         lm = landmarks.matched(a, b)
@@ -407,7 +408,7 @@ def run_linear(
         _write_json(work / "environment_linear.json", env)
         for key in keys:
             ds = datasets.get(key)
-            if not (data / ds.key / ".fetched.json").is_file():
+            if not ds.fetched_marker(data).is_file():
                 raise RuntimeError(f"{ds.key} is not fetched into {data}; run fetch first")
             n = pairs if pairs is not None else (ds.quick_pairs if quick else ds.default_pairs)
             selected = select_pairs(ds, n)
@@ -517,7 +518,10 @@ def _row(dataset: str, pair: str, engine: str, status: str | None, ran: bool) ->
 def todo_count(
     work: Path, keys: list[str], recipe_name: str, pairs: int | None, quick: bool, iso_mm: float
 ) -> dict[str, dict[str, Any]]:
-    """Per dataset: the number of selected pairs and of linear runs left per engine."""
+    """Per dataset: the number of selected pairs and of linear runs left per engine (none for
+    an ANTsPy-call recipe, which has no linear stages to fit)."""
+    if recipes.is_antspy(recipes.recipe(recipe_name)):
+        return {}
     cfg = config(recipes.recipe(recipe_name))
     out = {}
     for key in keys:
@@ -545,7 +549,9 @@ def rows(work: Path, recipe_name: str | None = None) -> list[dict[str, Any]]:
     (of ``recipe_name``'s linear stages, if given): seconds, landmark errors, agreement with
     ANTs and the machine fingerprint. ``prepare`` is FastWarp's session preparation;
     ``rigid_affine`` the like-for-like sum (FastWarp: preparation, rigid and affine fits; ANTs:
-    the rigid and affine stages)."""
+    the rigid and affine stages). An ANTsPy-call recipe has none."""
+    if recipe_name is not None and recipes.is_antspy(recipes.recipe(recipe_name)):
+        return []
     cfg = None if recipe_name is None else config(recipes.recipe(recipe_name))
     out = []
     for path, rec in timing.read_records(work.glob(f"*/{FOLDER}/*/*/run.json")):

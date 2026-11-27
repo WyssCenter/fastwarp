@@ -6,7 +6,13 @@
 ``cohort`` is the FastWarp default (``fastwarp.cohort_recipe(1)``), the recipe the README
 timings use. ``syn-sh`` is what ``antsRegistrationSyN.sh -t s`` of ANTs 2.6.5 runs on an image
 below its "large image" size: the cohort recipe with the SyN gradient step 0.2 and CC radius 2.
-Both engines run the same recipe: FastWarp from the dict, ANTs from :func:`ants_argv`.
+``cohort-mi`` is the cohort recipe with Mattes mutual information in the SyN stage. Both engines
+run the same recipe: FastWarp from the dict, ANTs from :func:`ants_argv`.
+
+``antspy-syn`` and ``synquick-s`` are ANTsPy calls (:func:`is_antspy`): ``ants.registration``
+with its defaults (``type_of_transform="SyN"``) and with
+``type_of_transform="antsRegistrationSyNQuick[s]"``, run by ``fastwarp.ants.registration`` and by
+ANTsPy itself with the same arguments.
 """
 
 from __future__ import annotations
@@ -50,6 +56,12 @@ RECIPES: dict[str, dict[str, dict[str, Any]]] = {
         "affine": _LINEAR,
         "syn": {**_SYN, "gradient_step": 0.2, "cc_radius": 2},
     },
+    "cohort-mi": {"rigid": _LINEAR, "affine": _LINEAR, "syn": {**_SYN, "channel_metrics": ["mi"]}},
+    "antspy-syn": {"antspy": {"type_of_transform": "SyN"}, "seed": 20260910},
+    "synquick-s": {
+        "antspy": {"type_of_transform": "antsRegistrationSyNQuick[s]"},
+        "seed": 20260910,
+    },
 }
 
 #: The intensity quantiles both engines winsorize to.
@@ -57,10 +69,37 @@ WINSORIZE = (0.005, 0.995)
 
 
 def recipe(name: str) -> dict[str, dict[str, Any]]:
-    """A deep copy of the named recipe (single channel, T1w)."""
+    """A deep copy of the named recipe (single channel)."""
     if name not in RECIPES:
         raise ValueError(f"unknown recipe {name!r}; choose from {sorted(RECIPES)}")
     return copy.deepcopy(RECIPES[name])
+
+
+def is_antspy(rec: dict[str, Any]) -> bool:
+    """Whether ``rec`` is an ANTsPy call (``{"antspy": {keyword arguments}}``): FastWarp runs
+    it as ``fastwarp.ants.registration`` and ANTs as ANTsPy's ``ants.registration``, with the
+    same arguments, instead of a stage schedule both engines get."""
+    return "antspy" in rec
+
+
+def antspy_kwargs(rec: dict[str, Any]) -> dict[str, Any]:
+    """The keyword arguments of an ANTsPy-call recipe (:func:`is_antspy`)."""
+    if not is_antspy(rec):
+        raise ValueError("not an ANTsPy-call recipe")
+    return copy.deepcopy(rec["antspy"])
+
+
+def antspy_seed(rec: dict[str, Any]) -> int | None:
+    """The random seed both engines of an ANTsPy-call recipe get (``ants.config._random_seed``)."""
+    if not is_antspy(rec):
+        raise ValueError("not an ANTsPy-call recipe")
+    return rec.get("seed")
+
+
+def require_schedule(rec: dict[str, Any], what: str) -> None:
+    """Refuse an ANTsPy-call recipe where ``what`` needs a stage schedule."""
+    if is_antspy(rec):
+        raise ValueError(f"{what} needs a recipe with stages, not an ANTsPy call")
 
 
 def normalized(rec: Any) -> Any:
@@ -137,22 +176,29 @@ def _linear_stage(transform: str, s: dict[str, Any], fixed: str, moving: str) ->
 
 
 def ants_argv(
-    rec: dict[str, dict[str, Any]], fixed: str, moving: str, out_prefix: str
+    rec: dict[str, dict[str, Any]],
+    fixed: str,
+    moving: str,
+    out_prefix: str,
+    seed: int | None = None,
 ) -> list[str]:
     """The ``antsRegistration`` arguments (no program name) that run ``rec`` on one channel and
     write ``<out_prefix>Composite.h5`` / ``<out_prefix>InverseComposite.h5``.
 
     Mirrors FastWarp: centre-of-mass start, Rigid and Affine on ``MI[bins, Regular, sampling]``,
-    SyN on ``CC[radius]``, winsorizing ``[0.005, 0.995]``, no histogram matching, the rigid
-    stage's seed as ``--random-seed``. Precision is ANTs' default (double). ``--verbose 1``
-    makes ANTs print each stage's time, which the benchmark reads from the log.
+    SyN on ``CC[radius]`` or, with ``channel_metrics`` ``["mi"]``, on ``MI[bins]`` (dense, as
+    FastWarp), winsorizing ``[0.005, 0.995]``, no histogram matching, the rigid stage's seed (or
+    ``seed``) as ``--random-seed``. Precision is ANTs' default (double). ``--verbose 1`` makes
+    ANTs print each stage's time, which the benchmark reads from the log.
     """
+    require_schedule(rec, "antsRegistration arguments")
     fixed, moving, out_prefix = _check_path(fixed), _check_path(moving), _check_path(out_prefix)
     weights = rec["syn"]["channel_weights"]
-    if len(weights) != 1:
-        raise ValueError("the benchmark registers one channel (T1w)")
-    if rec["syn"]["channel_metrics"] != ["cc"]:
-        raise ValueError("the benchmark runs SyN on CC")
+    metrics = rec["syn"]["channel_metrics"]
+    if len(weights) != 1 or len(metrics) != 1:
+        raise ValueError("the benchmark registers one channel")
+    if metrics[0] not in ("cc", "mi"):
+        raise ValueError(f"the benchmark runs SyN on CC or MI, not {metrics[0]!r}")
     argv = _head(fixed, moving, out_prefix, None)
     for name, transform in (("rigid", "Rigid"), ("affine", "Affine")):
         argv += _linear_stage(transform, rec[name], fixed, moving)
@@ -162,12 +208,14 @@ def ants_argv(
         f"SyN[{_num(s['gradient_step'])},{_num(s['update_field_variance'])},"
         f"{_num(s['total_field_variance'])}]",
         "--metric",
-        f"CC[{fixed},{moving},{_num(weights[0])},{int(s['cc_radius'])}]",
+        f"CC[{fixed},{moving},{_num(weights[0])},{int(s['cc_radius'])}]"
+        if metrics[0] == "cc"
+        else f"MI[{fixed},{moving},{_num(weights[0])},{int(s['mi_bins'])}]",
         *_schedule(s),
         "--write-composite-transform",
         "1",
         "--random-seed",
-        str(int(rec["rigid"]["seed"])),
+        str(int(rec["rigid"]["seed"] if seed is None else seed)),
         "--verbose",
         "1",
     ]

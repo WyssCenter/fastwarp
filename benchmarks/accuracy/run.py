@@ -35,11 +35,33 @@ from typing import Any
 from . import datasets, recipes, timing
 
 ENGINES = ("fastwarp", "ants")
+#: A second ANTs run of a pair with another random seed (``--engine ants_repeat``), which gives
+#: the ANTs-against-ANTs differences the FastWarp-against-ANTs ones are read against.
+REPEAT = "ants_repeat"
+ALL_ENGINES = (*ENGINES, REPEAT)
+#: The random seed of :data:`REPEAT` (the recipes' own is 20260910).
+REPEAT_SEED_VALUE = 20260911
+#: The random seed of the rigid alignment of an image to another of the same subject.
+ALIGN_SEED = 20260910
 #: File-name prefix of the transforms in an engine folder (``reg_Composite.h5``, ...).
 PREFIX = "reg_"
 ANTSPY_REGISTRATION = (
     "import sys, ants; sys.exit(int(ants.lib.antsRegistration(sys.argv[1:]) or 0))"
 )
+#: Runs ``ants.registration`` of an ANTsPy-call recipe in a child process: the arguments come
+#: as JSON in argv[1], the seconds of the call are printed after the ANTs log.
+ANTSPY_CALL = (
+    "import json, sys, time\n"
+    "import ants\n"
+    "a = json.loads(sys.argv[1])\n"
+    "ants.config._random_seed = a['seed']\n"
+    "fixed, moving = ants.image_read(a['fixed']), ants.image_read(a['moving'])\n"
+    "t0 = time.perf_counter()\n"
+    "ants.registration(fixed, moving, outprefix=a['outprefix'], write_composite_transform=True, "
+    "verbose=True, **a['kwargs'])\n"
+    "print('benchmark: ants.registration seconds', time.perf_counter() - t0, flush=True)\n"
+)
+_CALL_SECONDS = re.compile(r"^benchmark: ants\.registration seconds (\S+)\s*$", re.MULTILINE)
 ITK_THREADS = "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"
 
 #: Seconds used by ``plan`` until the work folder has measured ones (guesses, not
@@ -482,25 +504,64 @@ def prep_folder(ds: datasets.Dataset, sid: str, work: Path, iso_mm: float) -> Pa
     return work / ds.key / "prep" / f"iso{iso_mm:g}mm" / sid
 
 
+def align_rigidly(img, reference, folder: Path):
+    """``img`` aligned rigidly onto ``reference`` (ANTsPy's ``Rigid``: Mattes MI, random seed
+    :data:`ALIGN_SEED`) and resampled linearly onto its grid; the transform and a record of it
+    stay in ``folder``."""
+    import ants
+
+    folder.mkdir(parents=True, exist_ok=True)
+    before = ants.config._random_seed
+    ants.config._random_seed = ALIGN_SEED
+    try:
+        reg = ants.registration(
+            fixed=reference,
+            moving=img,
+            type_of_transform="Rigid",
+            outprefix=(folder / "align_").as_posix(),
+        )
+    finally:
+        ants.config._random_seed = before
+    out = ants.apply_transforms(
+        fixed=reference, moving=img, transformlist=reg["fwdtransforms"], interpolator="linear"
+    )
+    _write_json(
+        folder / "align.json",
+        {
+            "type_of_transform": "Rigid",
+            "random_seed": ALIGN_SEED,
+            "transforms": [str(t) for t in reg["fwdtransforms"]],
+            "antspyx": ants.__version__,
+            "recorded": _now(),
+        },
+    )
+    return out
+
+
 def prepare_moving(ds: datasets.Dataset, sid: str, data: Path, work: Path, iso_mm: float) -> Path:
     """The moving image both engines register: the subject's image, resampled linearly to an
     ``iso_mm`` grid (cached) when its spacing differs, as the fixed image is. FastWarp would
-    otherwise resample it internally while ANTs samples the native image."""
+    otherwise resample it internally while ANTs samples the native image. A subject with an
+    ``align_to`` image is first aligned rigidly onto it (:func:`align_rigidly`)."""
     import ants
 
-    source = data / ds.key / ds.subject(sid).image
-    target = prep_folder(ds, sid, work, iso_mm) / "moving_registration.nii.gz"
+    subj = ds.subject(sid)
+    root = data / ds.folder
+    source = root / subj.image
+    folder = prep_folder(ds, sid, work, iso_mm)
+    target = folder / "moving_registration.nii.gz"
     if target.is_file():
         return target
     img = ants.image_read(str(source))
-    if _on_grid(img, iso_mm):
+    if subj.align_to:
+        img = align_rigidly(img, ants.image_read(str(root / subj.align_to)), folder)
+    elif _on_grid(img, iso_mm):
         return source
+    if not _on_grid(img, iso_mm):
+        img = ants.resample_image(img, (iso_mm,) * 3, use_voxels=False, interp_type=0)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name("tmp_" + target.name)
-    ants.image_write(
-        ants.resample_image(img, (iso_mm,) * 3, use_voxels=False, interp_type=0).clone("float"),
-        str(tmp),
-    )
+    ants.image_write(img.clone("float"), str(tmp))
     os.replace(tmp, target)
     return target
 
@@ -525,10 +586,11 @@ def prepare_fixed(
         if meta.get("iso_mm") == iso_mm and all(Path(p).is_file() for p in meta["files"].values()):
             return meta
     subj = ds.subject(sid)
-    img = ants.image_read(str(data / ds.key / subj.image))
-    labels = ants.image_read(str(data / ds.key / subj.labels)) if subj.labels else None
-    mask = ants.image_read(str(data / ds.key / subj.mask)) if subj.mask else None
-    structures = {label: ants.image_read(str(data / ds.key / rel)) for label, rel in subj.masks}
+    root = data / ds.folder
+    img = ants.image_read(str(root / subj.image))
+    labels = ants.image_read(str(root / subj.labels)) if subj.labels else None
+    mask = ants.image_read(str(root / subj.mask)) if subj.mask else None
+    structures = {label: ants.image_read(str(root / rel)) for label, rel in subj.masks}
     others = [(labels, "labels"), (mask, "mask")]
     others += [(m, f"structure mask {label}") for label, m in structures.items()]
     for other, what in others:
@@ -627,6 +689,120 @@ def run_fastwarp(
     return record
 
 
+def run_fastwarp_call(
+    fixed: Path, moving: Path, out: Path, rec: dict, *, iso_mm: float, adapter: str | None
+) -> dict[str, Any]:
+    """One ``fastwarp.ants.registration`` of an ANTsPy-call recipe, with the composite
+    transforms written; returns the ``run.json`` content. Its time is the wall time of the call."""
+    import ants
+    import fastwarp
+    import fastwarp.ants as fwa
+
+    seed = recipes.antspy_seed(rec)
+    record: dict[str, Any] = {
+        "engine": "fastwarp",
+        "started": _now(),
+        "recipe": rec,
+        "iso_mm": iso_mm,
+        "call": "fastwarp.ants.registration",
+        "arguments": {"kwargs": recipes.antspy_kwargs(rec), "seed": seed},
+        "fixed_image": str(fixed),
+        "moving_image": str(moving),
+    }
+    t_read = time.perf_counter()
+    fixed_img = ants.image_read(str(fixed))
+    moving_img = ants.image_read(str(moving))
+    record["read_s"] = time.perf_counter() - t_read
+    before = ants.config._random_seed
+    ants.config._random_seed = seed
+    t0 = time.perf_counter()
+    try:
+        fwa.registration(
+            fixed_img,
+            moving_img,
+            outprefix=(out / PREFIX).as_posix(),
+            write_composite_transform=True,
+            adapter=adapter,
+            **record["arguments"]["kwargs"],
+        )
+    except (fastwarp.GpuUnavailableError, fastwarp.GpuCapacityError) as e:
+        record.update(status="skipped", reason=str(e))
+        return record
+    except Exception as e:
+        record.update(status="failed", error=f"{type(e).__name__}: {e}")
+        return record
+    finally:
+        ants.config._random_seed = before
+    record["wall_s"] = time.perf_counter() - t0
+    record["finished"] = _now()
+    record["timings"] = {
+        "linear_s": None,
+        "syn_s": None,
+        "total_s": record["wall_s"],
+        "source": "wall time of fastwarp.ants.registration",
+    }
+    ok = composite(out).is_file() and inverse_composite(out).is_file()
+    record["status"] = "ok" if ok else "failed"
+    if not ok:
+        record["error"] = "fastwarp.ants.registration wrote no composite transforms"
+    return record
+
+
+def run_ants_call(
+    fixed: Path,
+    moving: Path,
+    out: Path,
+    rec: dict,
+    *,
+    threads: int | None,
+    timeout_s: float | None,
+    iso_mm: float,
+    engine: str = "ants",
+    seed: int | None = None,
+    ants_version: str | None = None,
+) -> dict[str, Any]:
+    """One ``ants.registration`` of an ANTsPy-call recipe in a child process (ANTsPy's own
+    ANTs, ``ants.config._random_seed`` set to ``seed``, else to the recipe's), with the
+    composite transforms written; returns the ``run.json`` content, with the stage times read
+    from its log. ``ants_version`` is recorded: the version of ANTsPy's ANTs."""
+    args = {
+        "fixed": fixed.as_posix(),
+        "moving": moving.as_posix(),
+        "outprefix": (out / PREFIX).as_posix(),
+        "kwargs": recipes.antspy_kwargs(rec),
+        "seed": recipes.antspy_seed(rec) if seed is None else seed,
+    }
+    record: dict[str, Any] = {
+        "engine": engine,
+        "started": _now(),
+        "recipe": rec,
+        "iso_mm": iso_mm,
+        "call": "ants.registration",
+        "arguments": args,
+        "program": "ANTsPy",
+        "ants_version": ants_version,
+        "itk_threads": threads,
+    }
+    log = out / "ants.log"
+    cmd = [sys.executable, "-I", "-c", ANTSPY_CALL, json.dumps(args)]
+    code, wall = run_child(cmd, log, child_env(threads), timeout_s)
+    if code is None:
+        record.update(status="failed", error=f"timed out after {timeout_s} s")
+        return record
+    record["wall_s"] = wall
+    record["finished"] = _now()
+    record["exit_code"] = code
+    text = log.read_text(encoding="utf-8", errors="replace")
+    record["timings"] = timing.ants_registration_timings(text)
+    m = _CALL_SECONDS.search(text)
+    record["timings"]["call_s"] = float(m.group(1)) if m else None
+    ok = code == 0 and composite(out).is_file() and inverse_composite(out).is_file()
+    record["status"] = "ok" if ok else "failed"
+    if not ok:
+        record["error"] = f"ants.registration exited with {code}; see {log.name}"
+    return record
+
+
 def run_ants(
     fixed: Path,
     moving: Path,
@@ -637,19 +813,27 @@ def run_ants(
     ants_dir: Path | None,
     timeout_s: float | None,
     iso_mm: float,
+    engine: str = "ants",
+    seed: int | None = None,
+    ants_version: str | None = None,
 ) -> dict[str, Any]:
-    """One ``antsRegistration`` in a child process; returns the ``run.json`` content, with the
-    stage times read from its log (:func:`timing.ants_registration_timings`)."""
-    argv = recipes.ants_argv(rec, fixed.as_posix(), moving.as_posix(), (out / PREFIX).as_posix())
+    """One ``antsRegistration`` in a child process (with ``seed`` instead of the recipe's, if
+    given); returns the ``run.json`` content, with the stage times read from its log
+    (:func:`timing.ants_registration_timings`) and ``ants_version``, the version the program
+    reports."""
+    argv = recipes.ants_argv(
+        rec, fixed.as_posix(), moving.as_posix(), (out / PREFIX).as_posix(), seed=seed
+    )
     cmd = [*ants_program(ants_dir), *argv]
     env = child_env(threads)
     record: dict[str, Any] = {
-        "engine": "ants",
+        "engine": engine,
         "started": _now(),
         "recipe": rec,
         "iso_mm": iso_mm,
         "argv": argv,
         "program": "ANTsPy" if ants_dir is None else cmd[0],
+        "ants_version": ants_version,
         "itk_threads": threads,
     }
     log = out / "ants.log"
@@ -668,6 +852,48 @@ def run_ants(
     if not ok:
         record["error"] = f"antsRegistration exited with {code}; see {log.name}"
     return record
+
+
+def check_ants_options(rec: dict, ants_dir: Path | None, want: str | None) -> None:
+    """Refuse ``--ants-dir`` and ``--ants-version`` with an ANTsPy-call recipe, whose ANTs is
+    ANTsPy's own."""
+    if recipes.is_antspy(rec) and (ants_dir is not None or want is not None):
+        raise ValueError(
+            "an ANTsPy-call recipe runs ANTsPy's own ANTs; --ants-dir and --ants-version do not "
+            "apply to it"
+        )
+
+
+def ants_identity(record: dict[str, Any]) -> tuple[Any, Any]:
+    """The ANTs a registration ``run.json`` ran: its program and version (for records without
+    ``ants_version``, the version of their ``environment``)."""
+    version = record.get("ants_version") or (record.get("environment") or {}).get("ants_version")
+    return record.get("program"), version
+
+
+def check_same_ants(a: dict[str, Any], b: dict[str, Any]) -> None:
+    """Refuse to compare two ANTs runs (``run.json``) made by different ANTs programs or
+    versions."""
+    if ants_identity(a) != ants_identity(b):
+        raise ValueError(
+            f"the two ANTs runs used different ANTs: {ants_identity(a)} and {ants_identity(b)}"
+        )
+
+
+def check_ants_version(
+    env: dict[str, Any], want: str | None, rec: dict, engines: tuple[str, ...]
+) -> None:
+    """Refuse a run whose ``antsRegistration`` (``env["ants_version"]``) does not start with
+    ``want``, when it runs one (an ANTs engine and a recipe with stages)."""
+    check_ants_options(rec, None, want)
+    if want is None or not set(engines) - {"fastwarp"}:
+        return
+    got = env.get("ants_version") or ""
+    if not str(got).startswith(want):
+        raise RuntimeError(
+            f"antsRegistration ({env.get('ants_program')}) reports version {got!r}, not {want}; "
+            "give the folder of that ANTs with --ants-dir"
+        )
 
 
 def _row(dataset: str, pair: str, engine: str, status: str | None, ran: bool) -> dict:
@@ -689,24 +915,29 @@ def run(
     adapter: str | None = None,
     retry_failed: bool = False,
     ants_timeout_s: float | None = 4 * 3600.0,
+    ants_version: str | None = None,
     log: Callable[[str], None] = print,
 ) -> list[dict[str, Any]]:
     """Register every selected pair with every engine not done yet; returns one row per
     pair and engine with its status. ``threads`` caps the CPU threads of both engines (``None``:
-    all cores)."""
+    all cores). ``ants_version``: refuse to start unless the ``antsRegistration`` the recipe
+    runs reports a version that starts with it. An ANTsPy-call recipe runs ANTsPy's own ANTs and
+    refuses ``ants_dir`` and ``ants_version``."""
     for e in engines:
-        if e not in ENGINES:
+        if e not in ALL_ENGINES:
             raise ValueError(f"unknown engine {e!r}")
     rec = recipes.recipe(recipe_name)
+    check_ants_options(rec, ants_dir, ants_version)
     rows = []
     caller = thread_env()
     with RunLock(work), rayon_threads(threads):
         env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter, caller_env=caller)
+        check_ants_version(env, ants_version, rec, engines)
         _write_json(work / "environment.json", env)
         log(f"fastwarp {env.get('fastwarp')}, ANTsPy {env.get('antspyx')}, GPU {env.get('gpu')}")
         for key in keys:
             ds = datasets.get(key)
-            if not (data / ds.key / ".fetched.json").is_file():
+            if not ds.fetched_marker(data).is_file():
                 raise RuntimeError(f"{ds.key} is not fetched into {data}; run fetch first")
             n = pairs if pairs is not None else (ds.quick_pairs if quick else ds.default_pairs)
             selected = select_pairs(ds, n)
@@ -769,12 +1000,27 @@ def run(
                     out = folder / engine
                     out.mkdir(parents=True, exist_ok=True)
                     log(f"[{i}/{len(selected)}] {folder.name} {engine} ...")
+                    seed = REPEAT_SEED_VALUE if engine == REPEAT else None
                     try:
                         if engine == "fastwarp":
+                            runner = run_fastwarp_call if recipes.is_antspy(rec) else run_fastwarp
                             with itk_threads(threads):
-                                record = run_fastwarp(
+                                record = runner(
                                     fixed, moving, out, rec, iso_mm=iso_mm, adapter=adapter
                                 )
+                        elif recipes.is_antspy(rec):
+                            record = run_ants_call(
+                                fixed,
+                                moving,
+                                out,
+                                rec,
+                                threads=threads,
+                                timeout_s=ants_timeout_s,
+                                iso_mm=iso_mm,
+                                engine=engine,
+                                seed=seed,
+                                ants_version=env.get("ants_version"),
+                            )
                         else:
                             record = run_ants(
                                 fixed,
@@ -785,6 +1031,9 @@ def run(
                                 ants_dir=ants_dir,
                                 timeout_s=ants_timeout_s,
                                 iso_mm=iso_mm,
+                                engine=engine,
+                                seed=seed,
+                                ants_version=env.get("ants_version"),
                             )
                     except Exception as e:
                         record = {

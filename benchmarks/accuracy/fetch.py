@@ -5,7 +5,9 @@
 
 Every file is downloaded over HTTPS (redirects included), checked against a SHA-256 pinned in
 :mod:`benchmarks.accuracy.datasets` before it is used, and an archive member is written only
-when its name and the output path stay inside the data folder and it is a regular file.
+when its name and the output path stay inside the data folder and it is a regular file. An
+archive too large to keep is streamed: hashed and extracted in one pass, its members kept only
+when the hash matches.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import os
+import shutil
 import ssl
 import tarfile
 import time
@@ -236,6 +239,28 @@ def _copy(src: BinaryIO, target: Path, size: int) -> None:
     os.replace(tmp, target)
 
 
+def _extract_members(
+    tf: tarfile.TarFile, dest: Path, select: Callable[[str], str | None]
+) -> list[Path]:
+    written: list[Path] = []
+    for member in tf:
+        safe_member_path(member.name)
+        rel = select(member.name)
+        if rel is None:
+            continue
+        if not member.isreg():
+            raise UnsafeArchiveError(f"{member.name!r} is not a regular file")
+        safe_member_path(rel)
+        target = _inside(dest, rel)
+        src = tf.extractfile(member)
+        if src is None:
+            raise UnsafeArchiveError(f"{member.name!r} has no data")
+        with src:
+            _copy(src, target, member.size)
+        written.append(target)
+    return written
+
+
 def safe_extract_tar(archive: Path, dest: Path, select: Callable[[str], str | None]) -> list[Path]:
     """Extract the members ``select`` maps to a relative output path (``None`` skips one).
 
@@ -245,24 +270,100 @@ def safe_extract_tar(archive: Path, dest: Path, select: Callable[[str], str | No
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
     with tarfile.open(archive, mode="r:*") as tf:
-        for member in tf:
-            safe_member_path(member.name)
-            rel = select(member.name)
-            if rel is None:
-                continue
-            if not member.isreg():
-                raise UnsafeArchiveError(f"{member.name!r} is not a regular file")
-            safe_member_path(rel)
-            target = _inside(dest, rel)
-            src = tf.extractfile(member)
-            if src is None:
-                raise UnsafeArchiveError(f"{member.name!r} has no data")
-            with src:
-                _copy(src, target, member.size)
+        return _extract_members(tf, dest, select)
+
+
+class _HashingStream:
+    """A file-like reader over :func:`_chunks` that hashes every byte it passes on. A server
+    that restarts the stream from the start cannot be followed: the bytes before are gone."""
+
+    def __init__(self, chunks: Iterator[tuple[int, bytes]]) -> None:
+        self._chunks = chunks
+        self._buf = bytearray()
+        self.sha256 = hashlib.sha256()
+        self.size = 0
+
+    def _more(self) -> bool:
+        try:
+            offset, block = next(self._chunks)
+        except StopIteration:
+            return False
+        if offset != self.size:
+            raise ConnectionError(
+                f"the server sent bytes from offset {offset}, not {self.size}; a streamed "
+                "archive cannot start again"
+            )
+        self.sha256.update(block)
+        self.size += len(block)
+        self._buf += block
+        return True
+
+    def read(self, n: int = -1) -> bytes:
+        while (n < 0 or len(self._buf) < n) and self._more():
+            pass
+        if n < 0 or n >= len(self._buf):
+            out = bytes(self._buf)
+            self._buf.clear()
+        else:
+            out = bytes(self._buf[:n])
+            del self._buf[:n]
+        return out
+
+    def drain(self) -> None:
+        """Read and hash the rest of the stream."""
+        self._buf.clear()
+        while self._more():
+            self._buf.clear()
+
+
+def stream_extract_tar(
+    url: str,
+    dest: Path,
+    select: Callable[[str], str | None],
+    sha256: str | None,
+    size: int | None = None,
+    *,
+    retries: int = 8,
+    timeout: float = 120.0,
+) -> list[Path]:
+    """Extract the members ``select`` chooses from the tar archive at ``url`` while it
+    downloads, without storing the archive, as :func:`safe_extract_tar` would.
+
+    The whole stream goes through SHA-256. The members are written to a staging folder in
+    ``dest`` and moved into place only when the size and SHA-256 match the pin; otherwise the
+    staging folder is deleted and :class:`HashMismatchError` raised. An unpinned archive raises
+    :class:`UnpinnedError` before any request.
+    """
+    if not sha256:
+        raise UnpinnedError(f"{url} has no pinned SHA-256; fill it in pins.json first")
+    _check_url(url)
+    sha256 = sha256.lower()
+    dest = Path(dest)
+    staging = dest / ".staging" / sha256[:16]
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    try:
+        stream = _HashingStream(_chunks(url, 0, retries=retries, timeout=timeout, size=size))
+        with tarfile.open(fileobj=stream, mode="r|") as tf:
+            staged = _extract_members(tf, staging, select)
+        stream.drain()
+        got = stream.sha256.hexdigest()
+        if (size is not None and stream.size != size) or got != sha256:
+            raise HashMismatchError(
+                f"{url}: got {stream.size} bytes with SHA-256 {got}, expected "
+                f"{size if size is not None else '?'} bytes with SHA-256 {sha256}"
+            )
+        written = []
+        for p in staged:
+            target = _inside(dest, p.relative_to(staging).as_posix())
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(p, target)
             written.append(target)
-    return written
+        return written
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def repo_root() -> Path:
@@ -287,11 +388,12 @@ def fetch_dataset(
 
     Files already present and matching their pin are kept; an archive is extracted once (a
     marker named after its SHA-256 records it) and deleted afterwards unless
-    ``keep_archives``. Writes ``.fetched.json`` when every subject's files exist.
+    ``keep_archives``; a ``stream`` archive is never stored (:func:`stream_extract_tar`). Writes
+    the dataset's :meth:`~.datasets.Dataset.fetched_marker` when every subject's files exist.
     """
     import json
 
-    root = check_outside_repo(data) / ds.key
+    root = check_outside_repo(data) / ds.folder
     unpinned = [d.path for d in ds.downloads if not d.sha256]
     if unpinned:
         raise UnpinnedError(
@@ -304,14 +406,17 @@ def fetch_dataset(
                 continue
             archive = root / "downloads" / Path(d.path).name
             log(f"[{i}/{len(ds.downloads)}] {d.path} ({(d.size or 0) / 1e6:.0f} MB)")
-            download(d.url, archive, d.sha256, d.size)
-            written = safe_extract_tar(archive, root, d.select)
+            if d.stream:
+                written = stream_extract_tar(d.url, root, d.select, d.sha256, d.size)
+            else:
+                download(d.url, archive, d.sha256, d.size)
+                written = safe_extract_tar(archive, root, d.select)
             if not written:
                 raise UnsafeArchiveError(f"{d.path}: no member matched the extraction rules")
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps([str(p.relative_to(root)) for p in written]), "utf-8")
             if not keep_archives:
-                archive.unlink()
+                archive.unlink(missing_ok=True)
         else:
             target = root / safe_member_path(d.path)
             _inside(root, d.path)
@@ -328,7 +433,7 @@ def fetch_dataset(
             f"{ds.key}: {len(missing)} expected files are missing: {missing[:3]}; delete "
             f"{root / '.extracted'} to extract the archives again"
         )
-    (root / ".fetched.json").write_text(
+    ds.fetched_marker(root.parent).write_text(
         json.dumps({"dataset": ds.key, "files": len(ds.downloads)}), encoding="utf-8"
     )
     return root

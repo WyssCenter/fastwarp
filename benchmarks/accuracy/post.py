@@ -334,7 +334,7 @@ def post_pair(
         record.update(status="skipped", reason="no finished registration in this pair")
         return record
     reference = Path(pair["fixed_prep"]["files"]["reference"])
-    moving = data / ds.key / ds.subject(pair["moving"]).image
+    moving = data / ds.folder / ds.subject(pair["moving"]).image
     forward, inverse = composite(folder / src), inverse_composite(folder / src)
     record.update(
         source_engine=src,

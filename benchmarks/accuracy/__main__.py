@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Command line:
-``python -m benchmarks.accuracy {list,pin,fetch,plan,run,linear,post,evaluate,report}``.
+``python -m benchmarks.accuracy {list,pin,fetch,plan,run,linear,post,evaluate,multimodal,report}``.
 
 The steps and the time they take are in ``docs/benchmarks.md``.
 """
@@ -143,6 +143,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         adapter=args.adapter,
         retry_failed=args.retry_failed,
         ants_timeout_s=args.ants_timeout_h * 3600.0,
+        ants_version=args.ants_version,
     )
     bad = [r for r in rows if r["status"] != "ok"]
     for r in bad:
@@ -219,6 +220,19 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_multimodal(args: argparse.Namespace) -> int:
+    from .fetch import check_outside_repo
+    from .multimodal import run_multimodal
+    from .run import RunLock, itk_threads
+
+    work = check_outside_repo(args.work)
+    with RunLock(work), itk_threads(args.threads):
+        out = run_multimodal(work=work, pairs=args.pairs, quick=args.quick, force=args.force)
+    print((out / "summary.md").read_text(encoding="utf-8"))
+    print(f"tables in {out}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from .fetch import check_outside_repo
     from .report import report
@@ -264,8 +278,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--engine",
         action="append",
-        choices=("fastwarp", "ants"),
-        help="run only this engine (repeatable; default both)",
+        choices=("fastwarp", "ants", "ants_repeat"),
+        help="run only this engine (repeatable; default fastwarp and ants; ants_repeat runs "
+        "ANTs a second time with another seed)",
     )
     p.add_argument("--iso-mm", type=float, default=1.0, help="registration grid (default 1.0)")
     p.add_argument(
@@ -277,6 +292,10 @@ def main(argv: list[str] | None = None) -> int:
         "--ants-dir",
         type=Path,
         help="folder with an antsRegistration program to use instead of ANTsPy's",
+    )
+    p.add_argument(
+        "--ants-version",
+        help="refuse to start unless antsRegistration reports a version starting with this",
     )
     p.add_argument("--adapter", help="GPU adapter name substring")
     p.add_argument("--retry-failed", action="store_true")
@@ -330,6 +349,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-surface", action="store_true", help="skip HD95 / ASSD (faster)")
     p.add_argument("--force", action="store_true", help="re-evaluate cached pairs")
     p.set_defaults(func=_cmd_evaluate)
+
+    p = sub.add_parser(
+        "multimodal", help="IXI: field differences of the T2w MI warps to the T1w CC warps"
+    )
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--pairs", type=int, help="number of subjects (default 10)")
+    g.add_argument("--quick", action="store_true", help="one subject")
+    _add_work(p, data=False)
+    p.add_argument("--threads", type=int, help="cap the ITK threads (default: all cores)")
+    p.add_argument("--force", action="store_true", help="compare cached subjects again")
+    p.set_defaults(func=_cmd_multimodal)
 
     p = sub.add_parser("report", help="summary tables (accuracy and timings) and plot")
     p.add_argument("--recipe", default="cohort", choices=sorted(recipes.RECIPES))

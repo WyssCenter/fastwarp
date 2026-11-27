@@ -89,7 +89,7 @@ def agreement_table(agreement: list[dict[str, str]]) -> list[dict[str, Any]]:
     rows = []
     for dataset in sorted({r["dataset"] for r in agreement}):
         sel = [r for r in agreement if r["dataset"] == dataset]
-        for col in sel[0]:
+        for col in dict.fromkeys(c for r in sel for c in r):
             if col in ("dataset", "recipe", "pair", "fixed", "moving"):
                 continue
             v = np.array([_float(r.get(col)) for r in sel])
