@@ -173,8 +173,11 @@ GPUs. One image pair only: several channels, masks and other recipes need the
   `maxStorageBufferBindingSize`) before it starts and refuses a grid that cannot fit. The SyN stage
   needs about 170 bytes of GPU memory per voxel of the registration grid: about 1.4 GiB for the
   1 mm grid of the sample template (197 x 233 x 189 voxels) and about 190 MiB for the 2 mm grid.
-  When the GPU runs out of memory, or the browser stops the GPU because a step takes too long, the
-  page says so: choose the 2 mm grid, which is preselected on phones and tablets.
+  When the GPU runs out of memory, the page says so: choose the 2 mm grid, which is preselected on
+  phones and tablets. When the browser or the GPU driver resets the GPU without a sign that memory
+  ran short, which happens now and then on some phones and computers, the page says that instead:
+  run it again. If it happens again on the 1 mm grid, the GPU may be too slow for its longest steps
+  (the browser stops a step that takes too long): choose the 2 mm grid.
 - **Computer memory.** The tab holds both images, their resampled and prepared copies and the
   displacement fields in double precision; WebAssembly in a browser can use at most 4 GiB. A 1 mm
   registration of the sample used 1.2 GiB of WebAssembly memory, plus the 210 MiB zip file.

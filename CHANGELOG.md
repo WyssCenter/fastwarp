@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fixed: when the browser loses the GPU device during a run, the browser demo no longer says that
+  GPU memory most likely ran out unless something points to it: an out-of-memory error caught during
+  the run, a failed allocation of the WebAssembly module, or a planned GPU memory and WebAssembly
+  memory of together at least half of the device's memory (`navigator.deviceMemory`, which Safari
+  and Firefox do not report). Then the report's kind is `GpuMemory` and its `memory_evidence` says
+  which test applied. Otherwise the kind is `GpuDeviceLost` and the page says that the browser or
+  the GPU driver reset the GPU, which happens now and then on some phones and computers, and that
+  running it again usually works (on the 1 mm grid, that the 2 mm grid helps if it happens again).
+  The browser's own text stays in the message and the report. The GPU memory peak of the report now
+  counts the run's own buffers only.
 - New: programs that build their own registration loop on the Rust `WgpuBackend` can run their
   own WGSL compute kernels, such as a metric or a regulariser of their own, on the images and
   fields the backend holds, without a round trip through the host. `GpuImage::buffer` and

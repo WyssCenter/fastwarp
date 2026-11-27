@@ -18,7 +18,7 @@ let cancelRequested = false;
 let failed = false;
 const counts = {};
 
-const FAULTS = new Set(["panic", "alloc", "lost", "oom", "internal", "stall"]);
+const FAULTS = new Set(["panic", "alloc", "lost", "lostoom", "oom", "internal", "stall"]);
 const SPEC_LIMITS = {
   maxBufferSize: 268435456,
   maxStorageBufferBindingSize: 134217728,
@@ -98,6 +98,11 @@ function syntheticError(filter) {
     return new GPUOutOfMemoryError("FastWarp fault injection: out of memory");
   }
   if (fault.fired) return null;
+  if (debug.fault === "lostoom" && filter === "out-of-memory") {
+    fault.fired = true;
+    fault.device?.destroy();
+    return new GPUOutOfMemoryError("FastWarp fault injection: out of memory before the device is lost");
+  }
   if (debug.fault === "internal" && filter === "internal") {
     fault.fired = true;
     return new GPUInternalError("FastWarp fault injection: internal error");
@@ -163,7 +168,7 @@ function tapGpu() {
     };
   }
   if (typeof GPUDevice !== "undefined") {
-    if (debug.fault === "oom" || debug.fault === "internal") {
+    if (["oom", "lostoom", "internal"].includes(debug.fault)) {
       const pushErrorScope = GPUDevice.prototype.pushErrorScope;
       GPUDevice.prototype.pushErrorScope = function (filter) {
         const stack = fault.scopes.get(this) ?? [];
@@ -254,6 +259,11 @@ self.addEventListener("unhandledrejection", (e) => {
   }
 });
 
+function withDeviceMemory(options) {
+  const gb = self.navigator?.deviceMemory;
+  return typeof gb === "number" && Number.isFinite(gb) && gb > 0 ? { ...options, device_memory_gb: gb } : options;
+}
+
 function cancelled() {
   const err = new Error("the registration was cancelled");
   err.name = "Cancelled";
@@ -301,7 +311,7 @@ self.onmessage = async ({ data }) => {
       const zip = await register(
         new Uint8Array(data.fixed),
         new Uint8Array(data.moving),
-        JSON.stringify(data.options),
+        JSON.stringify(withDeviceMemory(data.options)),
         onProgress,
       );
       if (debug.fault === "stall" && fault.armed) return;
