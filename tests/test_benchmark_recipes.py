@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 
 import pytest
 
-from benchmarks.accuracy import datasets, post, recipes, run
+from benchmarks.accuracy import datasets, evaluate, post, recipes, run
 
 COHORT_ARGV = [
     "--dimensionality",
@@ -159,6 +160,25 @@ def test_two_ants_runs_of_different_ants_are_not_compared():
     ):
         with pytest.raises(ValueError, match="different ANTs"):
             run.check_same_ants(a, other)
+    spelled = {**a, "program": "c:\\ants\\..\\ants\\ANTSREGISTRATION.EXE"}
+    if sys.platform == "win32":
+        run.check_same_ants(a, spelled)
+    run.check_same_ants({**a, "program": "ANTsPy"}, {**a, "program": "ANTsPy"})
+    for unknown in ({**a, "ants_version": None}, {"ants_version": "2.6.5-gfdce4d2"}, {}):
+        with pytest.raises(ValueError, match="unknown"):
+            run.check_same_ants(a, unknown)
+        with pytest.raises(ValueError, match="unknown"):
+            run.check_same_ants(unknown, a)
+
+
+def test_a_second_ants_run_of_another_ants_is_skipped_with_the_reason(tmp_path):
+    record = {"program": "ANTsPy", "ants_version": "v2.5.1"}
+    for engine, rec in (("ants", record), ("ants_repeat", {**record, "ants_version": "v2.6.0"})):
+        (tmp_path / engine).mkdir()
+        (tmp_path / engine / "run.json").write_text(json.dumps(rec))
+    assert "different ANTs" in evaluate.repeat_problem(tmp_path)
+    (tmp_path / "ants_repeat" / "run.json").write_text(json.dumps(record))
+    assert evaluate.repeat_problem(tmp_path) is None
 
 
 def _ds(n: int, protocol: str = "pairwise") -> datasets.Dataset:

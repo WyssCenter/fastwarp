@@ -182,6 +182,20 @@ def test_an_antspy_call_and_a_second_ants_run_on_a_phantom(tmp_path, monkeypatch
     text = report.report(work=work, recipe_name="tiny-call", plot=False).read_text()
     assert "ants_vs_ants_field_diff_rms_mm" in text and "## Linear fits" not in text
 
+    second["ants_version"] = "another"
+    (pair / "ants_repeat" / "run.json").write_text(json.dumps(second))
+    logged = []
+    out = evaluate.evaluate(**kw, quick=False, force=True, log=logged.append)
+    cached = json.loads((pair / "evaluation.json").read_text())
+    assert "error" not in cached and "different ANTs" in cached["ants_repeat_skipped"]
+    assert any("second ANTs run not compared" in line for line in logged)
+    with open(out / "pairs.csv", newline="") as f:
+        assert sorted(r["engine"] for r in csv.DictReader(f)) == ["ants", "fastwarp"]
+    with open(out / "agreement.csv", newline="") as f:
+        (agreement,) = list(csv.DictReader(f))
+    assert float(agreement["field_diff_rms_mm"]) < 2.0
+    assert not [c for c in agreement if c.startswith("ants_vs_ants")]
+
 
 def _ixi_phantoms(root, template_shift, shift, contrast_shift):
     vol, sp, origin, _ = phantom(template_shift)
@@ -235,7 +249,8 @@ def test_the_multimodal_check_on_a_phantom(tmp_path, monkeypatch):
     ants_run = json.loads((pair / "ants" / "run.json").read_text())
     assert any(a.startswith("MI[") for a in ants_run["argv"])
     prep = run.prep_folder(t2, "s", work, SPACING)
-    assert json.loads((prep / "align.json").read_text())["type_of_transform"] == "Rigid"
+    align = json.loads((prep / "align.json").read_text())
+    assert align["type_of_transform"] == "Rigid" and align["random_seed"] == run.ALIGN_SEED
 
     out = multimodal.run_multimodal(work=work, pairs=1, log=lambda s: None)
     with open(out / "multimodal.csv", newline="") as f:
@@ -257,6 +272,42 @@ def test_the_multimodal_check_on_a_phantom(tmp_path, monkeypatch):
         assert {r["metric"] for r in csv.DictReader(f)} == {
             f"vs_own_{k}" for k in multimodal.FIELD_KEYS
         }
+
+
+def test_a_cached_alignment_of_another_seed_is_made_again(tmp_path, monkeypatch):
+    root = tmp_path / "data" / "m"
+    root.mkdir(parents=True)
+    img = ants.from_numpy(np.ones((8, 8, 8), "float32"), spacing=(1.0, 1.0, 1.0))
+    for name in ("t1.nii.gz", "t2.nii.gz"):
+        ants.image_write(img, str(root / name))
+    ds = datasets.Dataset(
+        key="m",
+        title="m",
+        licence="",
+        downloads=(),
+        subjects=(datasets.Subject(id="a", image="t2.nii.gz", align_to="t1.nii.gz"),),
+        protocol="pairwise",
+    )
+    calls = []
+
+    def fake_align(moving, reference, folder):
+        calls.append(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "align.json").write_text(json.dumps({"random_seed": run.ALIGN_SEED}))
+        return reference
+
+    monkeypatch.setattr(run, "align_rigidly", fake_align)
+    work = tmp_path / "work"
+    out = run.prepare_moving(ds, "a", tmp_path / "data", work, 1.0)
+    assert out.is_file() and len(calls) == 1
+    run.prepare_moving(ds, "a", tmp_path / "data", work, 1.0)
+    assert len(calls) == 1
+    (out.parent / "align.json").write_text(json.dumps({"random_seed": 7}))
+    run.prepare_moving(ds, "a", tmp_path / "data", work, 1.0)
+    assert len(calls) == 2
+    (out.parent / "align.json").unlink()
+    run.prepare_moving(ds, "a", tmp_path / "data", work, 1.0)
+    assert len(calls) == 3
 
 
 def test_the_moving_image_goes_onto_the_registration_grid(tmp_path, monkeypatch):

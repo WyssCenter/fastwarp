@@ -542,7 +542,8 @@ def prepare_moving(ds: datasets.Dataset, sid: str, data: Path, work: Path, iso_m
     """The moving image both engines register: the subject's image, resampled linearly to an
     ``iso_mm`` grid (cached) when its spacing differs, as the fixed image is. FastWarp would
     otherwise resample it internally while ANTs samples the native image. A subject with an
-    ``align_to`` image is first aligned rigidly onto it (:func:`align_rigidly`)."""
+    ``align_to`` image is first aligned rigidly onto it (:func:`align_rigidly`), again when the
+    cached alignment was made with another seed."""
     import ants
 
     subj = ds.subject(sid)
@@ -550,7 +551,9 @@ def prepare_moving(ds: datasets.Dataset, sid: str, data: Path, work: Path, iso_m
     source = root / subj.image
     folder = prep_folder(ds, sid, work, iso_mm)
     target = folder / "moving_registration.nii.gz"
-    if target.is_file():
+    if target.is_file() and (
+        not subj.align_to or _read_json(folder / "align.json").get("random_seed") == ALIGN_SEED
+    ):
         return target
     img = ants.image_read(str(source))
     if subj.align_to:
@@ -865,19 +868,24 @@ def check_ants_options(rec: dict, ants_dir: Path | None, want: str | None) -> No
 
 
 def ants_identity(record: dict[str, Any]) -> tuple[Any, Any]:
-    """The ANTs a registration ``run.json`` ran: its program and version (for records without
-    ``ants_version``, the version of their ``environment``)."""
+    """The ANTs a registration ``run.json`` ran: its program (``"ANTsPy"``, or the program's
+    path, resolved and case-normalised) and version (for records without ``ants_version``, the
+    version of their ``environment``); ``None`` where unknown."""
     version = record.get("ants_version") or (record.get("environment") or {}).get("ants_version")
-    return record.get("program"), version
+    program = record.get("program")
+    if program and program != "ANTsPy":
+        program = os.path.normcase(str(Path(program).resolve()))
+    return program, version
 
 
 def check_same_ants(a: dict[str, Any], b: dict[str, Any]) -> None:
     """Refuse to compare two ANTs runs (``run.json``) made by different ANTs programs or
-    versions."""
-    if ants_identity(a) != ants_identity(b):
-        raise ValueError(
-            f"the two ANTs runs used different ANTs: {ants_identity(a)} and {ants_identity(b)}"
-        )
+    versions, or when either is unknown."""
+    ia, ib = ants_identity(a), ants_identity(b)
+    if None in ia or None in ib:
+        raise ValueError(f"the ANTs of a run is unknown: {ia} and {ib}")
+    if ia != ib:
+        raise ValueError(f"the two ANTs runs used different ANTs: {ia} and {ib}")
 
 
 def check_ants_version(

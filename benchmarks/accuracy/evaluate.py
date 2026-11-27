@@ -54,6 +54,19 @@ def _warp(ref, moving, composite: Path) -> np.ndarray:
     ).numpy()
 
 
+def repeat_problem(folder: Path) -> str | None:
+    """Why the second ANTs run of a pair folder cannot be compared with the first (different or
+    unknown ANTs, see :func:`.run.check_same_ants`), or ``None``."""
+    try:
+        check_same_ants(
+            json.loads((folder / "ants" / "run.json").read_text(encoding="utf-8")),
+            json.loads((folder / REPEAT / "run.json").read_text(encoding="utf-8")),
+        )
+    except ValueError as e:
+        return str(e)
+    return None
+
+
 def evaluate_pair(
     ds: datasets.Dataset,
     folder: Path,
@@ -172,28 +185,30 @@ def evaluate_pair(
         out["agreement"] = agreement
     repeat_dir = folder / REPEAT
     if "ants" in fields and engine_done(repeat_dir, pair.get("recipe"), pair.get("iso_mm")):
-        check_same_ants(
-            json.loads((folder / "ants" / "run.json").read_text(encoding="utf-8")),
-            json.loads((repeat_dir / "run.json").read_text(encoding="utf-8")),
-        )
-        repeat = metrics.field_difference(
-            fields["ants"], _field(ref, run_composite(repeat_dir), repeat_dir / "eval_"), mask
-        )
-        rows = []
-        if "ants" in warped_maps:
-            w = _warp(ref, moving_labels, run_composite(repeat_dir))
-            r = ref.numpy()
-            for label in sorted(groups):
-                if (r == label).any():
-                    d = metrics.dice(warped_maps["ants"] == label, w == label)
-                    rows.append({"label": label, "dice": d, "group": groups[label]})
-        if "ants" in warped_masks:
-            for label, a in sorted(warped_masks["ants"].items()):
-                b = _warp(ref, moving_masks[label], run_composite(repeat_dir)) > 0
-                rows.append({"label": label, "dice": metrics.dice(a, b), "group": groups[label]})
-        if rows:
-            repeat["labels"] = rows
-        out["ants_repeat_agreement"] = repeat
+        problem = repeat_problem(folder)
+        if problem is not None:
+            out["ants_repeat_skipped"] = problem
+        else:
+            repeat = metrics.field_difference(
+                fields["ants"], _field(ref, run_composite(repeat_dir), repeat_dir / "eval_"), mask
+            )
+            rows = []
+            if "ants" in warped_maps:
+                w = _warp(ref, moving_labels, run_composite(repeat_dir))
+                r = ref.numpy()
+                for label in sorted(groups):
+                    if (r == label).any():
+                        d = metrics.dice(warped_maps["ants"] == label, w == label)
+                        rows.append({"label": label, "dice": d, "group": groups[label]})
+            if "ants" in warped_masks:
+                for label, a in sorted(warped_masks["ants"].items()):
+                    b = _warp(ref, moving_masks[label], run_composite(repeat_dir)) > 0
+                    rows.append(
+                        {"label": label, "dice": metrics.dice(a, b), "group": groups[label]}
+                    )
+            if rows:
+                repeat["labels"] = rows
+            out["ants_repeat_agreement"] = repeat
     out["wall_s"] = time.perf_counter() - t0
     return out
 
@@ -241,6 +256,8 @@ def evaluate(
                     "error": error,
                     "engines": {},
                 }
+            if result.get("ants_repeat_skipped"):
+                log(f"    second ANTs run not compared: {result['ants_repeat_skipped']}")
             tmp = target.with_name(target.name + ".tmp")
             tmp.write_text(json.dumps(result, indent=1), encoding="utf-8")
             tmp.replace(target)
