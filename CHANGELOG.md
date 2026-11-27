@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: programs that build their own registration loop on the Rust `WgpuBackend` can run their
+  own WGSL compute kernels, such as a metric or a regulariser of their own, on the images and
+  fields the backend holds, without a round trip through the host. `GpuImage::buffer` and
+  `GpuField::buffer` return the device buffer (layout documented: `f32`, x fastest, a field as
+  three planes x, y, z), `GpuField::grid` returns the grid, and
+  `WgpuBackend::image_from_buffer` and `field_from_buffer` wrap a buffer the program created,
+  after checking its size, its usages and its device. A wrapped buffer stays outside the backend's
+  buffer pool and memory figures. The API reference describes the layout and the ownership rules.
 - New: the accuracy benchmark (`benchmarks/accuracy`) compares Mattes MI in SyN with ANTs
   (`--recipe cohort-mi`), ANTsPy's default `ants.registration(fixed, moving)` and
   `antsRegistrationSyNQuick[s]` run by `fastwarp.ants` and by ANTsPy (`--recipe antspy-syn`,
