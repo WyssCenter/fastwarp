@@ -415,9 +415,9 @@ fn open_device(
 }
 
 /// Host bytes per voxel of the registration grid that the CPU engine needs for a SyN stage with
-/// one channel: the GPU's 168 B/voxel (`fastwarp_gpu::capacity`) in `f64` instead of `f32`, plus
-/// the resampled pair and the forward and inverse output fields. An estimate.
-const CPU_SYN_BYTES_PER_VOXEL: u64 = 2 * 168 + 16 + 48;
+/// one channel, the moving image's share included: 512, the measured registration of about
+/// 450 B/voxel above a 0.48 GiB baseline of import and image loading, plus a margin. An estimate.
+const CPU_SYN_BYTES_PER_VOXEL: u64 = 512 - CPU_MOVING_BYTES_PER_VOXEL;
 /// What each further channel adds per voxel of the registration grid.
 const CPU_SYN_BYTES_PER_VOXEL_PER_CHANNEL: u64 = 2 * 20 + 16;
 /// Host bytes per voxel of the registration grid of a plan without a SyN stage: the resampled
@@ -1375,6 +1375,7 @@ mod tests {
 
     #[test]
     fn mattes_on_a_gpu_that_failed_its_dense_check_is_refused_before_any_work() {
+        let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let cc = Recipe::cohort(1);
         let mut mattes = cc.clone();
         mattes.plan.syn[0].channel_metrics = vec![SynMetric::Mattes];
@@ -1429,6 +1430,7 @@ mod tests {
 
     #[test]
     fn an_adapter_with_the_cpu_engine_is_refused() {
+        let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
         let image = || vec![Volume::from_vec(g, vec![0.0; 512]).unwrap()];
         let r = register_with(
@@ -1472,10 +1474,35 @@ mod tests {
         assert!(why.contains("iso_mm"), "{why}");
     }
 
+    static GPU_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct NoGpu {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl NoGpu {
+        fn new() -> Self {
+            let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
+            let old = std::env::var_os("FASTWARP_GPU_BACKEND");
+            std::env::set_var("FASTWARP_GPU_BACKEND", "none-such");
+            Self { _lock, old }
+        }
+    }
+
+    impl Drop for NoGpu {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(v) => std::env::set_var("FASTWARP_GPU_BACKEND", v),
+                None => std::env::remove_var("FASTWARP_GPU_BACKEND"),
+            }
+        }
+    }
+
     #[test]
     fn auto_falls_back_to_the_cpu_and_reports_it_once() {
         use std::sync::Mutex;
-        std::env::set_var("FASTWARP_GPU_BACKEND", "none-such");
+        let _no_gpu = NoGpu::new();
         let g = Grid::new([12; 3], [4.0; 3], [0.0; 3], IDENTITY3).unwrap();
         let blob = |c: f64| {
             let data = (0..g.num_voxels())
@@ -1557,6 +1584,7 @@ mod tests {
 
     #[test]
     fn a_missing_adapter_is_an_error_for_every_engine_choice() {
+        let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
         let image = || vec![Volume::from_vec(g, vec![0.0; 512]).unwrap()];
         let heard = Arc::new(std::sync::atomic::AtomicBool::new(false));

@@ -47,10 +47,18 @@ of `fastwarp bench --size mni-2mm` (91 × 109 × 91 voxels at 2 mm), default rec
 | GPU (Arc 140V, Vulkan) | 0.9 s | 1.3 s | 2.3 s |
 | CPU engine (8 threads) | 2.9 s | 49.4 s | 52.4 s |
 
-That is about 20 times slower overall and about 40 times slower in SyN. A 1 mm registration has
-about eight times as many voxels; on the same laptop it is expected to take several minutes per
-registration on the CPU engine, against seconds on the GPU. This 1 mm figure is an estimate, not
-yet a measurement. `fastwarp bench --engine cpu --size mni-2mm` measures your machine.
+That is about 20 times slower overall and about 40 times slower in SyN.
+
+On real 1 mm brain images, measured on a 28-core AMD EPYC server (one pair, default recipe):
+
+| Engine | Time per pair | Peak memory |
+| --- | --- | --- |
+| CPU engine (28 threads) | 111-122 s (linear stages about 11 s, SyN about 105 s) | about 2.6 GiB |
+| GPU (datacenter GPU) | about 2.3 s | |
+| ANTs 2.6.5 (same 28 cores) | about 260-280 s | |
+
+Multi-core use is limited for now: on average about 7-8 of the 28 cores were busy.
+`fastwarp bench --engine cpu --size mni-2mm` measures your machine.
 
 The CPU engine uses every logical core, or `RAYON_NUM_THREADS` threads when that variable is
 set before the first FastWarp call. On a shared cluster node, set it to the cores you were given
@@ -61,29 +69,33 @@ core; do not run several CPU registrations in parallel processes on the same cor
 ## Memory
 
 The CPU engine keeps its images and fields in 64-bit floating point in the computer's memory.
-Before any work it estimates what the registration needs, about 400 bytes per voxel of the
+Before any work it estimates what the registration needs, about 512 bytes per voxel of the
 {term}`registration grid` for one channel with a SyN stage (more with further channels, masks or
 several SyN stages, far less without a SyN stage), and refuses the run with
-{class}`~fastwarp.HostMemoryError` (exit status 7) when that is more than the memory the
-computer has available at that moment. For the 1 mm MNI grid (182 × 218 × 182 voxels) the
-estimate is about 2.8 GiB, at 0.5 mm about 22 GiB. The input images are not counted, since they
-are already in memory. On Linux the available memory honours the cgroup limit of a container or
-a Slurm job; on macOS FastWarp cannot read it, so the check is skipped there. `fastwarp fits
---engine cpu` runs the same check without registering.
+{class}`~fastwarp.HostMemoryError` (exit status 7) when that is more than the memory the computer
+has available at that moment. For the 1 mm MNI grid (182 × 218 × 182 voxels) the estimate is about
+3.4 GiB, at 0.5 mm about 28 GiB. A measured 1 mm brain pair on a grid of about 4.9 million voxels
+(about 190-200 × 157-166 × 148-160) peaked at about 2.6 GiB for the whole process, of which about
+0.5 GiB was the import and the loaded images. The input images are not counted in the estimate,
+since they are already in memory. On Linux the available memory honours the cgroup limit of a
+container or a Slurm job; on macOS FastWarp cannot read it, so the check is skipped there. `fastwarp
+fits --engine cpu` runs the same check without registering.
 
 ## Results
 
 - **CPU engine against the GPU:** the same algorithm, in 64-bit instead of 32-bit floating point.
   The parity tests hold single operations to tolerances such as 1e-5 for a warp, and whole SyN
   runs on small synthetic images to a difference of under 5 % in the warped image; results are
-  not bit-identical. The 64-bit arithmetic is the precision ANTs uses as well.
+  not bit-identical, and the fields can differ more on some pairs. The 64-bit arithmetic is the
+  precision ANTs uses as well.
 - **CPU engine against itself:** its sums run in a fixed order, so it is designed to give the
   same result for any number of threads on the same operating system and processor architecture.
   Linux and Windows give slightly different bits (the reference results of the tests differ),
   most likely because their maths libraries differ.
 - **Validation:** the comparison of FastWarp with ANTs on real images ([Validation](../validation.md))
-  covers the GPU engine. The CPU engine's agreement with ANTs and with the GPU on real 1 mm
-  images has not been published yet.
+  covers the GPU engine. On 5 Mindboggle pairs, the segmentation accuracy (Dice) of the CPU
+  engine agreed with that of the GPU engine and of ANTs within rounding (cortical 0.5751 on the CPU
+  engine, 0.5751 on the GPU engine, 0.5750 with ANTs).
 
 ## Software GPUs are not a fallback
 

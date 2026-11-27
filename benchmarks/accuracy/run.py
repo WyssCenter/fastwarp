@@ -197,11 +197,19 @@ def _record(folder: Path) -> dict[str, Any] | None:
         return None
 
 
-def same_config(record: dict[str, Any] | None, rec: dict | None, iso_mm: float | None) -> bool:
-    """Whether a ``run.json`` was made with ``rec`` and ``iso_mm`` (``None`` matches any)."""
+def same_config(
+    record: dict[str, Any] | None,
+    rec: dict | None,
+    iso_mm: float | None,
+    fastwarp_engine: str | None = None,
+) -> bool:
+    """Whether a ``run.json`` was made with ``rec`` and ``iso_mm`` (``None`` matches any) and, when
+    ``fastwarp_engine`` is given, on that FastWarp engine (a record without one ran on the GPU)."""
     if record is None:
         return False
     if rec is not None and not recipes.same_recipe(record.get("recipe"), rec):
+        return False
+    if fastwarp_engine is not None and record.get("fastwarp_engine", "gpu") != fastwarp_engine:
         return False
     return iso_mm is None or record.get("iso_mm") == iso_mm
 
@@ -211,13 +219,19 @@ def pair_stale(meta: dict[str, Any], rec: dict, iso_mm: float) -> bool:
     return not recipes.same_recipe(meta.get("recipe"), rec) or meta.get("iso_mm") != iso_mm
 
 
-def engine_done(folder: Path, rec: dict | None = None, iso_mm: float | None = None) -> bool:
-    """Whether an engine folder holds a successful run (of ``rec`` at ``iso_mm``, if given)."""
+def engine_done(
+    folder: Path,
+    rec: dict | None = None,
+    iso_mm: float | None = None,
+    fastwarp_engine: str | None = None,
+) -> bool:
+    """Whether an engine folder holds a successful run (of ``rec`` at ``iso_mm``, on
+    ``fastwarp_engine``, if given)."""
     record = _record(folder)
     return (
         record is not None
         and record.get("status") == "ok"
-        and same_config(record, rec, iso_mm)
+        and same_config(record, rec, iso_mm, fastwarp_engine)
         and composite(folder).is_file()
         and inverse_composite(folder).is_file()
     )
@@ -643,8 +657,45 @@ def prepare_fixed(
     return meta
 
 
+def settled_engine(rec: dict, adapter: str | None) -> tuple[str, str | None]:
+    """The engine FastWarp runs ``rec`` on, as the library settles it (``FASTWARP_ENGINE``,
+    else the GPU; ``auto`` falls back to the CPU engine without a usable GPU), and the adapter
+    to pass with it. Without a usable GPU on the GPU engine it stays ``gpu``, which the
+    capacity check then reports as a skip."""
+    import fastwarp
+    from fastwarp._api import _settled_engine
+
+    try:
+        return _settled_engine(None, adapter, None if recipes.is_antspy(rec) else rec)
+    except fastwarp.GpuUnavailableError:
+        return "gpu", adapter
+
+
+def settle_for_run(rec: dict, adapter: str | None) -> tuple[str, str | None]:
+    """:func:`settled_engine`, once for a whole run: a configuration the library refuses (an
+    unknown ``FASTWARP_ENGINE``, an adapter with the CPU engine, an adapter that matches no GPU)
+    ends the run with a message that names the variable."""
+    import fastwarp
+
+    try:
+        return settled_engine(rec, adapter)
+    except (ValueError, fastwarp.AdapterNotFoundError) as e:
+        variable = os.environ.get("FASTWARP_ENGINE", "")
+        raise SystemExit(
+            f"the FastWarp engine cannot be settled (FASTWARP_ENGINE={variable!r}, "
+            f"adapter={adapter!r}): {e}"
+        ) from e
+
+
 def run_fastwarp(
-    fixed: Path, moving: Path, out: Path, rec: dict, *, iso_mm: float, adapter: str | None
+    fixed: Path,
+    moving: Path,
+    out: Path,
+    rec: dict,
+    *,
+    iso_mm: float,
+    adapter: str | None,
+    settled: tuple[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """One FastWarp registration; returns the ``run.json`` content."""
     import ants
@@ -662,7 +713,11 @@ def run_fastwarp(
     fixed_img = ants.image_read(str(fixed))
     moving_img = ants.image_read(str(moving))
     record["read_s"] = time.perf_counter() - t_read
-    if not fastwarp.fits_gpu(fixed_img, moving_img, iso_mm=iso_mm, adapter=adapter):
+    engine, adapter = settled or settled_engine(rec, adapter)
+    record["fastwarp_engine"] = engine
+    if engine == "gpu" and not fastwarp.fits_gpu(
+        fixed_img, moving_img, iso_mm=iso_mm, adapter=adapter
+    ):
         record.update(status="skipped", reason="no GPU, or the grid does not fit the GPU")
         return record
     t0 = time.perf_counter()
@@ -674,8 +729,13 @@ def run_fastwarp(
             iso_mm=iso_mm,
             adapter=adapter,
             recipe=rec,
+            engine=engine,
         )
-    except (fastwarp.GpuUnavailableError, fastwarp.GpuCapacityError) as e:
+    except (
+        fastwarp.GpuUnavailableError,
+        fastwarp.GpuCapacityError,
+        fastwarp.HostMemoryError,
+    ) as e:
         record.update(status="skipped", reason=str(e))
         return record
     except Exception as e:
@@ -693,7 +753,14 @@ def run_fastwarp(
 
 
 def run_fastwarp_call(
-    fixed: Path, moving: Path, out: Path, rec: dict, *, iso_mm: float, adapter: str | None
+    fixed: Path,
+    moving: Path,
+    out: Path,
+    rec: dict,
+    *,
+    iso_mm: float,
+    adapter: str | None,
+    settled: tuple[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """One ``fastwarp.ants.registration`` of an ANTsPy-call recipe, with the composite
     transforms written; returns the ``run.json`` content. Its time is the wall time of the call."""
@@ -716,6 +783,8 @@ def run_fastwarp_call(
     fixed_img = ants.image_read(str(fixed))
     moving_img = ants.image_read(str(moving))
     record["read_s"] = time.perf_counter() - t_read
+    engine, adapter = settled or settled_engine(rec, adapter)
+    record["fastwarp_engine"] = engine
     before = ants.config._random_seed
     ants.config._random_seed = seed
     t0 = time.perf_counter()
@@ -726,9 +795,14 @@ def run_fastwarp_call(
             outprefix=(out / PREFIX).as_posix(),
             write_composite_transform=True,
             adapter=adapter,
+            engine=engine,
             **record["arguments"]["kwargs"],
         )
-    except (fastwarp.GpuUnavailableError, fastwarp.GpuCapacityError) as e:
+    except (
+        fastwarp.GpuUnavailableError,
+        fastwarp.GpuCapacityError,
+        fastwarp.HostMemoryError,
+    ) as e:
         record.update(status="skipped", reason=str(e))
         return record
     except Exception as e:
@@ -942,6 +1016,8 @@ def run(
         env = environment(ants_dir=ants_dir, threads=threads, adapter=adapter, caller_env=caller)
         check_ants_version(env, ants_version, rec, engines)
         _write_json(work / "environment.json", env)
+        settled = settle_for_run(rec, adapter) if "fastwarp" in engines else None
+        fastwarp_engine = None if settled is None else settled[0]
         log(f"fastwarp {env.get('fastwarp')}, ANTsPy {env.get('antspyx')}, GPU {env.get('gpu')}")
         for key in keys:
             ds = datasets.get(key)
@@ -957,10 +1033,13 @@ def run(
                 for engine in engines:
                     out = folder / engine
                     record = _record(out)
-                    same = same_config(record, rec, iso_mm)
+                    same = same_config(
+                        record, rec, iso_mm, fastwarp_engine if engine == "fastwarp" else None
+                    )
                     status = None if record is None else record.get("status")
                     skip_failed = same and status in ("failed", "skipped") and not retry_failed
-                    if engine_done(out, rec, iso_mm) or skip_failed:
+                    fw = fastwarp_engine if engine == "fastwarp" else None
+                    if engine_done(out, rec, iso_mm, fw) or skip_failed:
                         rows.append(_row(ds.key, folder.name, engine, status, False))
                     else:
                         todo.append(engine)
@@ -1014,7 +1093,13 @@ def run(
                             runner = run_fastwarp_call if recipes.is_antspy(rec) else run_fastwarp
                             with itk_threads(threads):
                                 record = runner(
-                                    fixed, moving, out, rec, iso_mm=iso_mm, adapter=adapter
+                                    fixed,
+                                    moving,
+                                    out,
+                                    rec,
+                                    iso_mm=iso_mm,
+                                    adapter=adapter,
+                                    settled=settled,
                                 )
                         elif recipes.is_antspy(rec):
                             record = run_ants_call(
