@@ -31,8 +31,8 @@ struct P {
     n: u32,
     radius: u32,
     pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    shift_f: f32,
+    shift_m: f32,
     o0: vec4<f32>,
     o1: vec4<f32>,
     o2: vec4<f32>,
@@ -86,8 +86,12 @@ fn k_cc_deriv(@builtin(global_invocation_id) id: vec3<u32>) {
         var d = vec3<f32>(0.0);
         let den = sff * smm;
         if (sff > REL * sii && smm > REL * sjj && sff > EPS && smm > EPS) {
-            let fi = fix[i] - si / cn;
-            let mi = src[i] - sj / cn;
+            var fi = fix[i] - si / cn;
+            var mi = src[i] - sj / cn;
+            if (p.shift_f != 0.0 || p.shift_m != 0.0) {
+                fi = (fix[i] - p.shift_f) - si / cn;
+                mi = (src[i] - p.shift_m) - sj / cn;
+            }
             let coeff = 2.0 * sfm / den * (fi - sfm / smm * mi);
             let c = vec3<f32>(id);
             let g = vec3<f32>(

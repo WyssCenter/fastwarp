@@ -26,9 +26,9 @@
 
 struct P {
     n: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    shift_f: f32,
+    shift_m: f32,
+    pad: u32,
 }
 
 @group(0) @binding(0) var<storage, read> fix: array<f32>;
@@ -50,8 +50,8 @@ fn k_cc_planes(
     if (i >= p.n) {
         return;
     }
-    let a = fix[i];
-    let b = mov[i];
+    let a = fix[i] - p.shift_f;
+    let b = mov[i] - p.shift_m;
     p_a[i] = a;
     p_b[i] = b;
     p_aa[i] = a * a;
