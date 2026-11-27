@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New: the browser demo's diagnostic report holds what the engine knows: the GPU limits it saw,
+  requested and was granted, the self-test result, and for a failed run the step it reached, the
+  planned GPU memory, the GPU memory in use and the GPU's errors; after an internal error it holds
+  the message and its place in FastWarp's source code, and the size of a failed allocation.
+- New: `ci/web-faults.mjs` drives the browser demo in headless Chrome. On every pull request that
+  changes the GPU code or the demo (`web.yml`) it starts the GPU, which compiles every kernel with
+  Chrome's own shader compiler, and registers the sample; in `full.yml` it runs the demo with each
+  fault of its new test parameters (`?fault=`, `?limits=`) and checks the error panel and the
+  report.
 - Fixed: on the GPU, the CC metric of SyN stages lost precision when the intensities carried an
   offset that is large next to their local contrast (a constant non-zero background, values in
   the hundreds or thousands): `float32` window sums cancelled, so windows were taken as flat or

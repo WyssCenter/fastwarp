@@ -84,6 +84,24 @@ pub fn default_plan() -> StagePlan {
     plan
 }
 
+/// The default recipe with two levels per stage and few iterations, so that a registration runs in
+/// seconds: for tests, and for the page's test parameter `?plan=short`. Its results are not meant for
+/// use.
+pub fn short_plan() -> StagePlan {
+    let mut plan = default_plan();
+    for s in &mut plan.linear {
+        s.iterations = vec![12, 8];
+        s.shrink_factors = vec![2, 1];
+        s.smoothing_sigmas = vec![1.0, 0.0];
+    }
+    for s in &mut plan.syn {
+        s.iterations = vec![6, 4];
+        s.shrink_factors = vec![2, 1];
+        s.smoothing_sigmas = vec![1.0, 0.0];
+    }
+    plan
+}
+
 /// Voxels per axis of the isotropic registration grid at `mm`, by the rule of
 /// `resample_isotropic`.
 pub fn iso_dims(grid: &Grid, mm: f64) -> [usize; 3] {
@@ -240,6 +258,9 @@ pub fn classify_text(text: &str, grid: GridChoice) -> RunError {
     }
 }
 
+/// Receives the plan of a run (see [`Job::on_plan`]).
+pub type PlanNote = Box<dyn Fn(&Value)>;
+
 /// What one run needs besides the device.
 pub struct Job {
     pub fixed: Vec<u8>,
@@ -251,6 +272,10 @@ pub struct Job {
     pub mi_unavailable: Option<String>,
     pub adapter: Value,
     pub zip_time: Option<[u16; 6]>,
+    /// Called once the images are read and the limits are checked, with the grids and the planned
+    /// GPU memory (`registration_grid`, `fixed`, `moving`, `planned_gpu_bytes`), so that a
+    /// failure later in the run can still report them.
+    pub on_plan: Option<PlanNote>,
 }
 
 fn grid_json(g: &Grid) -> Value {
@@ -367,6 +392,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
         mi_unavailable,
         adapter,
         zip_time,
+        on_plan,
     } = job;
     let grid_choice = options.grid;
     let tracker = Tracker::new(&plan, report);
@@ -382,6 +408,14 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     let fixed_grid = *fixed.grid();
     let moving_grid = *moving.grid();
     let planned = check_limits(&plan, &fixed_grid, &moving_grid, grid_choice, &limits)?;
+    if let Some(note) = &on_plan {
+        note(&json!({
+            "registration_grid": iso_dims(&fixed_grid, grid_choice.mm()),
+            "fixed": fixed_grid.size(),
+            "moving": moving_grid.size(),
+            "planned_gpu_bytes": planned,
+        }));
+    }
     check_mi_available(&plan, mi_unavailable.as_deref())?;
     if cancel.load(Ordering::SeqCst) {
         return Err(RunError::Cancelled);
@@ -560,7 +594,9 @@ impl<W: std::io::Write> std::io::Write for Counted<W> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
     use std::future::Future;
+    use std::rc::Rc;
     use std::sync::Mutex;
     use std::task::{Context, Poll, Waker};
 
@@ -601,18 +637,7 @@ mod tests {
     }
 
     fn small_plan() -> StagePlan {
-        let mut plan = default_plan();
-        for s in &mut plan.linear {
-            s.iterations = vec![12, 8];
-            s.shrink_factors = vec![2, 1];
-            s.smoothing_sigmas = vec![1.0, 0.0];
-        }
-        for s in &mut plan.syn {
-            s.iterations = vec![6, 4];
-            s.shrink_factors = vec![2, 1];
-            s.smoothing_sigmas = vec![1.0, 0.0];
-        }
-        plan
+        short_plan()
     }
 
     const LIMITS: DeviceLimits = DeviceLimits {
@@ -626,12 +651,16 @@ mod tests {
             moving: blob(32, 1.0, [3.0, -2.0, 1.0])
                 .to_nifti_bytes(false)
                 .unwrap(),
-            options: Options { grid },
+            options: Options {
+                grid,
+                ..Options::default()
+            },
             plan,
             limits: LIMITS,
             mi_unavailable: None,
             adapter: json!({"name": "CPU reference"}),
             zip_time: Some([2026, 11, 22, 9, 30, 0]),
+            on_plan: None,
         }
     }
 
@@ -649,6 +678,31 @@ mod tests {
             a.cache_smoothed_images = b.cache_smoothed_images;
             assert_eq!(&a, b);
         }
+    }
+
+    #[test]
+    fn the_plan_is_noted_before_the_registration_starts() {
+        let noted: Rc<RefCell<Option<Value>>> = Rc::default();
+        let sink = Rc::clone(&noted);
+        let mut j = job(small_plan(), GridChoice::TwoMm);
+        j.on_plan = Some(Box::new(move |v: &Value| {
+            *sink.borrow_mut() = Some(v.clone())
+        }));
+        let e = ready(run_job(
+            &CpuBackend,
+            &CpuLinearEngine,
+            j,
+            &AtomicBool::new(true),
+            &|_: &Progress| {},
+            &|| None,
+        ))
+        .unwrap_err();
+        assert_eq!(e, RunError::Cancelled);
+        let v = noted.borrow().clone().unwrap();
+        assert_eq!(v["registration_grid"], json!([16, 16, 16]));
+        assert_eq!(v["fixed"], json!([32, 32, 32]));
+        assert_eq!(v["moving"], json!([32, 32, 32]));
+        assert!(v["planned_gpu_bytes"].as_u64().unwrap() > 0);
     }
 
     #[test]
