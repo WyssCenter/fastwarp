@@ -58,6 +58,9 @@ bindgen="$tools/bin/wasm-bindgen"
 if command -v wasm-bindgen >/dev/null 2>&1 \
     && wasm-bindgen --version | grep -F "wasm-bindgen $bindgen_version" >/dev/null; then
     bindgen="$(command -v wasm-bindgen)"
+elif [ -n "${CI:-}" ] && command -v wasm-bindgen >/dev/null 2>&1; then
+    echo "wasm-bindgen on PATH is $(wasm-bindgen --version), but Cargo.lock has $bindgen_version" >&2
+    exit 1
 elif ! "$bindgen" --version 2>/dev/null | grep -F "wasm-bindgen $bindgen_version" >/dev/null; then
     step "wasm-bindgen-cli $bindgen_version"
     cargo install --locked --root "$tools" --version "$bindgen_version" wasm-bindgen-cli

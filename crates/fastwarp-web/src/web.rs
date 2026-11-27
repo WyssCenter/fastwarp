@@ -169,6 +169,7 @@ async fn backend() -> Result<Rc<WgpuBackend>, RunError> {
         }
         forget_backend();
     }
+    FAILED_ALLOC.store(0, Ordering::Relaxed);
     let select = BackendSelect {
         allow_software: true,
         ..BackendSelect::default()

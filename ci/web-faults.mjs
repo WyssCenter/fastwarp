@@ -160,6 +160,21 @@ const ADAPTER = `(async () => {
   return \`\${name}, maxBufferSize \${adapter.limits.maxBufferSize}, fallback \${fallback}\`;
 })()`;
 
+const WORKER_PROBE = `new Promise((resolve) => {
+  const worker = new Worker("/_static/web/worker.js?limits=64&fault=panic&fault_at=gpu", { type: "module" });
+  const done = (value) => {
+    worker.terminate();
+    resolve(value);
+  };
+  worker.onmessage = ({ data }) => {
+    if (data.type === "info") done(data.info.limits_adapter?.max_storage_buffer_binding_size ?? null);
+    else if (data.type === "error") done("error: " + data.message);
+  };
+  worker.onerror = (e) => done("worker error: " + e.message);
+  worker.postMessage({ type: "info" });
+  setTimeout(() => done("timeout"), 120000);
+})`;
+
 const crashed = ["RuntimeError", "WorkerError"];
 const GPU_ERRORS = ["GPUValidationError", "GPUInternalError", "GPUOutOfMemoryError"];
 
@@ -269,7 +284,12 @@ const CASES = [
     query: "autorun=info&fault=nogpu&limits=64&stall=5",
     public: true,
     result: "ready",
-    checks: (r) => [[(r.selftest?.attempts ?? 0) >= 1, "a page that is not on 127.0.0.1 ignores the test parameters"], ...gpuClean(r)],
+    probe: WORKER_PROBE,
+    checks: (r, probe) => [
+      [(r.selftest?.attempts ?? 0) >= 1, "a page that is not on 127.0.0.1 ignores the test parameters"],
+      [typeof probe === "number" && probe !== 64 * 2 ** 20, `a worker that is not on 127.0.0.1 ignores ?limits= (got ${probe})`],
+      ...gpuClean(r),
+    ],
   },
   {
     name: "nogpu",
@@ -311,7 +331,12 @@ async function runResult(cdp, session, origin, c, timeout) {
     const why = state?.status ? `the page ended with "${state.status}": ${JSON.stringify(state.json).slice(0, 800)}` : `no result within ${timeout} s`;
     return { seconds, failures: [why], state };
   }
-  const failures = c.checks(state.json).filter(([ok]) => !ok).map(([, what]) => what);
+  let probe = null;
+  if (c.probe) {
+    const r = await cdp.send("Runtime.evaluate", { expression: c.probe, awaitPromise: true, returnByValue: true }, session);
+    probe = r.result.value;
+  }
+  const failures = c.checks(state.json, probe).filter(([ok]) => !ok).map(([, what]) => what);
   return { seconds, failures, state };
 }
 
