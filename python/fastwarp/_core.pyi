@@ -32,6 +32,14 @@ class GpuCapacityError(RuntimeError):
     GPU, or ANTs.
     """
 
+class HostMemoryError(RuntimeError):
+    """The registration does not fit the host memory on the CPU engine.
+
+    Raised by ``register_syn`` with ``engine="cpu"`` (or ``"auto"`` without a usable GPU)
+    before any work when the estimated memory of the registration exceeds the memory the host
+    has available. Use a larger ``iso_mm``, free memory, or the GPU engine.
+    """
+
 class RegistrationError(RuntimeError):
     """The engine failed while it worked.
 
@@ -83,6 +91,7 @@ def register_syn(
     outputs: str = "composite",
     fixed_mask: _Image | None = None,
     moving_mask: _Image | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any]: ...
 def release_idle_gpus() -> None:
     """Free the GPU devices that finished registrations keep for the next one.
@@ -133,7 +142,15 @@ def registrations_at_once(
     adapter: str | None = None,
     moving_dims: tuple[int, int, int] | None = None,
     recipe: dict[str, Any] | None = None,
+    native_voxels: int = 0,
+    engine: str | None = None,
 ) -> int: ...
+def settle_engine(
+    engine: str | None = None,
+    adapter: str | None = None,
+    recipe: dict[str, Any] | None = None,
+    channels: int = 1,
+) -> tuple[str, str | None]: ...
 def compose_field(
     transforms: list[str],
     reference: tuple[
@@ -169,9 +186,12 @@ class LinearSession:
         fixed_mask: _Image | None = None,
         winsorize: tuple[float, float] | None = None,
         adapter: str | None = None,
+        engine: str | None = None,
     ) -> None: ...
     @property
     def adapter(self) -> str: ...
+    @property
+    def engine(self) -> str: ...
     @property
     def com_initial(self) -> tuple[tuple[float, ...], tuple[float, float, float]]: ...
     def register(
@@ -216,6 +236,7 @@ def ants_registration(
     iso_mm: float | None = None,
     adapter: str | None = None,
     cancel: CancelToken | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any]: ...
 def ants_apply_transforms(
     argv: list[str],

@@ -42,6 +42,7 @@ from ._core import (
     CancelToken,
     GpuCapacityError,
     GpuUnavailableError,
+    HostMemoryError,
     UnsupportedArgument,
 )
 
@@ -1045,6 +1046,7 @@ def registration(
     adapter: str | None = None,
     cancel: CancelToken | None = None,
     fallback: str | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any] | int:
     """Register ``moving`` onto ``fixed`` on the GPU, as ``ants.registration`` does.
 
@@ -1137,9 +1139,18 @@ def registration(
         Keyword only, FastWarp only. A token that another thread can use to stop the run.
     fallback : {None, "ants"}, optional
         Keyword only, FastWarp only. With ``"ants"``, an argument FastWarp refuses, no usable
-        GPU, or a registration that does not fit the GPU runs ANTsPy's ``ants.registration``
-        with the same arguments instead, with a ``UserWarning``; the result then holds
-        ``"engine"``.
+        GPU, or a registration that does not fit the GPU (or the host memory on the CPU engine)
+        runs ANTsPy's ``ants.registration`` with the same arguments instead, with a
+        ``UserWarning``; the result then holds ``"engine"``. With ``engine="auto"``, no usable
+        GPU falls back to FastWarp's CPU engine first.
+    engine : {"gpu", "cpu", "auto"}, optional
+        Keyword only, FastWarp only. FastWarp's engine, as for :func:`fastwarp.register_syn`:
+        ``"cpu"`` is much slower than the GPU, and its results agree with the GPU's within
+        tolerance, not bit for bit; ``"auto"`` uses the GPU, or the CPU engine with a
+        ``UserWarning`` when there is no usable GPU. By default the ``FASTWARP_ENGINE``
+        environment variable applies, if set, and otherwise ``"gpu"``. The result's
+        ``"engine"`` key (with ``fallback="ants"``) names FastWarp or ANTs, not this choice;
+        ``verbose=True`` prints the device that ran.
 
     Returns
     -------
@@ -1165,6 +1176,9 @@ def registration(
         No usable GPU. Raised before any work.
     GpuCapacityError
         The registration does not fit the GPU's memory. Raised before any work.
+    HostMemoryError
+        On the CPU engine, the registration needs more memory than the host has available.
+        Raised before any work.
     RegistrationCancelled
         ``cancel`` was cancelled.
     RegistrationError
@@ -1210,8 +1224,10 @@ def registration(
                 _ignored(_REG, name, given[name], "with an argument list", 3)
         try:
             argv = _raw_argv(fixed)
-            out = _core.ants_registration(argv, iso_mm=iso, adapter=adapter, cancel=cancel)
-        except (UnsupportedArgument, GpuUnavailableError, GpuCapacityError) as e:
+            out = _core.ants_registration(
+                argv, iso_mm=iso, adapter=adapter, cancel=cancel, engine=engine
+            )
+        except (UnsupportedArgument, GpuUnavailableError, GpuCapacityError, HostMemoryError) as e:
             if fallback != "ants":
                 raise
             _fall_back(_REG, e)
@@ -1270,11 +1286,12 @@ def registration(
             iso_mm=iso,
             adapter=adapter,
             cancel=cancel,
+            engine=engine,
         )
     except BaseException as e:
         if made is not None:
             _remove_empty(made)
-        refused = (UnsupportedArgument, GpuUnavailableError, GpuCapacityError)
+        refused = (UnsupportedArgument, GpuUnavailableError, GpuCapacityError, HostMemoryError)
         if isinstance(e, refused) and fallback == "ants":
             _fall_back(_REG, _relabel(e))
             return {**ants.registration(fixed, moving, **_antspy_args(given)), "engine": "ants"}

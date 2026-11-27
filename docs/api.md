@@ -132,6 +132,10 @@ When each one is raised: [Errors](errors.md).
 ```
 
 ```{eval-rst}
+.. autoapiexception:: fastwarp.HostMemoryError
+```
+
+```{eval-rst}
 .. autoapiexception:: fastwarp.RegistrationError
 ```
 

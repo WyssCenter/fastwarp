@@ -29,8 +29,8 @@ use super::{
     interpolation_name, parse_apply, parse_registration, resolve_seed, ApplyCall, ApplyOutput,
     ApplyPlan, InitialArg, PixelType, Refusal, RegistrationCall, RegistrationPlan, StageSpec,
 };
-use crate::commands::print;
-use crate::engine::{self, Failure, SynRun};
+use crate::commands::{engine_request, print};
+use crate::engine::{self, EngineChoice, EngineRequest, Failure, SynRun};
 use crate::recipe::{kind_name, InitialSpec, Recipe};
 use crate::{image, post, CliError, ExitStatus};
 
@@ -428,15 +428,15 @@ pub(crate) fn registration(
         RegistrationCall::Run(p) => *p,
     };
     warn(err, REGISTRATION, &plan.warnings);
+    let choice = EngineChoice::resolve(None).map_err(|e| failed(REGISTRATION, e))?;
     let env_seed = std::env::var_os("ANTS_RANDOM_SEED").map(|v| v.to_string_lossy().into_owned());
     let verbose = plan.verbose;
-    let done = run_registration(
-        plan,
-        env_seed.as_deref(),
-        Images::default(),
-        RunOptions::default(),
-    )
-    .map_err(|e| failed(REGISTRATION, e))?;
+    let options = RunOptions {
+        engine: engine_request(choice, None, "fastwarp: ants-registration"),
+        ..RunOptions::default()
+    };
+    let done = run_registration(plan, env_seed.as_deref(), Images::default(), options)
+        .map_err(|e| failed(REGISTRATION, e))?;
     warn(err, REGISTRATION, &done.run.warnings);
     if verbose {
         print(out, &done.report)?;
@@ -445,11 +445,12 @@ pub(crate) fn registration(
 }
 
 /// What a registration run beyond its ANTs arguments uses: the registration grid's voxel size
-/// (default: the fixed image's smallest spacing), the GPU and a flag that cancels the run.
+/// (default: the fixed image's smallest spacing), the engine (default: the GPU) and a flag that
+/// cancels the run.
 #[derive(Clone, Debug, Default)]
 pub struct RunOptions {
     pub iso_mm: Option<f64>,
-    pub adapter: Option<String>,
+    pub engine: EngineRequest,
     pub cancel: Option<Arc<AtomicBool>>,
 }
 
@@ -519,7 +520,7 @@ pub fn run_registration(
         fixed,
         moving,
         iso_mm,
-        options.adapter,
+        options.engine,
         options.cancel,
         recipe,
         |o, f, m| {

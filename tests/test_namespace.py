@@ -12,7 +12,13 @@ from concurrent.futures import ProcessPoolExecutor
 import fastwarp
 import pytest
 
-ERRORS = ("GpuCapacityError", "GpuUnavailableError", "RegistrationCancelled", "RegistrationError")
+ERRORS = (
+    "GpuCapacityError",
+    "GpuUnavailableError",
+    "HostMemoryError",
+    "RegistrationCancelled",
+    "RegistrationError",
+)
 
 
 def test_dir_lists_only_the_public_api():

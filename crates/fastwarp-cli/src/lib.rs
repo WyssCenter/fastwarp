@@ -43,6 +43,8 @@ pub enum ExitStatus {
     GpuCapacity = 5,
     /// The run was cancelled.
     Cancelled = 6,
+    /// The registration does not fit the host memory (CPU engine).
+    HostMemory = 7,
 }
 
 impl ExitStatus {
@@ -90,6 +92,7 @@ impl From<Failure> for CliError {
             Failure::Invalid(_) => ExitStatus::Usage,
             Failure::GpuUnavailable(_) => ExitStatus::GpuUnavailable,
             Failure::GpuCapacity(_) => ExitStatus::GpuCapacity,
+            Failure::HostMemory(_) => ExitStatus::HostMemory,
             Failure::Registration(_) => ExitStatus::Registration,
             Failure::Cancelled => ExitStatus::Cancelled,
             Failure::Read(_) | Failure::Write(_) => ExitStatus::Io,
@@ -350,6 +353,7 @@ mod tests {
             (Failure::GpuUnavailable("x".into()), 4),
             (Failure::GpuCapacity("x".into()), 5),
             (Failure::Cancelled, 6),
+            (Failure::HostMemory("x".into()), 7),
         ];
         for (f, code) in cases {
             assert_eq!(CliError::from(f.clone()).status.code(), code, "{f:?}");

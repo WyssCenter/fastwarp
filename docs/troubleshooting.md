@@ -41,6 +41,9 @@ What the parts of the message mean:
 `FASTWARP_GPU_BACKEND: ... unknown graphics API`
 : The variable has a value other than `vulkan`, `dx12`, `metal` or `auto`. Fix or unset it.
 
+On a computer without a GPU you can use, the [CPU engine](guide/cpu.md) (`engine="cpu"`,
+`--engine cpu` or `FASTWARP_ENGINE=cpu`) runs the registration without one, much more slowly.
+
 ### Linux
 
 FastWarp uses Vulkan on Linux. It needs the Vulkan loader (`libvulkan.so.1`) and a Vulkan driver

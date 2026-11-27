@@ -10,7 +10,8 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 /// GPU image registration (Rigid, Affine, SyN) with ANTs-compatible outputs.
 ///
 /// Exit status: 0 success, 1 registration failed, 2 invalid arguments, 3 file could not be read
-/// or written, 4 no usable GPU, 5 the grid does not fit the GPU, 6 cancelled.
+/// or written, 4 no usable GPU, 5 the grid does not fit the GPU, 6 cancelled, 7 the registration
+/// does not fit the host memory (CPU engine).
 #[derive(Parser, Debug)]
 #[command(
     name = "fastwarp",
@@ -39,7 +40,8 @@ pub enum Command {
     Recipe(RecipeArgs),
     /// Describe the GPU FastWarp would use, as JSON.
     GpuInfo(GpuInfoArgs),
-    /// Check whether a registration fits the GPU (exit 0 if it fits, 5 if not).
+    /// Check whether a registration fits the GPU (exit 0 if it fits, 5 if not; 7 with --engine
+    /// cpu, which checks the host memory).
     Fits(FitsArgs),
     /// Time FastWarp registrations on synthetic volumes or on your images.
     Bench(BenchArgs),
@@ -351,6 +353,11 @@ pub struct BenchArgs {
 /// Options most commands share.
 #[derive(Args, Debug, Default)]
 pub struct Common {
+    /// Engine: gpu, cpu or auto (the GPU, else the CPU with a warning). The CPU engine is much
+    /// slower than the GPU, and its results agree with the GPU's within tolerance, not bit for
+    /// bit. Default: FASTWARP_ENGINE, else gpu.
+    #[arg(long, value_name = "ENGINE", value_parser = ["gpu", "cpu", "auto"])]
+    pub engine: Option<String>,
     /// Pick the GPU whose name contains this text (overrides FASTWARP_GPU_ADAPTER).
     #[arg(long, value_name = "NAME")]
     pub adapter: Option<String>,

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- New: an opt-in CPU engine for computers without a usable GPU. `engine="cpu"` on
+  `register_syn`, `register_atlases`, `linear_session` and `fastwarp.ants.registration`,
+  `--engine cpu` on `fastwarp register`, `linear`, `fits` and `bench`, or
+  `FASTWARP_ENGINE=cpu` (also for `fastwarp ants-registration`) runs the `float64` reference
+  engine on all host threads. It is much slower than the GPU (about 20 times on a 2 mm head on a
+  laptop), and its results agree with the GPU's within tolerance, not bit for bit. `"auto"` uses
+  the GPU and falls back to the CPU engine with a warning, before any work, when there is no
+  usable GPU; the default stays `"gpu"`. Before a CPU run, an estimate of its memory is checked
+  against the memory the computer has available: `HostMemoryError` (exit status 7) refuses a
+  run that does not fit. Results record the engine (`engine`, and `adapter` reads
+  `cpu (f64, N threads)`); `peak_gpu_bytes` and `memory_budget_bytes` are `None` on the CPU
+  engine. The user guide has a new page on the CPU engine.
 - Fixed: when the browser loses the GPU device during a run, the browser demo no longer says that
   GPU memory most likely ran out unless something points to it: an out-of-memory error caught during
   the run, a failed allocation of the WebAssembly module, or a planned GPU memory and WebAssembly

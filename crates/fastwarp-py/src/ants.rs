@@ -25,7 +25,8 @@ use pyo3::types::PyDict;
 
 use crate::{
     recipe, to_grid, to_volume, CancelToken, GpuCapacityError, GpuUnavailableError, GridArgs,
-    ImageArgs, RegistrationCancelled, RegistrationError, UnsupportedArgument,
+    HostMemoryError, ImageArgs, PyEngine, RegistrationCancelled, RegistrationError,
+    UnsupportedArgument,
 };
 
 const REGISTRATION: &str = "fastwarp.ants.registration";
@@ -52,6 +53,7 @@ fn failed(program: &str, e: CliError) -> PyErr {
         ExitStatus::Usage => usage(program, &e.message, e.unsupported),
         ExitStatus::GpuUnavailable => GpuUnavailableError::new_err(e.message),
         ExitStatus::GpuCapacity => GpuCapacityError::new_err(e.message),
+        ExitStatus::HostMemory => HostMemoryError::new_err(e.message),
         ExitStatus::Cancelled => RegistrationCancelled::new_err(e.message),
         ExitStatus::Ok | ExitStatus::Registration | ExitStatus::Io => {
             RegistrationError::new_err(format!("{program}: {}", e.message))
@@ -157,10 +159,11 @@ pub fn ants_resolve_seed(
 /// names in the argument list to images held in memory (each is used once); the output images
 /// named in `keep` are returned instead of written. `iso_mm` overrides the registration grid's
 /// voxel size (default: the fixed image's smallest spacing). Returns `{"kind": "run", "plan",
-/// "warnings", "transform_files", "files", "kept", "report", "iso_mm", "grid", "adapter",
-/// "total_s"}`, or the help or version text. The GIL is released while it runs.
+/// "warnings", "transform_files", "files", "kept", "report", "iso_mm", "grid", "engine",
+/// "adapter", "total_s"}`, or the help or version text. `engine` as for `register_syn`. The GIL
+/// is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (argv, images=Vec::new(), keep=Vec::new(), iso_mm=None, adapter=None, cancel=None))]
+#[pyo3(signature = (argv, images=Vec::new(), keep=Vec::new(), iso_mm=None, adapter=None, cancel=None, engine=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn ants_registration<'py>(
     py: Python<'py>,
@@ -170,12 +173,14 @@ pub fn ants_registration<'py>(
     iso_mm: Option<f64>,
     adapter: Option<String>,
     cancel: Option<PyRef<'py, CancelToken>>,
+    engine: Option<&str>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let plan = match parse_registration(&argv).map_err(|r| refused(REGISTRATION, r))? {
         RegistrationCall::Help(t) => return text_result(py, "help", t),
         RegistrationCall::Version(t) => return text_result(py, "version", t),
         RegistrationCall::Run(p) => *p,
     };
+    let device = PyEngine::new(engine, adapter)?;
     let inputs = memory_images(&images, &[])?;
     drop(images);
     let seed = std::env::var_os("ANTS_RANDOM_SEED").map(|v| v.to_string_lossy().into_owned());
@@ -184,12 +189,12 @@ pub fn ants_registration<'py>(
     let plan_json = plan.to_json();
     let options = RunOptions {
         iso_mm,
-        adapter,
+        engine: device.request.clone(),
         cancel: cancel.map(|c| Arc::clone(&c.flag)),
     };
     let done = py
         .detach(move || run_registration(plan, seed.as_deref(), Images::new(inputs, keep), options))
-        .map_err(|e| failed(REGISTRATION, e))?;
+        .map_err(|e| device.error(|| failed(REGISTRATION, e)))?;
     warnings.extend(done.run.warnings.iter().cloned());
     let d = PyDict::new(py);
     d.set_item("kind", "run")?;
@@ -201,6 +206,7 @@ pub fn ants_registration<'py>(
     d.set_item("report", done.report)?;
     d.set_item("iso_mm", done.iso_mm)?;
     d.set_item("grid", done.run.grid)?;
+    d.set_item("engine", done.run.engine)?;
     d.set_item("adapter", done.run.adapter)?;
     d.set_item("total_s", done.run.total_s)?;
     Ok(d)

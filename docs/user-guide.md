@@ -4,7 +4,8 @@ FastWarp has four groups of functions:
 
 - **Registration on the GPU.** {func}`~fastwarp.register_syn` runs a full normalization (Rigid,
   Affine and {term}`SyN`) and writes ANTs transform files. {func}`~fastwarp.linear_session`
-  runs rigid or affine fits of one image pair.
+  runs rigid or affine fits of one image pair. Without a GPU, an opt-in
+  [CPU engine](guide/cpu.md) runs the same registrations, much more slowly.
 - **Resampling on the CPU.** {func}`~fastwarp.apply_transforms` and
   {func}`~fastwarp.compose_field` apply ANTs transform files, like `antsApplyTransforms`.
 - **Label fusion.** {func}`~fastwarp.register_atlases` registers atlases to a target and
@@ -82,6 +83,13 @@ it, on the CPU or the GPU.
 Which GPU is used, the memory budget, what fits, and falling back to ANTs.
 :::
 
+:::{grid-item-card} CPU engine
+:link: guide/cpu
+:link-type: doc
+
+`engine="cpu"`: registration without a GPU, much slower; its speed, memory and results.
+:::
+
 :::{grid-item-card} ANTsPy compatibility
 :link: guide/ants
 :link-type: doc
@@ -146,6 +154,7 @@ guide/linear
 guide/resampling
 guide/label-fusion
 guide/gpu
+guide/cpu
 guide/ants
 cli
 guide/limitations

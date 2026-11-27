@@ -303,7 +303,8 @@ it does not exist.
 ```bash
 fastwarp register FIXED MOVING -o PREFIX [--channel FIXED MOVING]... [--iso-mm MM]
                   [--recipe FILE] [--mask MASK] [--moving-mask MASK]
-                  [--outputs composite|split|both] [--write-warped] [--adapter NAME] [--json]
+                  [--outputs composite|split|both] [--write-warped] [--engine ENGINE]
+                  [--adapter NAME] [--json]
 ```
 
 Registers MOVING to FIXED: {term}`centre of mass`, Rigid and Affine
@@ -359,14 +360,19 @@ names. This is {func}`fastwarp.register_syn`; see [Normalization](guide/normaliz
   it off in every SyN stage, refuses it (exit status 2). This is
   `register_syn(moving_mask=...)`.
 - `--write-warped`: also writes `<PREFIX>_Warped.nii.gz`, MOVING on the registration grid.
-- `--adapter NAME`: use the GPU whose name contains NAME.
+- `--engine ENGINE`: `gpu`, `cpu` or `auto`; the default is `FASTWARP_ENGINE`, else `gpu`.
+  `cpu` runs the [CPU engine](guide/cpu.md): much slower than the GPU, with results that agree
+  with the GPU's within tolerance, not bit for bit. `auto` uses the GPU, or the CPU engine with
+  a warning on standard error when there is no usable GPU.
+- `--adapter NAME`: use the GPU whose name contains NAME (refused with `--engine cpu`).
 - `--json`: print the timings and diagnostics as JSON: the keys of the dictionary
   `register_syn` returns (`files` among them), with `levels` as a list of objects (each with
   `stage`, the index of its SyN stage from 0, as well), `syn_stages` as one such list per SyN
   stage, and `outputs`, the files written (the same list as `files`).
 
 The capacity check runs before the registration: a grid that does not fit the GPU stops with
-exit status 5, and no transform files are written (the output folder may already have been
+exit status 5 (on the CPU engine, a registration that does not fit the available memory stops
+with exit status 7), and no transform files are written (the output folder may already have been
 created). It checks the linear stages and each SyN stage on its own and requires the largest to
 fit.
 
@@ -375,7 +381,7 @@ fit.
 ```bash
 fastwarp linear FIXED MOVING [-o PREFIX] [--transform rigid|affine] [--mask MASK]
                 [--winsorize LOWER,UPPER] [--initial FILE] [--stage FILE]
-                [--adapter NAME] [--json]
+                [--engine ENGINE] [--adapter NAME] [--json]
 ```
 
 One rigid or affine fit of MOVING to FIXED (Mattes mutual information, regular sampling). This
@@ -393,8 +399,9 @@ is {func}`fastwarp.linear_session` with one {meth}`~fastwarp.LinearSession.regis
   from the centres of intensity mass, like `--initial-moving-transform [fixed,moving,1]`.
 - `--stage FILE`: the schedule as a JSON file with the fields of the `rigid` entry of
   `fastwarp recipe`. Fields left out keep the default.
+- `--engine ENGINE`: as for `register`.
 - `--json`: print the result as JSON: the keys `LinearSession.register` returns
-  (`parameters`, `center`, `metric`, `iterations`, ...) and `outputs`.
+  (`parameters`, `center`, `metric`, `iterations`, ...), `engine`, `adapter` and `outputs`.
 
 ### apply
 
@@ -456,14 +463,16 @@ found.
 ### fits
 
 ```bash
-fastwarp fits FIXED [MOVING] [--iso-mm MM] [--channels N] [--recipe FILE] [--adapter NAME]
-              [--json]
+fastwarp fits FIXED [MOVING] [--iso-mm MM] [--channels N] [--recipe FILE] [--engine ENGINE]
+              [--adapter NAME] [--json]
 ```
 
 Checks whether a registration of FIXED (and MOVING) at `--iso-mm` fits the GPU, with the check
 `register` runs first. `--iso-mm` defaults to the smallest voxel spacing of FIXED, as for
 `register` (the Python function `fits_gpu` defaults to 1.0 mm). Only the image headers are
-read. Exit status 0 when it fits, 5 when it does not, 4 when there is no usable GPU. Without
+read. Exit status 0 when it fits, 5 when it does not, 4 when there is no usable GPU. With
+`--engine cpu` it checks the computer's available memory instead (exit status 7 when the
+registration does not fit). Without
 MOVING, the moving grid is taken to be the fixed grid. `--recipe` checks the stages of that
 recipe (default: the default recipe); a chain without a SyN stage needs far less GPU memory. This
 is {func}`fastwarp.fits_gpu`; see [GPU and memory](guide/gpu.md#what-fits). It does not count
@@ -474,7 +483,7 @@ runs.
 
 ```bash
 fastwarp bench [--size NAME ...] [--repeat N] [--warmup N] [--threads N]
-               [--recipe FILE] [--adapter NAME] [--json]
+               [--recipe FILE] [--engine ENGINE] [--adapter NAME] [--json]
 fastwarp bench FIXED MOVING [--iso-mm MM] [--repeat N] ...
 ```
 
@@ -509,6 +518,8 @@ spacing of FIXED, as for `register`).
   anything in the process has started the thread pool, so with `python -m fastwarp` use it in a
   fresh process.
 - `--recipe FILE`: a recipe as for `register` (default: the default recipe).
+- `--engine ENGINE`: as for `register`. With `cpu`, a size that does not fit the available
+  memory is skipped, and the exit status is 7 when every size was skipped.
 - `--json`: print the report as JSON.
 
 Each run reports four times in seconds:
@@ -520,7 +531,8 @@ Each run reports four times in seconds:
 - `wall_s`: the whole call, including opening the GPU and the capacity check.
 
 With more than one run, a `med` line gives the median of each column. The machine block lists
-the GPU name, driver, backend, device type and memory budget, the CPU model, logical cores and
+the engine (`gpu` or `cpu`), the GPU name, driver, backend, device type and memory budget
+(`none` and empty on the CPU engine), the CPU model, logical cores and
 threads used, the operating system and the FastWarp version.
 
 ### ants-registration
@@ -530,7 +542,9 @@ fastwarp ants-registration [antsRegistration arguments]
 ```
 
 Takes the arguments of `antsRegistration` (ANTs 2.6.5), runs the subset FastWarp supports on
-the GPU and writes the files `antsRegistration` writes, under the same names. Only this explicit
+the GPU (on the [CPU engine](guide/cpu.md) with `FASTWARP_ENGINE=cpu` or `auto`; it takes no
+`--engine` option, since its options are those of `antsRegistration`) and writes the files
+`antsRegistration` writes, under the same names. Only this explicit
 subcommand runs it: the program never behaves as `antsRegistration` because of the name it is
 called by, so a copy of FastWarp cannot take the place of ANTs on PATH by accident. Every option
 that would change the result and is not supported is refused with exit status 2 and a message
@@ -796,9 +810,10 @@ votes and labels, can differ from those of a particular ANTs build.
 | 4 | No usable GPU (`GpuUnavailableError` in Python). |
 | 5 | The grid does not fit the GPU (`GpuCapacityError` in Python); for `bench`, every size. |
 | 6 | The run was cancelled (`RegistrationCancelled` in Python). |
+| 7 | On the CPU engine, the registration does not fit the available memory (`HostMemoryError` in Python); for `bench`, every size. |
 
-Status 4 and 5 mean that the GPU cannot run this registration, so a script can run ANTs instead
-([Fall back to ANTs](guide/gpu.md#fall-back-to-ants)). Errors are printed as one line on
+Status 4 and 5 mean that the GPU cannot run this registration, and 7 that the CPU engine cannot,
+so a script can run ANTs instead ([Fall back to ANTs](guide/gpu.md#fall-back-to-ants)). Errors are printed as one line on
 standard error, starting with `fastwarp: error:`. Results go to standard output.
 
 Ctrl-C stops the program at once, as for any other program; files that were being written may be
@@ -812,6 +827,7 @@ at the moment the GPU is opened:
 
 | Variable | Effect |
 | --- | --- |
+| `FASTWARP_ENGINE` | `gpu` (default), `cpu` or `auto`; `--engine` wins. The only way to choose the engine of `ants-registration` |
 | `FASTWARP_GPU_BACKEND` | `vulkan`, `metal`, `dx12` or `auto` (default) |
 | `FASTWARP_GPU_ADAPTER` | pick the adapter whose name contains this text (`--adapter` wins) |
 | `FASTWARP_GPU_ALLOW_SOFTWARE=1` | accept a software adapter (lavapipe, WARP); slow, for tests |

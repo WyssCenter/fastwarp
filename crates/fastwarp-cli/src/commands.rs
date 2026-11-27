@@ -14,10 +14,10 @@ use fastwarp_reg::transform::{read_transform_file, AffineTransform, TransformEle
 use serde_json::{json, Value};
 
 use crate::args::{
-    ApplyArgs, Command, ComposeArgs, FitsArgs, GpuInfoArgs, LinearArgs, RecipeArgs, RegisterArgs,
-    TransformArg,
+    ApplyArgs, Command, Common, ComposeArgs, FitsArgs, GpuInfoArgs, LinearArgs, RecipeArgs,
+    RegisterArgs, TransformArg,
 };
-use crate::engine::{self, LevelSummary, SynOutputs, SynRun};
+use crate::engine::{self, EngineChoice, EngineRequest, LevelSummary, SynOutputs, SynRun};
 use crate::image;
 use crate::recipe::{linear_stage_from_json, linear_to_json, Recipe};
 use crate::{CliError, ExitStatus};
@@ -48,6 +48,28 @@ pub(crate) fn warn(err: &mut dyn Write, warnings: &[String]) {
         let _ = writeln!(err, "fastwarp: warning: {w}");
     }
     let _ = err.flush();
+}
+
+/// The engine `choice` with `adapter`, a fall back of `auto` to the CPU reported on standard
+/// error as a warning before the run starts.
+pub(crate) fn engine_request(
+    choice: EngineChoice,
+    adapter: Option<String>,
+    program: &'static str,
+) -> EngineRequest {
+    EngineRequest {
+        on_fallback: Some(std::sync::Arc::new(move |m: &str| {
+            eprintln!("{program}: warning: {m}");
+            Ok(())
+        })),
+        ..EngineRequest::new(choice, adapter)
+    }
+}
+
+/// The engine of `--engine` (default: `FASTWARP_ENGINE`, else the GPU) and `--adapter`.
+pub(crate) fn common_engine(c: &Common) -> Result<EngineRequest, CliError> {
+    let choice = EngineChoice::resolve(c.engine.as_deref())?;
+    Ok(engine_request(choice, c.adapter.clone(), "fastwarp"))
 }
 
 pub(crate) fn print(out: &mut dyn Write, text: &str) -> Result<(), CliError> {
@@ -117,6 +139,7 @@ fn level_json(l: &LevelSummary) -> Value {
 pub(crate) fn syn_run_json(run: &SynRun) -> Value {
     let t = &run.timings;
     json!({
+        "engine": run.engine,
         "adapter": run.adapter,
         "grid": run.grid,
         "total_s": run.total_s,
@@ -158,6 +181,7 @@ fn register(
     if let Some(mm) = a.iso_mm {
         engine::check_iso_mm(mm)?;
     }
+    let request = common_engine(&a.common)?;
     let pairs = a.channel_pairs();
     let mut recipe = load_recipe(a.recipe.as_deref(), pairs.len())?;
     for (f, _, fixed_role, _) in &pairs {
@@ -197,15 +221,7 @@ fn register(
         write_warped: a.write_warped,
         layout: outputs_layout,
     };
-    let run = engine::register_syn(
-        fixed,
-        moving,
-        Some(outputs),
-        iso_mm,
-        a.common.adapter.clone(),
-        None,
-        recipe,
-    )?;
+    let run = engine::register_syn(fixed, moving, Some(outputs), iso_mm, request, None, recipe)?;
     warn(err, &run.warnings);
     let files = &run.files;
     if a.common.json {
@@ -271,6 +287,7 @@ fn linear(a: LinearArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
         })
     })?;
     engine::check_winsorize(a.winsorize)?;
+    let request = common_engine(&a.common)?;
     image::check_nifti_name(&a.fixed, "fixed image")?;
     image::check_nifti_name(&a.moving, "moving image")?;
     if let Some(m) = &a.mask {
@@ -288,8 +305,8 @@ fn linear(a: LinearArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
         image::create_parent(&with_suffix(prefix, AFFINE_SUFFIX))?;
     }
     let use_mask = mask.is_some();
-    let mut prepared =
-        engine::open_linear(fixed, moving, mask, a.winsorize, a.common.adapter.clone())?;
+    let mut prepared = engine::open_linear(fixed, moving, mask, a.winsorize, request)?;
+    warn(err, &prepared.warnings);
     let start = initial.unwrap_or(prepared.com);
     let t = Instant::now();
     let mask = if use_mask {
@@ -320,6 +337,7 @@ fn linear(a: LinearArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
         print_json(
             out,
             &json!({
+                "engine": prepared.engine,
                 "adapter": prepared.adapter,
                 "parameters": fit.total.parameters(),
                 "center": fit.total.center,
@@ -426,6 +444,7 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
     if let Some(mm) = a.iso_mm {
         engine::check_iso_mm(mm)?;
     }
+    let request = common_engine(&a.common)?;
     image::check_nifti_name(&a.fixed, "fixed image")?;
     if let Some(m) = &a.moving {
         image::check_nifti_name(m, "moving image")?;
@@ -442,11 +461,11 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         .transpose()?;
     let channels = a.channels as usize;
     let recipe = load_recipe(a.recipe.as_deref(), channels)?;
-    let check = engine::capacity_check(
+    let (checked, check) = engine::capacity_check(
         dims,
         moving_dims,
         channels,
-        a.common.adapter.clone(),
+        &request,
         &recipe,
         &engine::MaskDims::default(),
     )?;
@@ -454,6 +473,7 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
         print_json(
             out,
             &json!({
+                "engine": checked,
                 "fits": check.is_ok(),
                 "grid": dims,
                 "moving_grid": moving_dims.unwrap_or(dims),
@@ -473,9 +493,9 @@ fn fits(a: FitsArgs, out: &mut dyn Write) -> Result<ExitStatus, CliError> {
             Err(why) => print(out, &format!("does not fit: {what}: {why}\n"))?,
         }
     }
-    Ok(if check.is_ok() {
-        ExitStatus::Ok
-    } else {
-        ExitStatus::GpuCapacity
+    Ok(match (&check, checked) {
+        (Ok(()), _) => ExitStatus::Ok,
+        (Err(_), "cpu") => ExitStatus::HostMemory,
+        (Err(_), _) => ExitStatus::GpuCapacity,
     })
 }

@@ -11,7 +11,7 @@
 //! The engine calls themselves are those of the `fastwarp` command line (`fastwarp_cli::engine`),
 //! which `cli_main` runs.
 
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,7 +21,7 @@ mod ants;
 mod recipe;
 
 use fastwarp_cli::ants::widen_f32;
-use fastwarp_cli::engine::{self, Failure, SynOutputs};
+use fastwarp_cli::engine::{self, EngineChoice, EngineRequest, Failure, FallbackHook, SynOutputs};
 use fastwarp_cli::session;
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::register::write_linear_output;
@@ -29,7 +29,7 @@ use fastwarp_reg::transform::AffineTransform;
 use fastwarp_reg::{Grid, Mat3, Vec3, Volume};
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -44,6 +44,12 @@ create_exception!(
     GpuCapacityError,
     PyRuntimeError,
     "The registration does not fit the GPU's memory budget or buffer limit; raised by register_syn before any work."
+);
+create_exception!(
+    fastwarp,
+    HostMemoryError,
+    PyRuntimeError,
+    "The registration on the CPU engine needs more memory than the host has available; raised before any work."
 );
 create_exception!(
     fastwarp,
@@ -71,10 +77,54 @@ fn py_err(f: Failure) -> PyErr {
         Failure::Invalid(_) => PyValueError::new_err(msg),
         Failure::GpuUnavailable(_) => GpuUnavailableError::new_err(msg),
         Failure::GpuCapacity(_) => GpuCapacityError::new_err(msg),
+        Failure::HostMemory(_) => HostMemoryError::new_err(msg),
         Failure::Cancelled => RegistrationCancelled::new_err(msg),
         Failure::Registration(_) | Failure::Read(_) | Failure::Write(_) => {
             RegistrationError::new_err(msg)
         }
+    }
+}
+
+/// The engine an `engine=` argument asks for (default: `FASTWARP_ENGINE`, else the GPU), with
+/// `adapter`. A fall back of `"auto"` to the CPU engine is issued as a `UserWarning` before the
+/// run starts; when the warning raises (warnings turned into errors), the run stops and
+/// [`PyEngine::error`] returns that exception.
+struct PyEngine {
+    request: EngineRequest,
+    raised: Arc<Mutex<Option<PyErr>>>,
+}
+
+impl PyEngine {
+    fn new(engine: Option<&str>, adapter: Option<String>) -> PyResult<Self> {
+        let choice = EngineChoice::resolve(engine).map_err(py_err)?;
+        let raised = Arc::new(Mutex::new(None));
+        let stash = Arc::clone(&raised);
+        let hook: FallbackHook = Arc::new(move |m: &str| {
+            Python::attach(|py| {
+                let text = CString::new(m.replace('\0', " ")).unwrap_or_default();
+                let category = py.get_type::<PyUserWarning>();
+                PyErr::warn(py, category.as_any(), &text, 2).map_err(|e| {
+                    *stash.lock().unwrap_or_else(|p| p.into_inner()) = Some(e);
+                    Failure::Cancelled
+                })
+            })
+        });
+        Ok(Self {
+            request: EngineRequest {
+                on_fallback: Some(hook),
+                ..EngineRequest::new(choice, adapter)
+            },
+            raised,
+        })
+    }
+
+    /// The exception the fall-back warning raised, else `other`.
+    fn error(&self, other: impl FnOnce() -> PyErr) -> PyErr {
+        self.raised
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .unwrap_or_else(other)
     }
 }
 
@@ -140,10 +190,11 @@ fn to_volume(img: &ImageArgs<'_>) -> PyResult<Volume<f64>> {
 /// layout (`"composite"`: `Composite.h5`, `InverseComposite.h5`, `0GenericAffine.mat`;
 /// `"split"`: `0GenericAffine.mat` and, after a SyN stage, `1Warp.nii.gz` / `1InverseWarp.nii.gz`;
 /// `"both"`), and with `write_warped` `<out_prefix>_Warped.nii.gz`. `fixed_mask` (every stage) and
-/// `moving_mask` (the SyN stage) restrict the metrics to their non-zero voxels. Returns a dict of
-/// timings and diagnostics. The GIL is released while it runs.
+/// `moving_mask` (the SyN stage) restrict the metrics to their non-zero voxels. `engine`
+/// (`"gpu"`, `"cpu"` or `"auto"`; default: `FASTWARP_ENGINE`, else `"gpu"`) picks the engine.
+/// Returns a dict of timings and diagnostics. The GIL is released while it runs.
 #[pyfunction]
-#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None, outputs="composite", fixed_mask=None, moving_mask=None))]
+#[pyo3(signature = (fixed, moving, out_prefix, iso_mm=1.0, write_warped=false, adapter=None, cancel=None, recipe=None, outputs="composite", fixed_mask=None, moving_mask=None, engine=None))]
 #[allow(clippy::too_many_arguments)]
 fn register_syn<'py>(
     py: Python<'py>,
@@ -158,8 +209,10 @@ fn register_syn<'py>(
     outputs: &str,
     fixed_mask: Option<ImageArgs<'py>>,
     moving_mask: Option<ImageArgs<'py>>,
+    engine: Option<&str>,
 ) -> PyResult<Bound<'py, PyDict>> {
     engine::check_channels(fixed.len(), moving.len()).map_err(py_err)?;
+    let device = PyEngine::new(engine, adapter)?;
     // Checked before any work, like everything a caller can get wrong.
     let mut recipe = recipe::from_dict(recipe.as_ref(), fixed.len())?;
     let mask = |m: Option<ImageArgs<'py>>| {
@@ -180,13 +233,15 @@ fn register_syn<'py>(
         layout,
     };
 
+    let request = device.request.clone();
     let run = py
         .detach(move || {
-            engine::register_syn(fixed, moving, Some(outputs), iso_mm, adapter, flag, recipe)
+            engine::register_syn(fixed, moving, Some(outputs), iso_mm, request, flag, recipe)
         })
-        .map_err(py_err)?;
+        .map_err(|f| device.error(|| py_err(f)))?;
 
     let d = PyDict::new(py);
+    d.set_item("engine", run.engine)?;
     d.set_item("adapter", &run.adapter)?;
     d.set_item("grid", run.grid)?;
     d.set_item("total_s", run.total_s)?;
@@ -286,7 +341,7 @@ fn fits_gpu(
 }
 
 #[pyfunction]
-#[pyo3(signature = (dims, channels, max, adapter=None, moving_dims=None, recipe=None, native_voxels=0))]
+#[pyo3(signature = (dims, channels, max, adapter=None, moving_dims=None, recipe=None, native_voxels=0, engine=None))]
 #[allow(clippy::too_many_arguments)]
 fn registrations_at_once(
     py: Python<'_>,
@@ -297,10 +352,12 @@ fn registrations_at_once(
     moving_dims: Option<[usize; 3]>,
     recipe: Option<Bound<'_, PyDict>>,
     native_voxels: u64,
+    engine: Option<&str>,
 ) -> PyResult<usize> {
     if channels == 0 {
         return Err(PyValueError::new_err("channels must be at least 1"));
     }
+    let request = EngineRequest::new(EngineChoice::resolve(engine).map_err(py_err)?, adapter);
     let recipe = recipe::from_dict(recipe.as_ref(), channels)?;
     let masks = engine::MaskDims::default();
     py.detach(move || {
@@ -308,7 +365,7 @@ fn registrations_at_once(
             dims,
             moving_dims,
             channels,
-            adapter,
+            &request,
             &recipe,
             &masks,
             native_voxels,
@@ -316,6 +373,24 @@ fn registrations_at_once(
         )
     })
     .map_err(py_err)
+}
+
+/// The engine `engine` (default: `FASTWARP_ENGINE`, else the GPU) settles on for `recipe` with
+/// `channels` channels: `("gpu", None)`, `("cpu", None)`, or `("cpu", warning)` when `"auto"`
+/// found no usable GPU. For a caller that runs several registrations on one engine.
+#[pyfunction]
+#[pyo3(signature = (engine=None, adapter=None, recipe=None, channels=1))]
+fn settle_engine(
+    py: Python<'_>,
+    engine: Option<&str>,
+    adapter: Option<String>,
+    recipe: Option<Bound<'_, PyDict>>,
+    channels: usize,
+) -> PyResult<(&'static str, Option<String>)> {
+    let request = EngineRequest::new(EngineChoice::resolve(engine).map_err(py_err)?, adapter);
+    let recipe = recipe::from_dict(recipe.as_ref(), channels.max(1))?;
+    py.detach(move || engine::settle_engine(&request, &recipe))
+        .map_err(py_err)
 }
 
 /// A reference grid from Python: size, spacing, origin, direction (ITK / LPS).
@@ -389,16 +464,18 @@ fn apply_transforms<'py>(
     Ok(PyArray1::from_vec(py, out))
 }
 
-/// Linear fits of one image pair on the GPU (one `Rigid` or `Affine` stage on Mattes MI with
+/// Linear fits of one image pair on the GPU or the CPU engine (one `Rigid` or `Affine` stage on Mattes MI with
 /// regular sampling per fit). The images are converted, winsorized (`(lower, upper)` quantiles,
 /// rescaled to [0, 1] as ANTs does) and uploaded once; smoothed copies are kept between fits, so
 /// a multi-start, or a rigid fit followed by an affine one, pays the preparation once.
 /// `fixed_mask`: its non-zero voxels are where the metric samples, in fits that ask for it (a fit
 /// can bring its own mask instead). Holds the GPU until `close()` (or the `with` block ends).
+/// `engine` as for `register_syn`.
 #[pyclass(module = "fastwarp._core", frozen)]
 struct LinearSession {
     inner: Mutex<Option<session::Session>>,
     com: AffineTransform,
+    engine: &'static str,
     adapter: String,
 }
 
@@ -409,7 +486,7 @@ fn closed() -> PyErr {
 #[pymethods]
 impl LinearSession {
     #[new]
-    #[pyo3(signature = (fixed, moving, fixed_mask=None, winsorize=None, adapter=None))]
+    #[pyo3(signature = (fixed, moving, fixed_mask=None, winsorize=None, adapter=None, engine=None))]
     fn new(
         py: Python<'_>,
         fixed: ImageArgs<'_>,
@@ -417,27 +494,37 @@ impl LinearSession {
         fixed_mask: Option<ImageArgs<'_>>,
         winsorize: Option<(f32, f32)>,
         adapter: Option<String>,
+        engine: Option<&str>,
     ) -> PyResult<Self> {
         engine::check_winsorize(winsorize).map_err(py_err)?;
+        let device = PyEngine::new(engine, adapter)?;
         let fixed = to_volume(&fixed)?;
         let moving = to_volume(&moving)?;
         let mask = fixed_mask
             .map(|m| to_volume(&m).map(MaskVolume::from_volume))
             .transpose()?;
+        let request = device.request.clone();
         let start = py
-            .detach(move || engine::open_linear(fixed, moving, mask, winsorize, adapter))
-            .map_err(py_err)?;
+            .detach(move || engine::open_linear(fixed, moving, mask, winsorize, request))
+            .map_err(|f| device.error(|| py_err(f)))?;
         Ok(Self {
             inner: Mutex::new(Some(start.session)),
             com: start.com,
+            engine: start.engine,
             adapter: start.adapter,
         })
     }
 
-    /// The GPU in use.
+    /// The GPU in use, or `cpu (f64, N threads)` on the CPU engine.
     #[getter]
     fn adapter(&self) -> String {
         self.adapter.clone()
+    }
+
+    /// The engine in use: `"gpu"` or `"cpu"`.
+    #[getter]
+    fn engine(&self) -> &'static str {
+        self.engine
     }
 
     /// The centre-of-mass start (`parameters`, `center`), what `initial=None` uses.
@@ -586,6 +673,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(release_idle_gpus, m)?)?;
     m.add_function(wrap_pyfunction!(fits_gpu, m)?)?;
     m.add_function(wrap_pyfunction!(registrations_at_once, m)?)?;
+    m.add_function(wrap_pyfunction!(settle_engine, m)?)?;
     m.add_function(wrap_pyfunction!(compose_field, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transforms, m)?)?;
     m.add_function(wrap_pyfunction!(cohort_recipe, m)?)?;
@@ -601,6 +689,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CancelToken>()?;
     m.add("GpuUnavailableError", py.get_type::<GpuUnavailableError>())?;
     m.add("GpuCapacityError", py.get_type::<GpuCapacityError>())?;
+    m.add("HostMemoryError", py.get_type::<HostMemoryError>())?;
     m.add("RegistrationError", py.get_type::<RegistrationError>())?;
     m.add(
         "RegistrationCancelled",

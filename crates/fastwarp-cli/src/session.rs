@@ -34,15 +34,21 @@ use std::sync::atomic::AtomicBool;
 use fastwarp_gpu::WgpuBackend;
 use fastwarp_reg::linalg::IDENTITY3;
 use fastwarp_reg::linear::{
-    run_linear_stage_cached, with_center, LinearKind, LinearRecipe, SmoothCache,
+    run_linear_stage_cached, with_center, CpuLinearEngine, LinearKind, LinearRecipe, SmoothCache,
 };
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::transform::{AffineTransform, ParametricTransform};
 use fastwarp_reg::{Result, Volume};
 
+/// The device of a session: a GPU, or the `f64` CPU reference engine.
+pub enum LinearDevice {
+    Gpu(Box<WgpuBackend>),
+    Cpu,
+}
+
 /// The prepared pair and everything reused between fits.
 pub struct Session {
-    pub gpu: WgpuBackend,
+    pub device: LinearDevice,
     pub fixed: Volume<f64>,
     pub moving: Volume<f64>,
     pub mask: Option<MaskVolume>,
@@ -80,16 +86,28 @@ impl Session {
                 initial.center,
             )),
         };
-        let fitted = run_linear_stage_cached(
-            &self.gpu,
-            &recipe,
-            &self.fixed,
-            &self.moving,
-            initial,
-            start,
-            &mut self.cache,
-            cancel,
-        )?;
+        let fitted = match &self.device {
+            LinearDevice::Gpu(g) => run_linear_stage_cached(
+                &**g,
+                &recipe,
+                &self.fixed,
+                &self.moving,
+                initial,
+                start,
+                &mut self.cache,
+                cancel,
+            ),
+            LinearDevice::Cpu => run_linear_stage_cached(
+                &CpuLinearEngine,
+                &recipe,
+                &self.fixed,
+                &self.moving,
+                initial,
+                start,
+                &mut self.cache,
+                cancel,
+            ),
+        }?;
         let collapsed = AffineTransform::compose(&initial, &fitted.affine);
         Ok(Fit {
             total: with_center(&collapsed, fitted.affine.center),

@@ -30,6 +30,7 @@ from ._core import compose_field as _compose_field
 from ._core import fits_gpu as _fits_gpu
 from ._core import register_syn as _register_syn
 from ._core import registrations_at_once as _registrations_at_once
+from ._core import settle_engine as _settle_engine
 
 #: The citation of FastWarp as one line of text, for method sections and logs.
 CITATION = (
@@ -106,8 +107,9 @@ def register_syn(
     outputs: str = "composite",
     fixed_mask: Any | None = None,
     moving_mask: Any | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any]:
-    """Register ``moving`` onto ``fixed`` on the GPU and write ANTs transform files.
+    """Register ``moving`` onto ``fixed`` and write ANTs transform files.
 
     By default the registration runs a centre-of-mass start, a rigid and an affine stage (Mattes
     mutual information on the first image of each side), then a SyN stage (symmetric normalization,
@@ -171,12 +173,20 @@ def register_syn(
         that switch it off with ``"moving_mask": False``), so that a lesion or a resection cavity
         outside the mask does not drive the deformation. The linear stages do not use it, and a
         recipe without a SyN stage refuses it.
+    engine : {"gpu", "cpu", "auto"}, optional
+        The engine. ``"gpu"`` needs a usable GPU. ``"cpu"`` runs the ``float64`` reference engine
+        on all host threads: much slower than the GPU (minutes instead of seconds for a 1 mm head),
+        with results that agree with the GPU's within tolerance, not bit for bit. ``"auto"`` uses
+        the GPU, or the CPU engine with a ``UserWarning`` when there is no usable GPU. By default
+        the ``FASTWARP_ENGINE`` environment variable applies, if set, and otherwise ``"gpu"``. See
+        :doc:`/guide/cpu`.
 
     Returns
     -------
     dict
         Timings in seconds (``total_s``, ``resample_s``, ``preprocess_s``, ``linear_s``, ``syn_s``,
-        ``warp_s``, ``write_s``), the GPU with its graphics API and type (``adapter``), the
+        ``warp_s``, ``write_s``), the engine that ran (``engine``: ``"gpu"`` or ``"cpu"``), the
+        GPU with its graphics API and type, or ``"cpu (f64, N threads)"`` (``adapter``), the
         registration grid size (``grid``), one ``(level, grid_size, iterations, converged,
         energy)`` tuple per SyN level (``levels``: the levels of every SyN stage, one stage after
         the other; empty without SyN), the same tuples grouped by SyN stage (``syn_stages``: one
@@ -184,7 +194,8 @@ def register_syn(
         (``affine_parameters``, ``affine_center``), the start (``initial_parameters``,
         ``initial_center``), one dict per linear stage (``linear_stages``), whether a SyN stage ran
         (``deformable``), the paths written (``files``), ``peak_gpu_bytes``,
-        ``memory_budget_bytes``, the full ``recipe`` that ran, and ``warnings``: one message per
+        ``memory_budget_bytes`` (both ``None`` on the CPU engine), the full ``recipe`` that ran,
+        and ``warnings``: one message per
         linear level that was skipped because its samples left the metric undefined (each is
         also emitted as a ``UserWarning``).
 
@@ -198,6 +209,9 @@ def register_syn(
         No usable GPU. Raised before any work, so the caller can run ANTs instead.
     GpuCapacityError
         The stages of the recipe do not fit the GPU's memory. Raised before any work.
+    HostMemoryError
+        On the CPU engine, the registration needs more memory than the host has available (an
+        estimate). Raised before any work.
     RegistrationCancelled
         ``cancel`` was cancelled. No files are written.
     RegistrationError
@@ -230,6 +244,7 @@ def register_syn(
         outputs=outputs,
         fixed_mask=None if fixed_mask is None else _image_args(fixed_mask),
         moving_mask=None if moving_mask is None else _image_args(moving_mask),
+        engine=engine,
     )
     return _warn_skipped(result)
 
@@ -655,6 +670,7 @@ class LinearSession:
         fixed_mask: Any | None = None,
         winsorize: tuple[float, float] | None = None,
         adapter: str | None = None,
+        engine: str | None = None,
     ) -> None:
         self._core = _LinearSession(
             _image_args(fixed),
@@ -662,12 +678,19 @@ class LinearSession:
             fixed_mask=None if fixed_mask is None else _image_args(fixed_mask),
             winsorize=None if winsorize is None else (float(winsorize[0]), float(winsorize[1])),
             adapter=adapter,
+            engine=engine,
         )
 
     @property
     def adapter(self) -> str:
-        """Name of the GPU the session uses, with its graphics API and type."""
+        """Name of the GPU the session uses, with its graphics API and type, or
+        ``"cpu (f64, N threads)"`` on the CPU engine."""
         return self._core.adapter
+
+    @property
+    def engine(self) -> str:
+        """The engine the session uses: ``"gpu"`` or ``"cpu"``."""
+        return self._core.engine
 
     @property
     def com_initial(self) -> tuple[tuple[float, ...], tuple[float, float, float]]:
@@ -767,6 +790,7 @@ def linear_session(
     fixed_mask: Any | None = None,
     winsorize: tuple[float, float] | None = None,
     adapter: str | None = None,
+    engine: str | None = None,
 ) -> LinearSession:
     """Prepare an image pair for rigid and affine fits on the GPU.
 
@@ -792,6 +816,13 @@ def linear_session(
         floating point.
     adapter : str, optional
         Use the GPU whose name contains this text.
+    engine : {"gpu", "cpu", "auto"}, optional
+        The engine. ``"gpu"`` needs a usable GPU. ``"cpu"`` runs the ``float64`` reference engine
+        on all host threads: much slower than the GPU (minutes instead of seconds for a 1 mm head),
+        with results that agree with the GPU's within tolerance, not bit for bit. ``"auto"`` uses
+        the GPU, or the CPU engine with a ``UserWarning`` when there is no usable GPU. By default
+        the ``FASTWARP_ENGINE`` environment variable applies, if set, and otherwise ``"gpu"``. See
+        :doc:`/guide/cpu`.
 
     Returns
     -------
@@ -812,7 +843,9 @@ def linear_session(
     --------
     register_syn : Full normalization, including the rigid and affine stages.
     """
-    return LinearSession(fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter)
+    return LinearSession(
+        fixed, moving, fixed_mask=fixed_mask, winsorize=winsorize, adapter=adapter, engine=engine
+    )
 
 
 _JLF_LABELS = "<labels>.nii"
@@ -1040,12 +1073,30 @@ def _warp_file(image: Any, reference: tuple, composite: str, path: str, labels: 
     )
 
 
+def _settled_engine(
+    engine: str | None, adapter: str | None, recipe: Any
+) -> tuple[str | None, str | None]:
+    """``(engine, adapter)`` settled once for a batch of registrations: ``"auto"`` (given or from
+    ``FASTWARP_ENGINE``) becomes ``"gpu"``, or ``"cpu"`` without an adapter and with one warning
+    when there is no usable GPU for ``recipe``."""
+    name, why = _settle_engine(engine, adapter, _recipe_arg(recipe), 1)
+    if why is None:
+        return name, adapter if name == "gpu" else None
+    warnings.warn(why, UserWarning, stacklevel=3)
+    return name, None
+
+
 _ATLASES_AT_ONCE = 4
 _STOP_TIMEOUT_S = 30.0
 
 
 def _atlases_at_once(
-    target: Any, atlases: Sequence[Any], iso_mm: float, adapter: str | None, recipe: Any
+    target: Any,
+    atlases: Sequence[Any],
+    iso_mm: float,
+    adapter: str | None,
+    recipe: Any,
+    engine: str | None,
 ) -> int:
     if len(atlases) < 2:
         return 1
@@ -1064,6 +1115,7 @@ def _atlases_at_once(
         moving,
         _recipe_arg(recipe),
         native,
+        engine=engine,
     )
     return max(n, 1)
 
@@ -1092,6 +1144,7 @@ def register_atlases(
     iso_mm: float = 1.0,
     adapter: str | None = None,
     cancel: CancelToken | None = None,
+    engine: str | None = None,
 ) -> dict[str, list[Path]]:
     """Register atlases to a target and warp their images and labels onto it, for
     :func:`joint_label_fusion`.
@@ -1119,8 +1172,9 @@ def register_atlases(
         voxels, exact only up to 2**24), or ``None``.
     out_dir : str or os.PathLike
         The folder of the files; created when missing.
-    recipe, iso_mm, adapter, cancel
-        As for :func:`register_syn`.
+    recipe, iso_mm, adapter, cancel, engine
+        As for :func:`register_syn`. On the CPU engine the atlases are registered one at a time,
+        since each registration already uses every core.
 
     Returns
     -------
@@ -1142,6 +1196,7 @@ def register_atlases(
         arr = np.asarray(lab[0] if isinstance(lab, tuple) else lab.numpy())
         if arr.size and (arr.min() < 0 or arr.max() > 2**24 or np.any(arr != np.round(arr))):
             raise ValueError("label values must be whole numbers from 0 to 2**24")
+    engine, adapter = _settled_engine(engine, adapter, recipe)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     if isinstance(target, tuple):
@@ -1164,6 +1219,7 @@ def register_atlases(
             adapter=adapter,
             cancel=stop,
             recipe=recipe,
+            engine=engine,
         )
         composite = f"{prefix}Composite.h5"
 
@@ -1184,7 +1240,7 @@ def register_atlases(
             _warp_file(labels[i - 1], reference, composite, str(label_path), labels=True)
         return files, label_path, Path(composite)
 
-    workers = _atlases_at_once(target, atlases, iso_mm, adapter, recipe)
+    workers = _atlases_at_once(target, atlases, iso_mm, adapter, recipe, engine)
     pool = ThreadPoolExecutor(max_workers=workers)
     futures = [pool.submit(one, i, atlas) for i, atlas in enumerate(atlases, 1)]
     failed = False

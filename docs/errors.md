@@ -1,6 +1,6 @@
 # Errors
 
-FastWarp raises four exceptions of its own, and the standard `ValueError` and
+FastWarp raises five exceptions of its own, and the standard `ValueError` and
 `FileNotFoundError` for mistakes in the arguments. [Troubleshooting](troubleshooting.md) says
 what to do about the most common ones.
 
@@ -8,12 +8,13 @@ what to do about the most common ones.
 | --- | --- | --- |
 | {class}`~fastwarp.GpuUnavailableError` | `RuntimeError` | No usable GPU. Raised before any work. |
 | {class}`~fastwarp.GpuCapacityError` | `RuntimeError` | The registration does not fit the GPU. Raised before any work. |
+| {class}`~fastwarp.HostMemoryError` | `RuntimeError` | On the CPU engine, the registration does not fit the computer's available memory. Raised before any work. |
 | {class}`~fastwarp.RegistrationError` | `RuntimeError` | The engine failed while it worked. |
 | {class}`~fastwarp.RegistrationCancelled` | `Exception` | The run was stopped through its {class}`~fastwarp.CancelToken`. |
 | `ValueError` | | An argument or the recipe is wrong. Raised before any work. |
 | `FileNotFoundError` | | A transform file does not exist. Raised before any work. |
 
-All four FastWarp exceptions can be pickled, so they also cross process boundaries, for example
+All five FastWarp exceptions can be pickled, so they also cross process boundaries, for example
 out of a {class}`concurrent.futures.ProcessPoolExecutor` worker.
 
 ## GpuUnavailableError
@@ -47,6 +48,15 @@ stages do (their message starts with "the linear stages on the registration grid
 checked on its own. The message gives the grid, the bytes needed and the budget. Use a coarser `iso_mm`, a GPU with more memory, or ANTs. See
 [What fits](guide/gpu.md#what-fits) and
 [Troubleshooting](troubleshooting.md#the-registration-does-not-fit).
+
+## HostMemoryError
+
+Raised by {func}`~fastwarp.register_syn`, {func}`~fastwarp.register_atlases` and
+{func}`fastwarp.ants.registration` on the [CPU engine](guide/cpu.md) when the estimated memory of
+the registration is more than the memory the computer has available ({func}`~fastwarp.linear_session`
+does not check it). The message gives the estimate, the available memory and the grid.
+Use a coarser `iso_mm`, free memory, or the GPU engine. With `engine="auto"` it is raised only
+when there is no usable GPU.
 
 ## RegistrationError
 
@@ -92,5 +102,6 @@ The message names the argument or the recipe field, for example
 
 The [command line](cli.md) reports the same errors as exit status: 2 for invalid arguments, 3
 for a file error, 4 for {class}`~fastwarp.GpuUnavailableError`, 5 for
-{class}`~fastwarp.GpuCapacityError`, 1 for other failures. See
+{class}`~fastwarp.GpuCapacityError`, 7 for {class}`~fastwarp.HostMemoryError`, 1 for other
+failures. See
 [Exit status](cli.md#exit-status).
