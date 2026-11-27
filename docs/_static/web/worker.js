@@ -259,6 +259,11 @@ self.addEventListener("unhandledrejection", (e) => {
   }
 });
 
+function withDeviceMemory(options) {
+  const gb = self.navigator?.deviceMemory;
+  return typeof gb === "number" && Number.isFinite(gb) && gb > 0 ? { ...options, device_memory_gb: gb } : options;
+}
+
 function cancelled() {
   const err = new Error("the registration was cancelled");
   err.name = "Cancelled";
@@ -306,7 +311,7 @@ self.onmessage = async ({ data }) => {
       const zip = await register(
         new Uint8Array(data.fixed),
         new Uint8Array(data.moving),
-        JSON.stringify(data.options),
+        JSON.stringify(withDeviceMemory(data.options)),
         onProgress,
       );
       if (debug.fault === "stall" && fault.armed) return;

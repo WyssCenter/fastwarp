@@ -286,24 +286,34 @@ pub struct LostEvidence {
     pub failed_alloc_bytes: usize,
     /// GPU memory the run planned to use.
     pub planned_gpu_bytes: u64,
-    /// GPU memory the run used at most.
-    pub peak_gpu_bytes: u64,
-    /// The device's `maxBufferSize`.
-    pub max_buffer_size: u64,
+    /// Size of the WebAssembly memory.
+    pub wasm_bytes: u64,
+    /// The device's memory as the browser reports it (`navigator.deviceMemory`, rounded and
+    /// capped by the browser; Safari and Firefox report none).
+    pub device_memory_bytes: Option<u64>,
 }
 
 impl LostEvidence {
-    /// Whether a lost device points to memory: an out-of-memory error was caught, an allocation
-    /// of the WebAssembly module failed, the run used at least half of the device's
-    /// `maxBufferSize` or planned at least all of it. A browser tells a page no other figure of
-    /// the GPU's memory, so the last two tests are a rough proxy.
-    pub fn points_to_memory(&self) -> bool {
-        let limit = self.max_buffer_size;
-        self.out_of_memory_errors > 0
-            || self.failed_alloc_bytes > 0
-            || (limit > 0
-                && (self.peak_gpu_bytes.saturating_mul(2) >= limit
-                    || self.planned_gpu_bytes >= limit))
+    /// What points to memory, if anything: an out-of-memory error caught during the run
+    /// (`"oom_error"`), an allocation of the WebAssembly module that failed (`"wasm_alloc"`), or a
+    /// planned GPU memory and WebAssembly memory of together at least half of the device's memory
+    /// (`"plan_vs_device_memory"`). Phones share their memory between the GPU and the tab, and a
+    /// browser reports no figure of the GPU's own memory, so the last test needs the device's
+    /// memory and is skipped without it.
+    pub fn memory_evidence(&self) -> Option<&'static str> {
+        if self.out_of_memory_errors > 0 {
+            return Some("oom_error");
+        }
+        if self.failed_alloc_bytes > 0 {
+            return Some("wasm_alloc");
+        }
+        let total = self.planned_gpu_bytes.saturating_add(self.wasm_bytes);
+        match self.device_memory_bytes {
+            Some(device) if device > 0 && total.saturating_mul(2) >= device => {
+                Some("plan_vs_device_memory")
+            }
+            _ => None,
+        }
     }
 }
 
@@ -311,7 +321,7 @@ impl LostEvidence {
 /// is returned unchanged.
 pub fn weigh_lost(e: RunError, grid: GridChoice, evidence: &LostEvidence) -> RunError {
     match e {
-        RunError::DeviceLost { raw, .. } if evidence.points_to_memory() => {
+        RunError::DeviceLost { raw, .. } if evidence.memory_evidence().is_some() => {
             let hint = match grid {
                 GridChoice::OneMm => {
                     "Try the 2 mm grid, and close other tabs and programs that use the GPU."
@@ -1044,16 +1054,17 @@ mod tests {
     #[test]
     fn a_lost_device_is_a_memory_error_only_with_evidence() {
         const MIB: u64 = 1 << 20;
+        const GIB: u64 = 1 << 30;
         let raw = "device lost: GetFenceStatus failed with VK_ERROR_DEVICE_LOST";
-        let lost = || classify_text(raw, GridChoice::TwoMm);
+        let lost = |grid| classify_text(raw, grid);
         let pixel = LostEvidence {
             planned_gpu_bytes: 194 * MIB,
-            peak_gpu_bytes: 33 * MIB,
-            max_buffer_size: 1024 * MIB,
+            wasm_bytes: 243 * MIB,
+            device_memory_bytes: Some(8 * GIB),
             ..LostEvidence::default()
         };
-        assert!(!pixel.points_to_memory());
-        let e = weigh_lost(lost(), GridChoice::TwoMm, &pixel);
+        assert_eq!(pixel.memory_evidence(), None);
+        let e = weigh_lost(lost(GridChoice::TwoMm), GridChoice::TwoMm, &pixel);
         assert_eq!(e.kind(), "GpuDeviceLost");
         let text = e.to_string();
         assert!(text.contains("reset the GPU"), "{text}");
@@ -1061,37 +1072,61 @@ mod tests {
         assert!(text.contains("VK_ERROR_DEVICE_LOST"), "{text}");
         assert!(!text.contains("memory"), "{text}");
         assert!(!text.contains("2 mm grid"), "{text}");
-        let one_mm = classify_text(raw, GridChoice::OneMm).to_string();
-        assert!(one_mm.contains("try the 2 mm grid"), "{one_mm}");
-        let low_limit = LostEvidence {
-            max_buffer_size: 256 * MIB,
-            ..pixel
+
+        let one_mm_plan = LostEvidence {
+            planned_gpu_bytes: 1428 * MIB,
+            wasm_bytes: 0,
+            device_memory_bytes: None,
+            ..LostEvidence::default()
         };
-        assert!(!low_limit.points_to_memory());
-        assert!(LostEvidence {
-            planned_gpu_bytes: 512 * MIB,
-            ..low_limit
-        }
-        .points_to_memory());
+        assert_eq!(one_mm_plan.memory_evidence(), None);
+        let e = weigh_lost(lost(GridChoice::OneMm), GridChoice::OneMm, &one_mm_plan);
+        assert_eq!(e.kind(), "GpuDeviceLost");
+        assert!(e.to_string().contains("try the 2 mm grid"), "{e}");
+
+        let one_mm_run = LostEvidence {
+            wasm_bytes: 1200 * MIB,
+            ..one_mm_plan
+        };
+        assert_eq!(one_mm_run.memory_evidence(), None);
+        let on = |gib: u64| LostEvidence {
+            device_memory_bytes: Some(gib * GIB),
+            ..one_mm_run
+        };
+        assert_eq!(on(4).memory_evidence(), Some("plan_vs_device_memory"));
+        assert_eq!(on(8).memory_evidence(), None);
+        assert_eq!(
+            LostEvidence {
+                device_memory_bytes: Some(0),
+                ..one_mm_run
+            }
+            .memory_evidence(),
+            None
+        );
 
         let with = |change: &dyn Fn(&mut LostEvidence)| {
             let mut evidence = pixel;
             change(&mut evidence);
-            weigh_lost(lost(), GridChoice::OneMm, &evidence)
+            (
+                evidence.memory_evidence(),
+                weigh_lost(lost(GridChoice::OneMm), GridChoice::OneMm, &evidence),
+            )
         };
-        for e in [
-            with(&|v| v.out_of_memory_errors = 1),
-            with(&|v| v.failed_alloc_bytes = 1 << 30),
-            with(&|v| v.planned_gpu_bytes = 1024 * MIB),
-            with(&|v| v.peak_gpu_bytes = 600 * MIB),
+        for (expected, (found, e)) in [
+            ("oom_error", with(&|v| v.out_of_memory_errors = 1)),
+            ("wasm_alloc", with(&|v| v.failed_alloc_bytes = 1 << 30)),
+            (
+                "plan_vs_device_memory",
+                with(&|v| v.device_memory_bytes = Some(GIB / 2)),
+            ),
         ] {
+            assert_eq!(found, Some(expected));
             assert_eq!(e.kind(), "GpuMemory");
             let text = e.to_string();
             assert!(text.contains("short of memory"), "{text}");
             assert!(text.contains("2 mm grid"), "{text}");
             assert!(text.contains("VK_ERROR_DEVICE_LOST"), "{text}");
         }
-        assert_eq!(with(&|v| v.max_buffer_size = 0).kind(), "GpuDeviceLost");
 
         let memory = classify_text("out of memory allocating 5 bytes", GridChoice::TwoMm);
         assert_eq!(

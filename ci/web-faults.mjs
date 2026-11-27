@@ -235,6 +235,7 @@ const CASES = [
       [!/memory/i.test(s.message), "the panel does not blame memory"],
       [/device lost/i.test(s.message), "the panel keeps the browser's text"],
       [j.errors.engine?.gpu?.out_of_memory_errors === 0, "the engine caught no out-of-memory error"],
+      [j.errors.engine?.gpu?.memory_evidence === null, "the engine found no memory evidence"],
     ],
   },
   {
@@ -245,6 +246,7 @@ const CASES = [
       [/memory/i.test(s.message), "the panel says GPU memory ran short"],
       [j.errors.gpu.some((e) => e.type === "GPUOutOfMemoryError"), "the report holds the out-of-memory error"],
       [(j.errors.engine?.gpu?.out_of_memory_errors ?? 0) >= 1, "the engine counted the out-of-memory error"],
+      [j.errors.engine?.gpu?.memory_evidence === "oom_error", "the engine names the out-of-memory error as its evidence"],
     ],
   },
   {

@@ -249,6 +249,7 @@ function engineText(failure, engine) {
   if (plan?.planned_gpu_bytes != null) parts.push(`planned GPU ${size(plan.planned_gpu_bytes)}`);
   if (gpu?.peak_allocated_bytes != null) parts.push(`GPU peak ${size(gpu.peak_allocated_bytes)}`);
   if (gpu?.lost) parts.push("device lost");
+  if (gpu?.memory_evidence) parts.push(`memory evidence: ${gpu.memory_evidence}`);
   const ooms = gpu?.out_of_memory_errors ?? 0;
   if (ooms) parts.push(`${ooms} out-of-memory error${ooms === 1 ? "" : "s"}`);
   if (gpu?.pending_errors) parts.push(`pending: ${clip(gpu.pending_errors, 160)}`);

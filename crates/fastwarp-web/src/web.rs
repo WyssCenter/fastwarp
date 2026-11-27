@@ -248,6 +248,10 @@ fn gpu_state(b: &WgpuBackend, out_of_memory_errors: u32) -> Value {
     })
 }
 
+fn wasm_memory_bytes() -> u64 {
+    (core::arch::wasm32::memory_size(0) as u64).saturating_mul(65536)
+}
+
 fn local_time() -> [u16; 6] {
     let d = js_sys::Date::new_0();
     [
@@ -361,6 +365,7 @@ async fn run(fixed: Vec<u8>, moving: Vec<u8>, options_json: &str) -> Result<Uint
     report(&Progress::phase("gpu"));
     let backend = backend().await?;
     let oom_before = backend.context().out_of_memory_errors();
+    backend.release_idle_buffers();
     backend.reset_peak_allocated_bytes();
     let caps = &backend.context().caps;
     let job = Job {
@@ -396,16 +401,18 @@ async fn run(fixed: Vec<u8>, moving: Vec<u8>, options_json: &str) -> Result<Uint
                 .context()
                 .out_of_memory_errors()
                 .saturating_sub(oom_before);
-            keep(&GPU_STATE, Some(gpu_state(&backend, oom_errors)));
             let evidence = LostEvidence {
                 out_of_memory_errors: oom_errors,
                 failed_alloc_bytes: FAILED_ALLOC.load(Ordering::Relaxed),
                 planned_gpu_bytes: kept(&PLAN)
                     .and_then(|p| p["planned_gpu_bytes"].as_u64())
                     .unwrap_or(0),
-                peak_gpu_bytes: backend.peak_allocated_bytes(),
-                max_buffer_size: backend.context().caps.max_buffer_size,
+                wasm_bytes: wasm_memory_bytes(),
+                device_memory_bytes: options.device_memory_bytes,
             };
+            let mut state = gpu_state(&backend, oom_errors);
+            state["memory_evidence"] = json!(evidence.memory_evidence());
+            keep(&GPU_STATE, Some(state));
             drop(backend);
             if lost || matches!(e, RunError::GpuMemory(_) | RunError::DeviceLost { .. }) {
                 forget_backend();
