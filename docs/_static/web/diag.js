@@ -242,6 +242,19 @@ function eventText(e) {
   return [e.kind, e.type, e.reason, clip(e.message ?? e.text, 160)].filter(Boolean).join(" ");
 }
 
+function engineText(failure, engine) {
+  const parts = [];
+  const plan = failure?.plan;
+  const gpu = failure?.gpu;
+  if (plan?.planned_gpu_bytes != null) parts.push(`planned GPU ${size(plan.planned_gpu_bytes)}`);
+  if (gpu?.peak_allocated_bytes != null) parts.push(`GPU peak ${size(gpu.peak_allocated_bytes)}`);
+  if (gpu?.lost) parts.push("device lost");
+  if (gpu?.pending_errors) parts.push(`pending: ${clip(gpu.pending_errors, 160)}`);
+  const attempts = engine?.selftest?.attempts;
+  if (attempts > 1) parts.push(`self-test needed ${attempts} attempts`);
+  return parts.join(", ");
+}
+
 function compactLines(r) {
   const b = r.browser ?? {};
   const w = r.webgpu ?? {};
@@ -251,6 +264,7 @@ function compactLines(r) {
   const add = (text, drop = 0, label = "") => lines.push({ text, drop, label });
   add(`FastWarp browser demo report, ${r.time_utc}, FastWarp ${r.fastwarp ?? "?"}`);
   add(`Problem: ${r.kind}: ${clip(r.message, 400)}`);
+  if (r.debug) add(`Test mode: ${Object.entries(r.debug).map(([k, v]) => `${k}=${clip(v, 20)}`).join(", ")}`);
   if (run) {
     add(`Stage: ${stageText(run.stage)}; ${run.elapsed_s} s in, ${run.since_progress_s} s since the last progress`);
     const grid = run.registration_grid?.join("x") ?? "?";
@@ -274,8 +288,11 @@ function compactLines(r) {
   if (w.limits || w.device?.granted_limits) {
     add(`Limits adapter/device: ${limitsText(w.limits, w.device?.granted_limits)}`, 3, "limits");
   }
-  add(`Memory: WebAssembly ${size(r.memory?.wasm_bytes)}`);
   const e = r.errors ?? {};
+  const failedAlloc = e.failed_alloc_bytes ? `; an allocation of ${size(e.failed_alloc_bytes)} failed` : "";
+  add(`Memory: WebAssembly ${size(r.memory?.wasm_bytes)}${failedAlloc}`);
+  const engine = engineText(e.engine, w.engine);
+  if (engine) add(`Engine: ${engine}`, 3, "engine");
   if (e.panic) add(`Panic: ${clip(e.panic, 300)}`);
   if (e.gpu?.length) add(`GPU events: ${e.gpu.slice(-3).map(eventText).join(" | ")}`, 2, "GPU events");
   if (e.stack) add(`Stack: ${clip(e.stack.split("\n").slice(0, 3).join(" / "), 300)}`, 6, "stack");

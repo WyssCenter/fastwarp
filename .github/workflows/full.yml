@@ -4,11 +4,17 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
-      - "NOTICE"
+    paths:
+      - "**"
+      - "!**/*.md"
+      - "!docs/**"
+      - "!LICENSE"
+      - "!NOTICE"
+      - "docs/_static/web/**"
+      - "docs/_scripts/build_web_demo.sh"
+      - "docs/browser.md"
+      - "docs/conf.py"
+      - "docs/requirements.txt"
   schedule:
     - cron: "23 2 * * *"
   workflow_dispatch:
@@ -90,6 +96,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: dev-test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
@@ -109,6 +116,36 @@ jobs:
           -E 'binary_id(fastwarp-reg::ants_compat) | binary_id(fastwarp-reg::coreg_metric) | binary_id(fastwarp-reg::n4_ants)
           | (binary_id(fastwarp-cli::cli) & test(=ants_apply_transforms_reads_the_registration))
           | binary_id(fastwarp-cli::ants_mode)'
+
+  web-faults:
+    name: Browser demo fault injection (headless Chrome, SwiftShader)
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: wasm-bindgen-cli@0.2.129
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: web-demo
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: WebAssembly module and sample images
+        run: bash docs/_scripts/build_web_demo.sh
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Documentation with the demo page
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r docs/requirements.txt
+          python -m sphinx --keep-going -b html docs "$RUNNER_TEMP/html"
+      - name: Fault injection in headless Chrome
+        run: node ci/web-faults.mjs "$RUNNER_TEMP/html" --chrome "$(command -v google-chrome)" --swiftshader --suite faults
 
   installer-windows:
     name: install.ps1 on Windows PowerShell 5.1 and PowerShell 7

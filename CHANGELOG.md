@@ -10,6 +10,24 @@
   measures how far that warp is from the same subject's T1w warp with CC (`multimodal`). The IXI
   archives are hashed and extracted while they download, without being stored. `run
   --ants-version` refuses an `antsRegistration` of another version.
+- New: the browser demo's diagnostic report holds what the engine knows: the GPU limits it saw,
+  requested and was granted, the self-test result, and for a failed run the step it reached, the
+  planned GPU memory, the GPU memory in use and the GPU's errors; after an internal error it holds
+  the message and its place in FastWarp's source code, and the size of a failed allocation.
+- New: `ci/web-faults.mjs` drives the browser demo in headless Chrome. On every pull request that
+  changes the GPU code or the demo (`web.yml`) it starts the GPU, which compiles every kernel with
+  Chrome's own shader compiler, and registers the sample; in `full.yml` it runs the demo with each
+  fault of its new test parameters (`?fault=`, `?limits=`) and checks the error panel and the
+  report.
+- Fixed: on the GPU, the CC metric of SyN stages lost precision when the intensities carried an
+  offset that is large next to their local contrast (a constant non-zero background, values in
+  the hundreds or thousands): `float32` window sums cancelled, so windows were taken as flat or
+  their correlation was off (images with a background of 1000 and contrast 1 gave a CC of -1.0
+  instead of -0.82). When one value fills at least 1/16 of an image, such as a constant
+  background, the CC kernels now subtract it from that image, which the CC does not depend on;
+  the GPU then matches the CPU to about 1e-7 on such images. Other images, and images whose most
+  frequent value is zero, as after the rescaling to [0, 1] with the background at the minimum,
+  give the same results to the bit.
 - New: SyN stages can use Mattes mutual information, for images of different contrast. A recipe
   names the metric of each SyN channel in `channel_metrics` (`"cc"` or `"mi"`, with `mi_bins`
   histogram bins, 5 to 32), and channels may mix the two as in `antsRegistration`.
