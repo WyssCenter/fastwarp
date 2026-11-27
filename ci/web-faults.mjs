@@ -228,10 +228,23 @@ const CASES = [
   {
     name: "lost",
     query: "autorun=sample&grid=2mm&plan=short&fault=lost&fault_at=rigid",
-    kinds: ["GpuMemory", "RegistrationError"],
+    kinds: ["GpuDeviceLost"],
     checks: (j, s) => [
       [j.errors.gpu.some((e) => e.kind === "lost" && e.reason === "destroyed"), "the report holds the lost reason"],
-      [/GPU device|device lost/i.test(s.message), "the panel says the device was lost"],
+      [/reset the GPU/.test(s.message) && /Run again/.test(s.message), "the panel says the GPU was reset and to run again"],
+      [!/memory/i.test(s.message), "the panel does not blame memory"],
+      [/device lost/i.test(s.message), "the panel keeps the browser's text"],
+      [j.errors.engine?.gpu?.out_of_memory_errors === 0, "the engine caught no out-of-memory error"],
+    ],
+  },
+  {
+    name: "lostoom",
+    query: "autorun=sample&grid=2mm&plan=short&fault=lostoom&fault_at=rigid",
+    kinds: ["GpuMemory"],
+    checks: (j, s) => [
+      [/memory/i.test(s.message), "the panel says GPU memory ran short"],
+      [j.errors.gpu.some((e) => e.type === "GPUOutOfMemoryError"), "the report holds the out-of-memory error"],
+      [(j.errors.engine?.gpu?.out_of_memory_errors ?? 0) >= 1, "the engine counted the out-of-memory error"],
     ],
   },
   {

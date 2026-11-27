@@ -43,6 +43,12 @@ pub enum RunError {
     Invalid(String),
     Limit(String),
     GpuMemory(String),
+    /// The browser lost the GPU device without a sign that memory ran short: the page's message
+    /// and the browser's text.
+    DeviceLost {
+        message: String,
+        raw: String,
+    },
     Cancelled,
     Registration(String),
 }
@@ -53,6 +59,7 @@ impl RunError {
             RunError::Invalid(_) => "InvalidInput",
             RunError::Limit(_) => "GpuLimit",
             RunError::GpuMemory(_) => "GpuMemory",
+            RunError::DeviceLost { .. } => "GpuDeviceLost",
             RunError::Cancelled => "Cancelled",
             RunError::Registration(_) => "RegistrationError",
         }
@@ -63,6 +70,7 @@ impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RunError::Cancelled => f.write_str("the registration was cancelled"),
+            RunError::DeviceLost { message, .. } => f.write_str(message),
             RunError::Invalid(m)
             | RunError::Limit(m)
             | RunError::GpuMemory(m)
@@ -244,10 +252,21 @@ pub fn classify_text(text: &str, grid: GridChoice) -> RunError {
     } else if lower.contains("out of memory") || lower.contains("outofmemory") {
         RunError::GpuMemory(format!("Not enough GPU memory. {hint} ({text})"))
     } else if lower.contains("device lost") || lower.contains("devicelost") {
-        RunError::GpuMemory(format!(
-            "The browser stopped the GPU device, most often because it ran out of GPU memory or \
-             a step took too long. {hint} ({text})"
-        ))
+        let again = match grid {
+            GridChoice::OneMm => {
+                "Run again usually works; if it happens again on the 1 mm grid, try the 2 mm grid, \
+                 whose steps are shorter."
+            }
+            GridChoice::TwoMm => "Run again usually works.",
+        };
+        RunError::DeviceLost {
+            message: format!(
+                "The browser or the GPU driver reset the GPU during the registration. This \
+                 happens now and then on some phones and computers and does not mean that \
+                 something is wrong with the images. {again} ({text})"
+            ),
+            raw: text.to_string(),
+        }
     } else if lower.contains("max buffer size") || lower.contains("exceeds the max") {
         RunError::Limit(format!(
             "A GPU buffer is larger than this browser allows. {} ({text})",
@@ -255,6 +274,58 @@ pub fn classify_text(text: &str, grid: GridChoice) -> RunError {
         ))
     } else {
         RunError::Registration(text.to_string())
+    }
+}
+
+/// What a run knew about memory when its GPU device was lost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LostEvidence {
+    /// Out-of-memory errors the device's error scopes caught during the run.
+    pub out_of_memory_errors: u32,
+    /// Size of the last allocation of the WebAssembly module that failed (0: none).
+    pub failed_alloc_bytes: usize,
+    /// GPU memory the run planned to use.
+    pub planned_gpu_bytes: u64,
+    /// GPU memory the run used at most.
+    pub peak_gpu_bytes: u64,
+    /// The device's `maxBufferSize`.
+    pub max_buffer_size: u64,
+}
+
+impl LostEvidence {
+    /// Whether a lost device points to memory: an out-of-memory error was caught, an allocation
+    /// of the WebAssembly module failed, the run used at least half of the device's
+    /// `maxBufferSize` or planned at least all of it. A browser tells a page no other figure of
+    /// the GPU's memory, so the last two tests are a rough proxy.
+    pub fn points_to_memory(&self) -> bool {
+        let limit = self.max_buffer_size;
+        self.out_of_memory_errors > 0
+            || self.failed_alloc_bytes > 0
+            || (limit > 0
+                && (self.peak_gpu_bytes.saturating_mul(2) >= limit
+                    || self.planned_gpu_bytes >= limit))
+    }
+}
+
+/// Turns a lost device into a GPU memory error when `evidence` points to memory; every other error
+/// is returned unchanged.
+pub fn weigh_lost(e: RunError, grid: GridChoice, evidence: &LostEvidence) -> RunError {
+    match e {
+        RunError::DeviceLost { raw, .. } if evidence.points_to_memory() => {
+            let hint = match grid {
+                GridChoice::OneMm => {
+                    "Try the 2 mm grid, and close other tabs and programs that use the GPU."
+                }
+                GridChoice::TwoMm => {
+                    "Close other tabs and programs that use the GPU, or use smaller images."
+                }
+            };
+            RunError::GpuMemory(format!(
+                "The browser stopped the GPU device after the GPU ran short of memory. {hint} \
+                 ({raw})"
+            ))
+        }
+        other => other,
     }
 }
 
@@ -959,7 +1030,7 @@ mod tests {
         assert_eq!(e.kind(), "GpuMemory");
         assert!(e.to_string().contains("2 mm grid"), "{e}");
         let e = classify_text("device lost: Destroyed", GridChoice::OneMm);
-        assert_eq!(e.kind(), "GpuMemory");
+        assert_eq!(e.kind(), "GpuDeviceLost");
         let e = classify_text("registration cancelled", GridChoice::OneMm);
         assert_eq!(e, RunError::Cancelled);
         let e = classify_text("something else", GridChoice::TwoMm);
@@ -967,6 +1038,65 @@ mod tests {
         assert_eq!(
             classify(RegError::Cancelled, GridChoice::OneMm),
             RunError::Cancelled
+        );
+    }
+
+    #[test]
+    fn a_lost_device_is_a_memory_error_only_with_evidence() {
+        const MIB: u64 = 1 << 20;
+        let raw = "device lost: GetFenceStatus failed with VK_ERROR_DEVICE_LOST";
+        let lost = || classify_text(raw, GridChoice::TwoMm);
+        let pixel = LostEvidence {
+            planned_gpu_bytes: 194 * MIB,
+            peak_gpu_bytes: 33 * MIB,
+            max_buffer_size: 1024 * MIB,
+            ..LostEvidence::default()
+        };
+        assert!(!pixel.points_to_memory());
+        let e = weigh_lost(lost(), GridChoice::TwoMm, &pixel);
+        assert_eq!(e.kind(), "GpuDeviceLost");
+        let text = e.to_string();
+        assert!(text.contains("reset the GPU"), "{text}");
+        assert!(text.contains("Run again"), "{text}");
+        assert!(text.contains("VK_ERROR_DEVICE_LOST"), "{text}");
+        assert!(!text.contains("memory"), "{text}");
+        assert!(!text.contains("2 mm grid"), "{text}");
+        let one_mm = classify_text(raw, GridChoice::OneMm).to_string();
+        assert!(one_mm.contains("try the 2 mm grid"), "{one_mm}");
+        let low_limit = LostEvidence {
+            max_buffer_size: 256 * MIB,
+            ..pixel
+        };
+        assert!(!low_limit.points_to_memory());
+        assert!(LostEvidence {
+            planned_gpu_bytes: 512 * MIB,
+            ..low_limit
+        }
+        .points_to_memory());
+
+        let with = |change: &dyn Fn(&mut LostEvidence)| {
+            let mut evidence = pixel;
+            change(&mut evidence);
+            weigh_lost(lost(), GridChoice::OneMm, &evidence)
+        };
+        for e in [
+            with(&|v| v.out_of_memory_errors = 1),
+            with(&|v| v.failed_alloc_bytes = 1 << 30),
+            with(&|v| v.planned_gpu_bytes = 1024 * MIB),
+            with(&|v| v.peak_gpu_bytes = 600 * MIB),
+        ] {
+            assert_eq!(e.kind(), "GpuMemory");
+            let text = e.to_string();
+            assert!(text.contains("short of memory"), "{text}");
+            assert!(text.contains("2 mm grid"), "{text}");
+            assert!(text.contains("VK_ERROR_DEVICE_LOST"), "{text}");
+        }
+        assert_eq!(with(&|v| v.max_buffer_size = 0).kind(), "GpuDeviceLost");
+
+        let memory = classify_text("out of memory allocating 5 bytes", GridChoice::TwoMm);
+        assert_eq!(
+            weigh_lost(memory.clone(), GridChoice::TwoMm, &pixel),
+            memory
         );
     }
 

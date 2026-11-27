@@ -137,7 +137,8 @@ packages to install; Node.js 20 or later and Chrome). It has two suites:
   fails the suite.
 - `faults`: runs the demo once per fault of its test parameters and checks the error panel and the
   diagnostic report: `?fault=panic` and `?fault=alloc` (a panic or a failed allocation in the
-  engine), `?fault=lost` (the GPU device is destroyed), `?fault=oom` and `?fault=internal` (the
+  engine), `?fault=lost` (the GPU device is destroyed), `?fault=lostoom` (an out-of-memory error,
+  then the device is destroyed), `?fault=oom` and `?fault=internal` (the
   browser reports an out-of-memory or internal error), `?fault=stall` with `?stall=6` (no progress),
   `?fault=kill` (the page reloads during the run), `?fault=nogpu` (no WebGPU) and `?limits=64` (the
   GPU's buffer limits clamped to 64 MiB; `?limits=default` clamps them to the WebGPU defaults).

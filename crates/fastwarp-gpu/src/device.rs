@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -376,6 +376,7 @@ pub struct GpuContext {
     pub(crate) profiler: Profiler,
     errors: Arc<Mutex<Vec<String>>>,
     lost: Arc<AtomicBool>,
+    out_of_memory: AtomicU32,
 }
 
 impl GpuContext {
@@ -556,7 +557,14 @@ impl GpuContext {
             profiler,
             errors,
             lost,
+            out_of_memory: AtomicU32::new(0),
         })
+    }
+
+    /// How many out-of-memory errors the error scopes of this device have caught, including those
+    /// the buffer pool recovered from by freeing idle buffers.
+    pub fn out_of_memory_errors(&self) -> u32 {
+        self.out_of_memory.load(Ordering::Relaxed)
     }
 
     /// Whether the driver reported the device lost (a reset or removal); a lost device never
@@ -647,6 +655,7 @@ impl GpuContext {
         let ve = ve.await;
         let oe = oe.await;
         if oe.is_some() {
+            self.out_of_memory.fetch_add(1, Ordering::Relaxed);
             return Err(GpuError::OutOfMemory {
                 requested,
                 label: label.to_string(),

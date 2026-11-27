@@ -16,7 +16,10 @@ use wasm_bindgen::prelude::*;
 use crate::diag::{failure_json, panic_json, run_failure_json, selftest_json};
 use crate::options::parse_options;
 use crate::progress::Progress;
-use crate::run::{classify_text, default_plan, run_job, short_plan, DeviceLimits, Job, RunError};
+use crate::run::{
+    classify_text, default_plan, run_job, short_plan, weigh_lost, DeviceLimits, Job, LostEvidence,
+    RunError,
+};
 use crate::viewer::{Layer, Viewer};
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -234,12 +237,13 @@ fn adapter_json(b: &WgpuBackend) -> Value {
     })
 }
 
-fn gpu_state(b: &WgpuBackend) -> Value {
+fn gpu_state(b: &WgpuBackend, out_of_memory_errors: u32) -> Value {
     let ctx = b.context();
     json!({
         "peak_allocated_bytes": b.peak_allocated_bytes(),
         "allocated_bytes": b.allocated_bytes(),
         "lost": ctx.is_lost(),
+        "out_of_memory_errors": out_of_memory_errors,
         "pending_errors": ctx.check_errors().err().map(|e| e.to_string()),
     })
 }
@@ -356,6 +360,8 @@ async fn run(fixed: Vec<u8>, moving: Vec<u8>, options_json: &str) -> Result<Uint
     let options = parse_options(options_json).map_err(RunError::Invalid)?;
     report(&Progress::phase("gpu"));
     let backend = backend().await?;
+    let oom_before = backend.context().out_of_memory_errors();
+    backend.reset_peak_allocated_bytes();
     let caps = &backend.context().caps;
     let job = Job {
         fixed,
@@ -386,19 +392,33 @@ async fn run(fixed: Vec<u8>, moving: Vec<u8>, options_json: &str) -> Result<Uint
             Ok(Uint8Array::from(finished.archive.as_slice()))
         }
         Err(e) => {
-            keep(&GPU_STATE, Some(gpu_state(&backend)));
+            let oom_errors = backend
+                .context()
+                .out_of_memory_errors()
+                .saturating_sub(oom_before);
+            keep(&GPU_STATE, Some(gpu_state(&backend, oom_errors)));
+            let evidence = LostEvidence {
+                out_of_memory_errors: oom_errors,
+                failed_alloc_bytes: FAILED_ALLOC.load(Ordering::Relaxed),
+                planned_gpu_bytes: kept(&PLAN)
+                    .and_then(|p| p["planned_gpu_bytes"].as_u64())
+                    .unwrap_or(0),
+                peak_gpu_bytes: backend.peak_allocated_bytes(),
+                max_buffer_size: backend.context().caps.max_buffer_size,
+            };
             drop(backend);
-            if lost || matches!(e, RunError::GpuMemory(_)) {
+            if lost || matches!(e, RunError::GpuMemory(_) | RunError::DeviceLost { .. }) {
                 forget_backend();
             } else if let Some(b) = BACKEND.with(|cell| cell.borrow().clone()) {
                 b.release_idle_buffers();
             }
-            match e {
+            let e = match e {
                 RunError::Registration(text) if lost => {
-                    Err(classify_text(&format!("device lost: {text}"), options.grid))
+                    classify_text(&format!("device lost: {text}"), options.grid)
                 }
-                other => Err(other),
-            }
+                other => other,
+            };
+            Err(weigh_lost(e, options.grid, &evidence))
         }
     }
 }

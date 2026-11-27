@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed: when the browser loses the GPU device during a run, the browser demo no longer says that
+  GPU memory most likely ran out unless it did: only an out-of-memory error, a failed allocation,
+  or a run that used at least half of the GPU's largest buffer (or planned all of it) make it a memory error
+  (`GpuMemory`). Otherwise the report's kind is `GpuDeviceLost` and the page says that the browser
+  or the GPU driver reset the GPU, which happens now and then on some phones and computers, and that
+  running it again usually works (on the 1 mm grid, that the 2 mm grid helps if it happens again). The browser's own text stays in the message and the report.
 - New: the accuracy benchmark (`benchmarks/accuracy`) compares Mattes MI in SyN with ANTs
   (`--recipe cohort-mi`), ANTsPy's default `ants.registration(fixed, moving)` and
   `antsRegistrationSyNQuick[s]` run by `fastwarp.ants` and by ANTsPy (`--recipe antspy-syn`,
