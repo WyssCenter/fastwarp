@@ -184,6 +184,14 @@ T1_CASES = [
     ("SyNOnly", {**CC4, "mask": "MASK", "moving_mask": "MMASK", "mask_all_stages": True}),
     ("antsRegistrationSyN[s]", {"multivariate_extras": "EXTRAS3"}),
     ("SyNOnly", {"syn_metric": "CC", "syn_sampling": 2, "multivariate_extras": "EXTRAS2"}),
+    *[(t, {}) for t in MYSYN],
+    ("SyN", {"syn_metric": "MI", "syn_sampling": 16}),
+    ("SyNOnly", {"multivariate_extras": "MATTES_EXTRAS"}),
+    ("SyNOnly", {"multivariate_extras": "MIXED_EXTRAS"}),
+    *[(f"antsRegistrationSyNQuick[{s}]", {}) for s in ("s", "sr", "so")],
+    ("antsRegistrationSyNQuick[s,4]", {}),
+    ("antsRegistrationSyNQuick[s]", {"multivariate_extras": "EXTRAS"}),
+    ("antsRegistrationSyNQuick[so]", {"mask": "MASK", "moving_mask": "MMASK"}),
 ]
 
 
@@ -195,6 +203,14 @@ def _resolve(ants, kw, fixed, moving=None):
         out["moving_mask"] = fixed if moving is None else moving
     if out.get("multivariate_extras") == "EXTRAS":
         out["multivariate_extras"] = [("CC", _img(ants, seed=2), _img(ants, seed=3), 0.5, 2)]
+    if out.get("multivariate_extras") == "MATTES_EXTRAS":
+        out["multivariate_extras"] = [("mattes", _img(ants, seed=2), _img(ants, seed=3), 0.5, 32)]
+    if out.get("multivariate_extras") == "MIXED_EXTRAS":
+        out["multivariate_extras"] = [
+            ("CC", _img(ants, seed=2), _img(ants, seed=3), 0.5, 3),
+            ("MI", _img(ants, seed=4), _img(ants, seed=5), 0.5, 32),
+            ("CC", _img(ants, seed=6), _img(ants, seed=7), 0.5, 3),
+        ]
     for key, n in (("EXTRAS2", 2), ("EXTRAS3", 3)):
         if out.get("multivariate_extras") == key:
             out["multivariate_extras"] = [
@@ -250,16 +266,6 @@ def _no_engine(monkeypatch):
 
 
 PREFIX = "fastwarp.ants.registration: "
-SYN_MATTES = (
-    PREFIX + "syn_metric='mattes' is not supported: FastWarp's SyN stage has no Mattes mutual "
-    "information metric (type_of_transform='{t}' uses syn_metric for its SyN stage); use "
-    "type_of_transform='SyNCC', or syn_metric='CC' with syn_sampling (the CC radius) from 1 to 8."
-)
-QUICK = (
-    PREFIX + "type_of_transform='antsRegistrationSyNQuick[{s}]' is not supported: its SyN stage "
-    "uses Mattes mutual information, which FastWarp's SyN stage does not have (it uses CC); use "
-    "'antsRegistrationSyN[{s}]' or 'SyNCC'."
-)
 TV = "FastWarp has no time-varying velocity field transform."
 
 
@@ -287,12 +293,19 @@ REFUSALS = [
     ({"type_of_transform": "TV[3]"}, _type_refusal("TV[3]", TV)),
     ({"type_of_transform": "TVMSQ"}, _type_refusal("TVMSQ", TV)),
     ({"type_of_transform": "TVMSQC"}, _type_refusal("TVMSQC", TV)),
-    *[({"type_of_transform": t}, SYN_MATTES.format(t=t)) for t in MYSYN],
-    ({}, SYN_MATTES.format(t="SyN")),
     (
         {"type_of_transform": "SyNRA", "syn_metric": "meansquares"},
-        PREFIX + "syn_metric='meansquares' is not supported: FastWarp's SyN stage uses CC only.",
+        PREFIX + "syn_metric='meansquares' is not supported: FastWarp's SyN stage uses CC or "
+        "mattes.",
     ),
+    *[
+        (
+            {"type_of_transform": "SyN", "syn_sampling": bins},
+            PREFIX + f"syn_sampling={bins} is not supported: with syn_metric='mattes' it is the "
+            "number of histogram bins, and the GPU Mattes kernels support 5 to 32 bins.",
+        )
+        for bins in (4, 64)
+    ],
     (
         {"type_of_transform": "SyN", "syn_metric": "CC"},
         PREFIX + "syn_sampling=32 is not supported: with syn_metric='CC' it is the CC radius, and "
@@ -318,10 +331,6 @@ REFUSALS = [
             _type_refusal(f"antsRegistrationSyN[{s}]", "FastWarp has no BSplineSyN transform."),
         )
         for s in ("b", "br", "bo")
-    ],
-    *[
-        ({"type_of_transform": f"antsRegistrationSyNQuick[{s}]"}, QUICK.format(s=s))
-        for s in ("s", "sr", "so")
     ],
     *[
         (
@@ -398,12 +407,22 @@ REFUSALS = [
         {"type_of_transform": "SyNOnly", **CC4, "multivariate_extras": "EMPTY"},
         PREFIX
         + "multivariate_extras={extras!r} is not supported: FastWarp's SyN stage takes one or "
-        "more extra CC metrics.",
+        "more extra CC or mattes metrics.",
     ),
     (
-        {"type_of_transform": "antsRegistrationSyN[s]", "multivariate_extras": "MI"},
-        PREFIX + "multivariate_extras[0][0]='MI' is not supported: FastWarp's SyN stage uses CC "
-        "only.",
+        {"type_of_transform": "antsRegistrationSyN[s]", "multivariate_extras": "MSQ"},
+        PREFIX + "multivariate_extras[0][0]='meansquares' is not supported: FastWarp's SyN stage "
+        "uses CC or mattes only.",
+    ),
+    (
+        {"type_of_transform": "antsRegistrationSyNQuick[s]", "multivariate_extras": "MI16"},
+        PREFIX + "multivariate_extras[0][4]=16 is not supported: FastWarp's SyN stage uses one "
+        "number of mattes bins for all channels (32 here).",
+    ),
+    (
+        {"type_of_transform": "antsRegistrationSyNQuick[s]", "multivariate_extras": "MI64"},
+        PREFIX + "multivariate_extras[0][4]=64 is not supported: it is the number of mattes bins, "
+        "5 to 32 on the GPU.",
     ),
     (
         {"type_of_transform": "antsRegistrationSyN[so]", "multivariate_extras": "RADIUS4"},
@@ -422,7 +441,9 @@ def test_refusals_name_the_argument_before_any_work(ants, pair, monkeypatch, tmp
     offgrid = ants.from_numpy(f2.numpy(), spacing=(1.5, 1.0, 1.0))
     extras = {
         "EMPTY": [],
-        "MI": [("MI", f2, m2, 1, 2)],
+        "MSQ": [("meansquares", f2, m2, 1, 2)],
+        "MI16": [("MI", f2, m2, 1, 16)],
+        "MI64": [("mattes", f2, m2, 1, 64)],
         "RADIUS4": [("CC", f2, m2, 1, 4)],
         "OFFGRID": [("CC", offgrid, m2, 1, 2)],
     }
@@ -514,6 +535,10 @@ def test_the_ignored_radius_of_antsregistrationsyn_warns(pair, monkeypatch, tmp_
     fixed, moving = pair
     with pytest.warns(UserWarning, match="ANTsPy 0.6.3 uses radius 2"), pytest.raises(_Stop):
         fa.registration(fixed, moving, "antsRegistrationSyN[s,4]", outprefix=str(tmp_path / "o_"))
+    with pytest.warns(UserWarning, match="ANTsPy 0.6.3 uses MI with 32 bins"), pytest.raises(_Stop):
+        fa.registration(
+            fixed, moving, "antsRegistrationSyNQuick[s,4]", outprefix=str(tmp_path / "q_")
+        )
 
 
 def test_fallback_runs_antspy_with_the_same_arguments(ants, pair, monkeypatch):
@@ -532,14 +557,15 @@ def test_fallback_runs_antspy_with_the_same_arguments(ants, pair, monkeypatch):
 
     monkeypatch.setattr(ants, "registration", fake)
     with pytest.warns(UserWarning, match=r"running ANTsPy instead of FastWarp \(fallback='ants'\)"):
-        out = fa.registration(fixed, moving, grad_step=0.3, fallback="ants")
+        out = fa.registration(fixed, moving, grad_step=0.3, syn_metric="demons", fallback="ants")
     assert out["engine"] == "ants"
     ((args, kwargs),) = calls
     assert args[0] is fixed and args[1] is moving
     assert kwargs["type_of_transform"] == "SyN" and kwargs["grad_step"] == 0.3
+    assert kwargs["syn_metric"] == "demons"
     assert set(kwargs) == set(fa._DEFAULTS)
     with pytest.raises(fa.UnsupportedArgument):
-        fa.registration(fixed, moving)
+        fa.registration(fixed, moving, syn_metric="demons")
 
 
 def test_fallback_without_a_gpu(ants, pair, monkeypatch, tmp_path):
@@ -644,7 +670,9 @@ def test_fallback_gets_text_paths(ants, pair, monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(ants, "registration", lambda *a, **k: calls.append(k) or {})
     with pytest.warns(UserWarning):
-        fa.registration(fixed, moving, outprefix=tmp_path / "p_", fallback="ants")
+        fa.registration(
+            fixed, moving, outprefix=tmp_path / "p_", syn_metric="demons", fallback="ants"
+        )
     assert calls[0]["outprefix"] == str(tmp_path / "p_")
 
 
@@ -827,6 +855,9 @@ T4_CASES = [
     ("Rigid", {"write_composite_transform": True}, "float"),
     ("antsRegistrationSyN[s]", {}, "float"),
     ("SyNOnly", {"syn_metric": "CC", "syn_sampling": 2, "reg_iterations": (20, 10)}, "float"),
+    ("SyN", {}, "float"),
+    ("SyNOnly", {"reg_iterations": (20, 10), "mask": "MASK", "moving_mask": "MMASK"}, "float"),
+    ("antsRegistrationSyNQuick[so]", {}, "float"),
 ]
 
 

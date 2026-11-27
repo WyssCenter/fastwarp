@@ -190,16 +190,17 @@ pub trait Backend: Sync {
     ) -> Result<MetricPair<Self::Field>>;
 
     /// [`Backend::mi_value_derivative_pair`] with image masks resolved on the grid of the two
-    /// images (zeros and ones): a voxel contributes only where both masks are not zero, the
-    /// intensity range of each image is measured over the voxels inside its own mask, and a voxel
-    /// that does not contribute has a zero derivative. The second direction swaps the masks with
-    /// the images. Fails when no voxel is inside both masks.
+    /// images (zeros and ones; `None` for a mask that was not given, every voxel inside it): a
+    /// voxel contributes only where both masks are not zero, the intensity range of each image is
+    /// measured over the voxels inside its own mask, and a voxel that does not contribute has a
+    /// zero derivative. The second direction swaps the masks with the images. Fails when no voxel
+    /// is inside both masks.
     async fn mi_value_derivative_pair_masked(
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
-        fixed_mask: &Self::Image,
-        moving_mask: &Self::Image,
+        fixed_mask: Option<&Self::Image>,
+        moving_mask: Option<&Self::Image>,
         bins: usize,
     ) -> Result<MetricPair<Self::Field>>;
 
@@ -227,8 +228,8 @@ pub trait Backend: Sync {
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
-        fixed_mask: &Self::Image,
-        moving_mask: &Self::Image,
+        fixed_mask: Option<&Self::Image>,
+        moving_mask: Option<&Self::Image>,
         bins: usize,
     ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
         let pair = self

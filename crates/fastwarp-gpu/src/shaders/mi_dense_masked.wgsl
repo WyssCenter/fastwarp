@@ -21,7 +21,7 @@
 // Portions derived from ITK `itkImageToImageMetricv4.hxx` (`TransformAndEvaluateFixedPoint`,
 // `TransformAndEvaluateMovingPoint`: a point outside the fixed or the moving mask is skipped) and
 // `itkMattesMutualInformationImageToImageMetricv4.hxx` (`Initialize`: each intensity range over the
-// voxels inside its own mask). See
+// voxels inside its own mask). A mask flagged absent in `u.cfg.z` has every voxel inside. See
 // `docs/THIRD_PARTY_PORTS.md`.
 
 @group(0) @binding(BINDING_FIXED_MASK) var<storage, read> fixed_mask: array<f32>;
@@ -29,9 +29,9 @@
 @group(0) @binding(BINDING_UNIFORM) var<uniform> u: DenseMiU;
 
 fn fixed_in(i: u32) -> bool {
-    return fixed_mask[i] != 0.0;
+    return (u.cfg.z & 1u) != 0u || fixed_mask[i] != 0.0;
 }
 
 fn moving_in(i: u32) -> bool {
-    return moving_mask[i] != 0.0;
+    return (u.cfg.z & 2u) != 0u || moving_mask[i] != 0.0;
 }

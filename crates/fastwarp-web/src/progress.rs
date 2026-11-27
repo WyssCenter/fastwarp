@@ -461,8 +461,8 @@ impl<B: Backend, E: Sync> Backend for Observed<'_, B, E> {
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
-        fixed_mask: &Self::Image,
-        moving_mask: &Self::Image,
+        fixed_mask: Option<&Self::Image>,
+        moving_mask: Option<&Self::Image>,
         bins: usize,
     ) -> Result<MetricPair<Self::Field>> {
         let out = self
@@ -489,8 +489,8 @@ impl<B: Backend, E: Sync> Backend for Observed<'_, B, E> {
         &self,
         fixed: &Self::Image,
         moving: &Self::Image,
-        fixed_mask: &Self::Image,
-        moving_mask: &Self::Image,
+        fixed_mask: Option<&Self::Image>,
+        moving_mask: Option<&Self::Image>,
         bins: usize,
     ) -> Result<(MetricPair<Self::Field>, [f64; 2])> {
         let (pair, norms) = self

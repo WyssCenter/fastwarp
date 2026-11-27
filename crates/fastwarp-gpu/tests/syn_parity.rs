@@ -17,7 +17,7 @@ use fastwarp_reg::backend::Backend;
 use fastwarp_reg::cpu::CpuBackend;
 use fastwarp_reg::field_ops::VectorField;
 use fastwarp_reg::linalg::{Vec3, IDENTITY3};
-use fastwarp_reg::recipe::SynRecipe;
+use fastwarp_reg::recipe::{SynMetric, SynRecipe};
 use fastwarp_reg::stages::{register_stages, InitialTransform, StagePlan};
 use fastwarp_reg::syn::{
     run_syn, run_syn_from, PriorWarp, SynChannel, SynOptions, SynResult, SynStart,
@@ -96,6 +96,8 @@ struct Comparison {
     consistency_cpu: f64,
     consistency_gpu: f64,
     max_energy_diff: f64,
+    first_energy: f64,
+    first_energy_diff: f64,
     iterations_cpu: Vec<usize>,
     iterations_gpu: Vec<usize>,
     inversion_steps_cpu: f64,
@@ -190,6 +192,9 @@ fn compare_n(
         consistency_cpu: inverse_consistency(p, &cpu),
         consistency_gpu: inverse_consistency(p, &g),
         max_energy_diff,
+        first_energy: cpu.levels[0].iterations[0].energy,
+        first_energy_diff: (cpu.levels[0].iterations[0].energy - g.levels[0].iterations[0].energy)
+            .abs(),
         iterations_cpu: cpu.levels.iter().map(|l| l.iterations.len()).collect(),
         iterations_gpu: g.levels.iter().map(|l| l.iterations.len()).collect(),
         inversion_steps_cpu: mean(&sc),
@@ -218,6 +223,10 @@ fn report(label: &str, c: &Comparison) {
         c.recovery_gpu,
         c.consistency_cpu,
         c.consistency_gpu
+    );
+    eprintln!(
+        "[{label}] first-iteration energy {:.9}, diff {:.3e}",
+        c.first_energy, c.first_energy_diff
     );
     eprintln!(
         "[{label}] max energy diff {:.3e}; iterations cpu {:?} gpu {:?}; mean inversion steps cpu {:.3} gpu {:.3}, max per-call difference {}; time cpu {:.2} s gpu {:.2} s",
@@ -310,6 +319,72 @@ fn masked_syn_matches_the_cpu_reference() {
     };
     let u = run_syn(&gpu, &unmasked, &ch, &p.initial, &SynOptions::default()).unwrap();
     assert_ne!(digest(&a), digest(&u), "the masks changed nothing");
+}
+
+#[test]
+fn mattes_syn_matches_the_cpu_reference_alone_mixed_and_masked() {
+    let Some(gpu) = backend() else { return };
+    let mut one = small_recipe(&[(2, 1.0, 20), (1, 0.0, 12)], 2);
+    one.convergence_threshold = -1.0;
+    one.channel_metrics = vec![SynMetric::Mattes];
+    one.gradient_step = 0.2;
+    let p24 = phantom(24, 2.0, 2.0);
+    let c = compare(&gpu, &p24, &one, false, &SynOptions::default());
+    report("blob 24^3 T1, MI", &c);
+    assert!(c.warp_rms_diff / c.warp_rms < 0.05, "warp field differs");
+    assert!((c.ncc_cpu - c.ncc_gpu).abs() < 2e-3);
+    assert!(c.recovery_gpu < 0.5 * c.initial_error);
+    assert!(c.first_energy_diff <= 1e-5 * c.first_energy.abs());
+    assert!(c.max_energy_diff < 1e-2);
+    assert_eq!(c.iterations_cpu, c.iterations_gpu);
+
+    let p16 = phantom(16, 2.0, 1.5);
+    let mut mixed = small_recipe(&[(2, 1.0, 12), (1, 0.0, 6)], 2);
+    mixed.convergence_threshold = -1.0;
+    mixed.channel_weights = vec![0.5, 0.5];
+    mixed.gradient_step = 0.2;
+    mixed.channel_metrics = vec![SynMetric::Cc, SynMetric::Mattes];
+    let fixed_only = SynRecipe {
+        fixed_mask: Some(mask_without_ball(p16.grid, [5.0, 3.0, -2.0], 5.0)),
+        ..mixed.clone()
+    };
+    let both = SynRecipe {
+        moving_mask: Some(mask_without_ball(p16.grid, [-4.0, 4.5, 3.5], 5.0)),
+        ..fixed_only.clone()
+    };
+    let mi_first = SynRecipe {
+        channel_metrics: vec![SynMetric::Mattes, SynMetric::Cc],
+        ..both.clone()
+    };
+    let mut p16s = phantom(16, 2.0, 1.5);
+    std::mem::swap(&mut p16s.fixed, &mut p16s.fixed2);
+    std::mem::swap(&mut p16s.moving, &mut p16s.moving2);
+    for (label, p, recipe) in [
+        ("blob 16^3 T1 CC + T2 MI", &p16, &mixed),
+        ("blob 16^3 T1 CC + T2 MI, fixed mask", &p16, &fixed_only),
+        ("blob 16^3 T1 CC + T2 MI, both masks", &p16, &both),
+        ("blob 16^3 T2 MI + T1 CC, both masks", &p16s, &mi_first),
+    ] {
+        let c = compare(&gpu, p, recipe, true, &SynOptions::default());
+        report(label, &c);
+        assert!(
+            c.warp_rms_diff / c.warp_rms < 0.05,
+            "{label}: warp field differs"
+        );
+        assert!((c.ncc_cpu - c.ncc_gpu).abs() < 2e-3, "{label}");
+        assert!(
+            c.first_energy_diff <= 1e-5 * c.first_energy.abs(),
+            "{label}: first iteration"
+        );
+        assert!(c.max_energy_diff < 1e-2, "{label}");
+        assert_eq!(c.iterations_cpu, c.iterations_gpu, "{label}");
+    }
+    let ch = channels(&p16, true);
+    let a = run_syn(&gpu, &both, &ch, &p16.initial, &SynOptions::default()).unwrap();
+    let b = run_syn(&gpu, &both, &ch, &p16.initial, &SynOptions::default()).unwrap();
+    assert_eq!(digest(&a), digest(&b));
+    let open = run_syn(&gpu, &mixed, &ch, &p16.initial, &SynOptions::default()).unwrap();
+    assert_ne!(digest(&a), digest(&open), "the masks changed nothing");
 }
 
 #[test]
@@ -474,7 +549,7 @@ fn a_syn_iteration_reads_back_four_scalar_blocks_with_one_channel_and_five_with_
 }
 
 fn capacity_plan_bounds_pool_peak(n: usize, moving_n: usize, factors: &[u32], iterations: u32) {
-    capacity_plan_bounds_pool_peak_with(n, moving_n, factors, iterations, false);
+    capacity_plan_bounds_pool_peak_with(n, moving_n, factors, iterations, false, false);
 }
 
 fn capacity_plan_bounds_pool_peak_with(
@@ -483,6 +558,7 @@ fn capacity_plan_bounds_pool_peak_with(
     factors: &[u32],
     iterations: u32,
     masked: bool,
+    mattes: bool,
 ) {
     let n_full = (n * n * n) as u64;
     let mut h = head([n, n, n], 2.0, 3.0);
@@ -520,6 +596,17 @@ fn capacity_plan_bounds_pool_peak_with(
                 });
             }
             recipe.channel_weights = vec![1.0 / channels as f64; channels];
+            if mattes {
+                recipe.channel_metrics = (0..channels)
+                    .map(|c| {
+                        if c % 2 == 1 || channels == 1 {
+                            SynMetric::Mattes
+                        } else {
+                            SynMetric::Cc
+                        }
+                    })
+                    .collect();
+            }
             recipe.convergence_threshold = -1.0;
             if with_masks {
                 recipe.fixed_mask = Some(mask_without_ball(h.grid, [20.0, 0.0, 10.0], 15.0));
@@ -540,11 +627,18 @@ fn capacity_plan_bounds_pool_peak_with(
             Some(gpu.peak_allocated_bytes())
         };
         let Some(peak) = peak_of(masked) else { return };
-        let plan =
-            plan_capacity_syn_masked([n; 3], [moving_n; 3], channels, factors, &mask_dims, &caps)
-                .unwrap();
+        let plan = plan_capacity_syn_masked(
+            [n; 3],
+            [moving_n; 3],
+            channels,
+            factors,
+            &mask_dims,
+            mattes,
+            &caps,
+        )
+        .unwrap();
         eprintln!(
-            "{n}^3 {factors:?} channels {channels} masked {masked}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
+            "{n}^3 {factors:?} channels {channels} masked {masked} mattes {mattes}: peak {peak} bytes = {:.1} B/voxel, planned {} bytes = {:.1} B/voxel",
             peak as f64 / n_full as f64,
             plan.level_total_bytes,
             plan.level_total_bytes as f64 / n_full as f64
@@ -597,12 +691,14 @@ fn the_capacity_plan_bounds_the_pool_peak_with_a_finer_moving_grid() {
 
 #[test]
 fn the_capacity_plan_bounds_the_pool_peak_of_a_masked_run() {
-    capacity_plan_bounds_pool_peak_with(96, 96, &[2, 1], 1, true);
-    capacity_plan_bounds_pool_peak_with(96, 191, &[2, 1], 1, true);
+    capacity_plan_bounds_pool_peak_with(96, 96, &[2, 1], 1, true, false);
+    capacity_plan_bounds_pool_peak_with(96, 191, &[2, 1], 1, true, false);
     for n in [24, 33, 48] {
-        capacity_plan_bounds_pool_peak_with(n, n, &[8, 4, 2, 1], 1, true);
-        capacity_plan_bounds_pool_peak_with(n, n, &[2, 1], 1, true);
+        capacity_plan_bounds_pool_peak_with(n, n, &[8, 4, 2, 1], 1, true, false);
+        capacity_plan_bounds_pool_peak_with(n, n, &[2, 1], 1, true, false);
     }
+    capacity_plan_bounds_pool_peak_with(96, 96, &[2, 1], 1, true, true);
+    capacity_plan_bounds_pool_peak_with(24, 24, &[8, 4, 2, 1], 1, true, true);
 }
 
 #[test]
@@ -779,6 +875,7 @@ fn stage_capacity<'a>(r: &'a SynRecipe, mask_dims: &'a [[usize; 3]]) -> SynStage
     SynStageCapacity {
         shrink_factors: &r.shrink_factors,
         mask_dims,
+        mattes: r.uses(SynMetric::Mattes),
     }
 }
 

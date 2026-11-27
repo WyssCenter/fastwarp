@@ -250,14 +250,15 @@ fn refusals_exit_2_before_reading_or_writing_anything() {
         ),
         (
             [
-                argv(&["-m", &format!("MI[{},{},1,32]", s(&f), s(&m))]),
+                argv(&["-m", &format!("MI[{},{},1,32,Regular,0.25]", s(&f), s(&m))]),
                 argv(&[
                     "-t", "SyN[0.1]", "-c", "5", "-f", "1", "-s", "0", "-o", &prefix,
                 ]),
             ]
             .concat(),
-            "fastwarp: error: ants-registration: metric MI in a SyN stage is not supported: \
-             FastWarp's SyN stage uses CC.",
+            "fastwarp: error: ants-registration: metric MI with Regular sampling in a SyN stage \
+             is not supported: FastWarp's SyN metrics are dense; leave the sampling strategy out \
+             or give None.",
         ),
         (
             [
@@ -1126,6 +1127,91 @@ fn registrations_agree_with_ants() {
         assert!(
             full_err < 0.5 && full_err < map_ratio * warp_noop,
             "{name}: forward map {full_err} mm, ANTs affine alone {warp_noop}"
+        );
+    }
+}
+
+/// The pair of [`moved_pair`] and its moving image in another contrast, `1.2 - 1.5 v^2`, which
+/// only a metric without a linear intensity relation registers.
+fn contrast_pair(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let (f, m) = moved_pair(dir, [24; 3], [2.0; 3]);
+    let moving = load(&m);
+    let other: Vec<f32> = moving
+        .data()
+        .iter()
+        .map(|v| (1.2 - 1.5 * v * v) as f32)
+        .collect();
+    let path = dir.join("m_contrast.nii.gz");
+    Volume::from_vec(*moving.grid(), other)
+        .unwrap()
+        .save_nifti(&path)
+        .unwrap();
+    (f, m, path)
+}
+
+#[test]
+#[ignore = "runs antsRegistration and antsApplyTransforms from FASTWARP_ANTS_DIR and needs a GPU; \
+            run with --ignored"]
+fn syn_with_mattes_agrees_with_ants() {
+    let reg = ants_program("antsRegistration");
+    let apply = ants_program("antsApplyTransforms");
+    require_gpu();
+    let d = tmp("syn_mattes");
+    let (f, same, m) = contrast_pair(&d);
+    let mi_syn = |extra: &[&str]| {
+        let mut v = argv(&[
+            "-t",
+            "SyN[0.2,3,0]",
+            "-m",
+            &format!("MI[{},{},1,32]", s(&f), s(&m)),
+        ]);
+        v.extend(argv(extra));
+        v.extend(argv(&[
+            "-c",
+            "[20x10,1e-6,10]",
+            "-f",
+            "2x1",
+            "-s",
+            "1x0vox",
+        ]));
+        v
+    };
+    let mixed = mi_syn(&["-m", &format!("CC[{},{},1,2]", s(&f), s(&same))]);
+    let cases: Vec<(&str, Vec<String>)> = vec![
+        (
+            "mattes",
+            [
+                com(&f, &m),
+                stages(&f, &m, &["Rigid", "Affine"]),
+                mi_syn(&[]),
+            ]
+            .concat(),
+        ),
+        ("mattes_only", [com(&f, &m), mi_syn(&[])].concat()),
+        ("mattes_and_cc", [com(&f, &m), mixed].concat()),
+    ];
+    let fixed = load(&f);
+    let inside = object_points(&fixed);
+    let identity = TransformChain::new();
+    for (name, args) in &cases {
+        let case = d.join(name);
+        let (theirs, mine) = run_both(&reg, &case, name, &|o| {
+            [args.clone(), both_outputs(o)].concat()
+        });
+        check_warped(&apply, name, &f, &m, &theirs, &mine);
+        let (ants_all, ants_linear) = maps(&theirs);
+        let (mine_all, _) = maps(&mine);
+        let full_err = rms_dist(&mine_all, &ants_all, &inside);
+        let warp_noop = rms_dist(&ants_linear, &ants_all, &inside);
+        let full_noop = rms_dist(&identity, &ants_all, &inside);
+        eprintln!(
+            "{name}: forward map RMS in the object {full_err:.3} mm (ANTs linear part alone \
+             {warp_noop:.3}, identity {full_noop:.3}); {} points",
+            inside.len()
+        );
+        assert!(
+            full_err < 0.25 && full_err < 0.1 * full_noop,
+            "{name}: forward map {full_err} mm, identity {full_noop}"
         );
     }
 }

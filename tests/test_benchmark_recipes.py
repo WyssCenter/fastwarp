@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 
 import pytest
 
-from benchmarks.accuracy import datasets, recipes, run
+from benchmarks.accuracy import datasets, post, recipes, run
 
 COHORT_ARGV = [
     "--dimensionality",
@@ -91,6 +92,10 @@ def test_recipes_are_copies_and_bad_inputs_are_refused():
     two["syn"]["channel_weights"] = [0.5, 0.5]
     with pytest.raises(ValueError, match="one channel"):
         recipes.ants_argv(two, "/f", "/m", "/o/")
+    mi = recipes.recipe("cohort")
+    mi["syn"]["channel_metrics"] = ["mi"]
+    with pytest.raises(ValueError, match="SyN on CC"):
+        recipes.ants_argv(mi, "/f", "/m", "/o/")
 
 
 def _ds(n: int, protocol: str = "pairwise") -> datasets.Dataset:
@@ -141,6 +146,45 @@ def test_engine_done_needs_ok_status_and_both_composites(tmp_path):
     assert not run.engine_done(folder, recipes.recipe("syn-sh"), 1.0)
     (folder / "reg_InverseComposite.h5").unlink()
     assert not run.engine_done(folder, rec, 1.0)
+
+
+def _old_style(rec: dict) -> dict:
+    old = copy.deepcopy(rec)
+    del old["syn"]["channel_metrics"], old["syn"]["mi_bins"]
+    return old
+
+
+def test_records_written_before_the_syn_metric_keys_still_count_as_done(tmp_path):
+    rec = recipes.recipe("cohort")
+    old = _old_style(rec)
+    assert old != rec and recipes.same_recipe(old, rec)
+    folder = tmp_path / "e"
+    folder.mkdir()
+    (folder / "reg_Composite.h5").write_bytes(b"x")
+    (folder / "reg_InverseComposite.h5").write_bytes(b"x")
+    (folder / "run.json").write_text(json.dumps({"status": "ok", "recipe": old, "iso_mm": 1.0}))
+    assert run.engine_done(folder, rec, 1.0)
+    assert not run.pair_stale({"recipe": old, "iso_mm": 1.0}, rec, 1.0)
+    assert post.same_config(post.config(old, 1.0), post.config(rec, 1.0))
+
+
+def test_a_genuinely_different_recipe_is_still_stale(tmp_path):
+    rec = recipes.recipe("cohort")
+    other = _old_style(recipes.recipe("syn-sh"))
+    mi = recipes.recipe("cohort")
+    mi["syn"]["channel_metrics"] = ["mi"]
+    folder = tmp_path / "e"
+    folder.mkdir()
+    (folder / "reg_Composite.h5").write_bytes(b"x")
+    (folder / "reg_InverseComposite.h5").write_bytes(b"x")
+    for different in (other, mi):
+        assert not recipes.same_recipe(different, rec)
+        record = {"status": "ok", "recipe": different, "iso_mm": 1.0}
+        (folder / "run.json").write_text(json.dumps(record))
+        assert not run.engine_done(folder, rec, 1.0)
+        assert run.pair_stale({"recipe": different, "iso_mm": 1.0}, rec, 1.0)
+        assert not post.same_config(post.config(different, 1.0), post.config(rec, 1.0))
+    assert run.pair_stale({"recipe": _old_style(rec), "iso_mm": 2.0}, rec, 1.0)
 
 
 def test_plan_counts_what_is_left(tmp_path):

@@ -442,6 +442,32 @@ def test_post_with_gzip_times_both_formats(tmp_path, monkeypatch):
     assert post.rows(work, "cohort", other) == []
 
 
+def test_results_stored_before_the_syn_metric_keys_are_reused(tmp_path, monkeypatch):
+    rec = recipes.recipe("cohort")
+    old = recipes.recipe("cohort")
+    del old["syn"]["channel_metrics"], old["syn"]["mi_bins"]
+    work = tmp_path / "work"
+    folder = _work_pair(work, "mindboggle", "OASIS-TRT-20-1__OASIS-TRT-20-2", old)
+    monkeypatch.setattr(post, "environment", _environment_after_cap)
+    kw = {"data": tmp_path, "work": work, "keys": ["mindboggle"], "pairs": 1, "threads": 2}
+    post.run_post(**kw, recipe_name="cohort", log=lambda s: None, **_stub_steps(0.5))
+    record = json.loads((folder / "post.json").read_text())
+    record["config"]["recipe"] = old
+    (folder / "post.json").write_text(json.dumps(record))
+    assert post.post_done(folder, post.config(rec, 1.0))
+    again = post.run_post(**kw, log=lambda s: None, **_stub_steps(0.5))
+    assert not any(r["ran"] for r in again)
+    assert len(timing.registration_rows(work, "cohort", rec)) == 2
+    assert post.rows(work, "cohort", rec) != []
+    p = run.plan(work=work, keys=["mindboggle"], recipe_name="cohort", pairs=1, quick=False)
+    assert p["datasets"]["mindboggle"]["to_run"] == {"fastwarp": 0, "ants": 0}
+    assert p["post"]["mindboggle"]["to_run"] == 0
+    other = recipes.recipe("syn-sh")
+    assert timing.registration_rows(work, "cohort", other) == []
+    assert post.rows(work, "cohort", other) == []
+    assert not post.post_done(folder, post.config(other, 1.0))
+
+
 def test_a_failing_fastwarp_step_is_recorded(tmp_path, monkeypatch):
     rec = recipes.recipe("cohort")
     folder = _work_pair(

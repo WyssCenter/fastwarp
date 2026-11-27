@@ -32,7 +32,9 @@ _SYN = {
     "update_field_variance": 3.0,
     "total_field_variance": 0.0,
     "cc_radius": 4,
+    "channel_metrics": ["cc"],
     "channel_weights": [1.0],
+    "mi_bins": 32,
     "iterations": [100, 70, 50, 20],
     "convergence_threshold": 1e-06,
     "convergence_window": 10,
@@ -59,6 +61,26 @@ def recipe(name: str) -> dict[str, dict[str, Any]]:
     if name not in RECIPES:
         raise ValueError(f"unknown recipe {name!r}; choose from {sorted(RECIPES)}")
     return copy.deepcopy(RECIPES[name])
+
+
+def normalized(rec: Any) -> Any:
+    """``rec`` with the SyN keys FastWarp added after a record was written (``channel_metrics``,
+    ``channel_weights``, ``mi_bins``) filled with their defaults, so that a stored record of the
+    same recipe compares equal."""
+    if not isinstance(rec, dict) or not isinstance(rec.get("syn"), dict):
+        return rec
+    out = copy.deepcopy(rec)
+    syn = out["syn"]
+    n = len(syn.get("channel_weights") or syn.get("channel_metrics") or [1.0])
+    syn.setdefault("channel_metrics", ["cc"] * n)
+    syn.setdefault("channel_weights", [1.0 / n] * n)
+    syn.setdefault("mi_bins", 32)
+    return out
+
+
+def same_recipe(a: Any, b: Any) -> bool:
+    """Whether two recipes are the same once :func:`normalized`."""
+    return normalized(a) == normalized(b)
 
 
 def _num(v: float | int) -> str:
@@ -129,6 +151,8 @@ def ants_argv(
     weights = rec["syn"]["channel_weights"]
     if len(weights) != 1:
         raise ValueError("the benchmark registers one channel (T1w)")
+    if rec["syn"]["channel_metrics"] != ["cc"]:
+        raise ValueError("the benchmark runs SyN on CC")
     argv = _head(fixed, moving, out_prefix, None)
     for name, transform in (("rigid", "Rigid"), ("affine", "Affine")):
         argv += _linear_stage(transform, rec[name], fixed, moving)

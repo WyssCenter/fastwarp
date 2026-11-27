@@ -33,6 +33,8 @@ def test_cohort_recipe_has_every_field():
     assert one["rigid"]["iterations"] == [1000, 500, 250, 100]
     assert one["syn"]["iterations"] == [100, 70, 50, 20]
     assert one["syn"]["cc_radius"] == 4 and one["rigid"]["bins"] == 32
+    assert one["syn"]["channel_metrics"] == ["cc"] and one["syn"]["mi_bins"] == 32
+    assert two["syn"]["channel_metrics"] == ["cc", "cc"]
     assert g.cohort_recipe(5)["syn"]["channel_weights"] == [0.2] * 5
     with pytest.raises(ValueError, match="channels must be at least 1"):
         g.cohort_recipe(0)
@@ -72,6 +74,26 @@ def test_an_override_runs_and_is_reported(tmp_path):
     assert abs(info["affine_parameters"][9] - SHIFT_MM[0]) < 0.3
 
 
+@needs_gpu
+def test_a_mattes_syn_stage_runs_and_is_reported(tmp_path):
+    recipe = {
+        "syn": {
+            "iterations": [30, 10, 5],
+            "shrink_factors": [4, 2, 1],
+            "smoothing_sigmas": [2.0, 1.0, 0.0],
+            "channel_metrics": ["mi"],
+            "mi_bins": 24,
+        },
+    }
+    info = g.register_syn(
+        phantom(), phantom(SHIFT_MM), tmp_path / "mi_", iso_mm=SPACING, recipe=recipe
+    )
+    ran = info["recipe"]["syn"]
+    assert ran["channel_metrics"] == ["mi"] and ran["mi_bins"] == 24
+    assert [lvl[0] for lvl in info["levels"]] == [0, 1, 2]
+    assert Path(f"{tmp_path / 'mi_'}Composite.h5").is_file()
+
+
 def _bad(**stages):
     r = copy.deepcopy(g.cohort_recipe(1))
     for stage, fields in stages.items():
@@ -93,6 +115,9 @@ def _bad(**stages):
         (_bad(syn={"cc_radius": 9}), "1 to 8"),
         (_bad(syn={"cc_radius": 0}), "CC radius"),
         (_bad(syn={"channel_weights": [0.5, 0.5]}), "2 weights for 1 channel"),
+        (_bad(syn={"channel_metrics": ["mattes"]}), "'cc' or 'mi'"),
+        (_bad(syn={"channel_metrics": ["mi"], "mi_bins": 64}), "5 to 32"),
+        (_bad(syn={"channel_metrics": ["cc", "mi"]}), "2 metrics for 1 channel"),
         (_bad(syn={"sigma_units": "px"}), "'vox' or 'mm'"),
         (_bad(rigid={"sampling_percentage": 1.5}), "sampling percentage"),
         (_bad(syn={"gradient_step": 0.0}), "gradient step"),

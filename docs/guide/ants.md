@@ -34,7 +34,7 @@ Three rules hold for every argument:
 - **Refused before any work.** An argument that would change the result and that FastWarp does
   not support raises {class}`fastwarp.ants.UnsupportedArgument` (a `ValueError`) before the GPU
   is opened and before any transform file is written (the output folder may already exist). The message names the argument, its value and the reason:
-  `fastwarp.ants.registration: syn_metric='mattes' is not supported: ...`.
+  `fastwarp.ants.registration: syn_metric='meansquares' is not supported: ...`.
 - **Ignored only where ANTsPy ignores it.** ANTsPy ignores some arguments for some types (for
   example `aff_iterations` for `SyNCC`); FastWarp ignores them too and warns with a
   `UserWarning`.
@@ -51,9 +51,8 @@ Three rules hold for every argument:
 | `Rigid`, `Affine`, `AffineFast`, `BOLDAffine`, `QuickRigid`, `DenseRigid`, `BOLDRigid` | Runs. |
 | `SyNCC`, `SyNabp` | Runs. |
 | `antsRegistrationSyN[r]`, `[a]`, `[s]`, `[sr]`, `[so]` (and without brackets, `[s]`) | Runs. ANTsPy 0.6.3 uses CC radius 2 even when the type names another (`[s,4]`), and so does FastWarp, with a warning. |
-| `antsRegistrationSyNQuick[r]`, `[a]` | Runs. |
-| `SyN`, `SyNRA`, `SyNOnly`, `SyNAggro`, `SyNLessAggro`, `ElasticSyN`, `SyNBold`, `SyNBoldAff` | Runs with `syn_metric="CC"` and `syn_sampling` (the CC radius) from 1 to 8. With ANTsPy's default `syn_metric="mattes"` it is refused: FastWarp's SyN stage has no Mattes mutual information metric. **The default call `registration(fixed, moving)` is therefore refused; use `"SyNCC"`, or `syn_metric="CC"`.** |
-| `antsRegistrationSyNQuick[s]`, `[sr]`, `[so]` | Refused: Mattes mutual information in the SyN stage. |
+| `antsRegistrationSyNQuick[r]`, `[a]`, `[s]`, `[sr]`, `[so]` | Runs, with Mattes mutual information (32 bins, dense) in the SyN stage, as ANTsPy builds it. A number in the brackets (`[s,4]`) has no effect, in ANTsPy too; FastWarp warns. |
+| `SyN`, `SyNRA`, `SyNOnly`, `SyNAggro`, `SyNLessAggro`, `ElasticSyN`, `SyNBold`, `SyNBoldAff` | Runs, with ANTsPy's default `syn_metric="mattes"` (Mattes mutual information, `syn_sampling` histogram bins from 5 to 32) or with `syn_metric="CC"` (`syn_sampling` the CC radius, 1 to 8). The default call `registration(fixed, moving)` runs. |
 | `Translation`, `Similarity`, `TRSAA`, `antsRegistrationSyN[t]` | Refused: no Translation or Similarity transform. |
 | `antsRegistrationSyN[b]`, `[br]`, `[bo]` | Refused: no BSplineSyN transform. |
 | `antsRegistrationSyNRepro[...]`, `antsRegistrationSyNQuickRepro[...]` | Refused: no GC metric. |
@@ -80,12 +79,12 @@ SyN followed by one restricted to a region of the template, use a stage-list rec
 | `aff_metric` | `"mattes"` (or `"MI"`); `"GC"` and `"meansquares"` are refused. |
 | `aff_sampling` | `32` only (the GPU's histogram bins). |
 | `aff_random_sampling_rate` | Any value in (0, 1]; samples on a regular grid, as ANTsPy asks. |
-| `syn_metric`, `syn_sampling` | `"CC"` with a radius from 1 to 8. |
+| `syn_metric`, `syn_sampling` | `"mattes"` (or `"MI"`) with 5 to 32 histogram bins, dense as in ANTsPy, or `"CC"` with a radius from 1 to 8. `"meansquares"` and `"demons"` are refused. |
 | `reg_iterations` | 1 to 10 levels; shrink factors and sigmas follow as in ANTsPy. |
 | `aff_iterations`, `aff_shrink_factors`, `aff_smoothing_sigmas` | As in ANTsPy for the linear types. A list is taken like a tuple; ANTsPy builds a broken argument from a list. |
 | `write_composite_transform` | `Composite.h5` and `InverseComposite.h5` only, as ANTs writes them. |
 | `verbose` | Prints the `antsRegistration` arguments (images by their argument names) and FastWarp's report of the run. |
-| `multivariate_extras` | One or more `("CC", fixed2, moving2, weight, radius)` with the main CC radius, for `SyNOnly` and `antsRegistrationSyN[s|sr|so]`: a further channel each. Each `fixed2` must lie on `fixed`'s grid. Other metrics are refused. |
+| `multivariate_extras` | One or more `("CC", fixed2, moving2, weight, radius)` or `("mattes", fixed2, moving2, weight, bins)`, for `SyNOnly`, `antsRegistrationSyN[s|sr|so]` and `antsRegistrationSyNQuick[s|sr|so]`: a further channel each. All CC channels of the stage share one radius and all mattes channels one number of bins. Each `fixed2` must lie on `fixed`'s grid. Other metrics are refused. |
 | `restrict_transformation` | All ones only (no restriction). |
 | `smoothing_in_mm` | As in ANTsPy, for the linear types. |
 | `singleprecision` | Accepted; the GPU computes in `float32` either way. `True` (the default) writes `float32` warp fields, `False` `float64`, as ANTs does. |

@@ -64,6 +64,7 @@ pub fn selftest_json(record: &SelfTestRecord) -> Value {
         "mi_attempts": record.mi_attempts,
         "lines": record.lines,
         "first_attempt_failures": record.first_attempt_failures,
+        "mi_dense_failure": record.mi_dense_failure,
     })
 }
 
@@ -121,9 +122,11 @@ mod tests {
             mi_attempts: 1,
             lines: vec!["ok".into()],
             first_attempt_failures: Vec::new(),
+            mi_dense_failure: Some("mismatch".into()),
         };
         let v = selftest_json(&record);
         assert_eq!(v["attempts"], 1);
         assert_eq!(v["lines"][0], "ok");
+        assert_eq!(v["mi_dense_failure"], "mismatch");
     }
 }

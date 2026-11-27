@@ -44,7 +44,14 @@ fn check(sel: &BackendSelect) -> Result<(), GpuError> {
         );
         assert_eq!(ctx.caps.max_buffer_size, defaults.max_buffer_size);
         assert!(!ctx.features.contains(wgpu::Features::TIMESTAMP_QUERY));
-        WgpuBackend::from_context(ctx).map(drop)
+        WgpuBackend::from_context(ctx).map(|b| {
+            let record = b.selftest_record();
+            assert!(
+                record.mi_dense_failure.is_none(),
+                "the dense Mattes kernels fail under the WebGPU default limits: {:?}",
+                record.mi_dense_failure
+            );
+        })
     })?;
     GpuContext::new_with_webgpu_default_limits(sel, GpuN4::from_context).map(drop)
 }

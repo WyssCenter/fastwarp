@@ -25,9 +25,11 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
   through their collapsed field rather than one after the other as in ANTs (see
   [Several SyN stages](recipes.md#several-syn-stages)).
 - **Two metrics, with limited settings.** {term}`Mattes mutual information` with exactly 32
-  histogram bins and regularly spaced samples for the linear stages, and
-  {term}`cross-correlation` with a window radius from 1 to 8 voxels for SyN. ANTs' other metrics (`MeanSquares`, `GC`, `Demons`,
-  random sampling) are not available.
+  histogram bins and regularly spaced samples for the linear stages; for SyN, per channel,
+  {term}`cross-correlation` with a window radius from 1 to 8 voxels or Mattes mutual information
+  with 5 to 32 bins and dense sampling. All CC channels of a SyN stage share one radius and all MI
+  channels one number of bins. ANTs' other metrics (`MeanSquares`, `GC`, `Demons`), random
+  sampling, and sampled metrics in SyN stages are not available.
 - **Fixed preparation.** {func}`~fastwarp.register_syn` always works on an isotropic
   {term}`registration grid` and never matches histograms. It either
   {term}`winsorizes <winsorize>` the intensities to the quantiles the recipe gives, or only
@@ -61,8 +63,8 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
   a transform list; use the inverse file FastWarp writes, such as `InverseComposite.h5` or
   `1InverseWarp.nii.gz`.
 - **ANTsPy only in part.** [`fastwarp.ants`](ants.md) runs ANTsPy's registration and
-  resampling calls within these limits and refuses the rest; ANTsPy's default
-  `type_of_transform="SyN"` needs Mattes mutual information in SyN and is refused.
+  resampling calls within these limits, including the default `registration(fixed, moving)`,
+  and refuses the rest.
 - **Label fusion on the CPU by default.** {func}`~fastwarp.joint_label_fusion` runs on the CPU;
   `mode="hybrid"` and `"gpu"` move the search (and with `"gpu"` the weights and votes) to the
   GPU, which can rank near-tied patches differently and rounds in `float32`

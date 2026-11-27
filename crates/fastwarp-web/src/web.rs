@@ -369,6 +369,7 @@ async fn run(fixed: Vec<u8>, moving: Vec<u8>, options_json: &str) -> Result<Uint
             max_buffer_size: caps.max_buffer_size,
             max_storage_buffer_binding_size: caps.max_storage_buffer_binding_size,
         },
+        mi_unavailable: backend.selftest_record().mi_dense_failure,
         adapter: adapter_json(&backend),
         zip_time: Some(local_time()),
         on_plan: Some(Box::new(|plan: &Value| keep(&PLAN, Some(plan.clone())))),
