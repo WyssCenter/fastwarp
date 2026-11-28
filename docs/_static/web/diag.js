@@ -8,7 +8,7 @@ const RUN_PREFIX = "fastwarp-demo-run:";
 const HEARTBEAT_MS = 120000;
 const UNFINISHED_KEY = "fastwarp-demo-unfinished";
 const CHANNEL = "fastwarp-demo";
-const PING_MS = 400;
+const PING_MS = 1000;
 
 function wellFormed(s) {
   if (typeof s.toWellFormed === "function") return s.toWellFormed();
@@ -436,7 +436,8 @@ function readRecord(text) {
 export function saveRun(record) {
   const s = storage();
   openChannel();
-  if (s) attempt(() => s.setItem(RUN_PREFIX + tab, JSON.stringify({ ...record, tab, beat: Date.now() })));
+  const visible = attempt(() => globalThis.document?.visibilityState === "visible") ?? false;
+  if (s) attempt(() => s.setItem(RUN_PREFIX + tab, JSON.stringify({ ...record, tab, beat: Date.now(), visible })));
 }
 
 export function beginRun(record) {
@@ -469,7 +470,8 @@ export async function takeUnfinished({ now = Date.now(), wait = PING_MS } = {}) 
   for (const run of runs) run.record = readRecord(run.text);
   const recent = (r) => now - (r.record.beat ?? 0) < HEARTBEAT_MS;
   const alive = runs.length ? await aliveTabs(wait) : new Set();
-  const live = (r) => r.record && (alive ? alive.has(r.record.tab) : recent(r));
+  const quiet = (r) => !r.record.visible && recent(r);
+  const live = (r) => r.record && (alive ? alive.has(r.record.tab) || quiet(r) : recent(r));
   const dead = runs.filter((r) => !live(r));
   let newest = attempt(() => readRecord(s.getItem(UNFINISHED_KEY)));
   let newestText = null;
@@ -482,8 +484,24 @@ export async function takeUnfinished({ now = Date.now(), wait = PING_MS } = {}) 
   const saved = !newestText || attempt(() => s.setItem(UNFINISHED_KEY, newestText) ?? true);
   if (saved) for (const run of dead) attempt(() => s.removeItem(run.key));
   if (!newest) return null;
-  const { tab: _tab, beat: _beat, ...record } = newest;
+  const { tab: _tab, beat: _beat, visible: _visible, ...record } = newest;
   return record;
+}
+
+export function staleIn(now = Date.now()) {
+  const s = storage();
+  if (!s) return null;
+  return attempt(() => {
+    let next = null;
+    for (let i = 0; i < s.length; i++) {
+      const key = s.key(i);
+      if (!key?.startsWith(RUN_PREFIX) || key === RUN_PREFIX + tab) continue;
+      const beat = readRecord(s.getItem(key))?.beat ?? 0;
+      const left = Math.max(0, beat + HEARTBEAT_MS - now);
+      next = next == null ? left : Math.min(next, left);
+    }
+    return next;
+  });
 }
 
 export function dismissUnfinished() {

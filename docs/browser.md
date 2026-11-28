@@ -195,7 +195,9 @@ GPUs. One image pair only: several channels, masks and other recipes need the
 When the page cannot use WebGPU, or a run fails or makes no progress for three minutes, the page
 says what happened and what to try, and offers a diagnostic report. When the browser
 stopped a run by closing the page (phones do this when a tab needs too much memory), the page says
-so the next time you open it, at the top of the demo, and after a 1 mm run selects the 2 mm grid.
+so at the top of the demo when you open it again, and after a 1 mm run selects the 2 mm grid. A
+run that was last seen in a hidden tab is reported once it has been quiet for two minutes, as such
+a tab may only be paused.
 Closing, reloading or leaving the page yourself during a run leaves no note. Starting a run or
 **Dismiss** removes the note. A run in a tab the browser has put to sleep in the background can be
 reported as stopped.

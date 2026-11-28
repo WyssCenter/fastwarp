@@ -15,6 +15,7 @@ import {
   platformOf,
   reportText,
   saveRun,
+  staleIn,
   stageText,
   supportHint,
   takeUnfinished,
@@ -919,6 +920,16 @@ function showUnfinished(previous) {
   showReport("UnfinishedRun", `the page closed during ${stageText(previous.stage)}`, { tone: "warning", dismiss: true });
 }
 
+async function checkUnfinished() {
+  const previous = await takeUnfinished();
+  if (previous && !state.running && JSON.stringify(previous) !== JSON.stringify(diag.previous)) {
+    diag.previous = previous;
+    showUnfinished(previous);
+  }
+  const wait = staleIn();
+  if (wait != null) setTimeout(checkUnfinished, Math.max(wait, 10000) + 1000);
+}
+
 function setupReports() {
   el("fw-copy").addEventListener("click", () => {
     if (diag.report) copyText(() => reportText(safeReport(diag.report.kind, diag.report.text)), el("fw-copy-state"));
@@ -928,10 +939,11 @@ function setupReports() {
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) state.progressAt = performance.now();
+    if (state.running) crumb();
   });
   el("fw-report-box").addEventListener("toggle", refreshReport);
   window.addEventListener("pagehide", (e) => {
-    if (!e.persisted && state.running) endRun(false);
+    if (!e.persisted && state.running && document.visibilityState === "visible") finish("left");
   });
   el("fw-dismiss").addEventListener("click", () => {
     dismissUnfinished();
@@ -998,8 +1010,7 @@ async function main() {
   setupReports();
   updateButtons();
 
-  diag.previous = await takeUnfinished();
-  if (diag.previous) showUnfinished(diag.previous);
+  await checkUnfinished();
 
   if (!pageGpu) {
     state.gpu = "failed";

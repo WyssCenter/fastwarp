@@ -60,7 +60,7 @@ Object.defineProperty(globalThis, "BroadcastChannel", { value: LocalChannel, con
 
 const source = readFileSync(new URL("../docs/_static/web/diag.js", import.meta.url), "utf8");
 const load = (tag) => import(`data:text/javascript,${encodeURIComponent(`${source}\n//${tag}`)}`);
-const { beginRun, endRun, saveRun, takeUnfinished } = await load("main");
+const { beginRun, endRun, saveRun, staleIn, takeUnfinished } = await load("main");
 
 const RUN = "fastwarp-demo-run:";
 const NOTE = "fastwarp-demo-unfinished";
@@ -89,7 +89,7 @@ beforeEach(() => {
 test("a run that stopped replaces an older note", async () => {
   const now = Date.now();
   put(NOTE, { started_utc: "old", grid: "1mm", tab: "a", beat: now - 86400000 });
-  put(RUN + "b", { started_utc: "new", grid: "1mm", stage: { phase: "syn" }, tab: "b", beat: now - 5000 });
+  put(RUN + "b", { started_utc: "new", grid: "1mm", stage: { phase: "syn" }, tab: "b", beat: now - 125000 });
   const previous = await takeUnfinished({ now, wait: WAIT });
   assert.equal(previous.started_utc, "new");
   assert.equal(previous.tab, undefined);
@@ -100,7 +100,7 @@ test("a run that stopped replaces an older note", async () => {
 
 test("the newest of several stopped runs becomes the note", async () => {
   const now = Date.now();
-  put(RUN + "c", { started_utc: "newest", tab: "c", beat: now - 1000 });
+  put(RUN + "c", { started_utc: "newest", tab: "c", beat: now - 130000 });
   put(RUN + "b", { started_utc: "older", tab: "b", beat: now - 300000 });
   const previous = await takeUnfinished({ now, wait: WAIT });
   assert.equal(previous.started_utc, "newest");
@@ -141,7 +141,7 @@ test("without BroadcastChannel a run with a recent heartbeat counts as live", as
 
 test("a note that cannot be written is still shown, and the run record is kept", async () => {
   const now = Date.now();
-  put(RUN + "b", { started_utc: "new", tab: "b", beat: now - 5000 });
+  put(RUN + "b", { started_utc: "new", tab: "b", beat: now - 125000 });
   const setItem = store.setItem;
   store.setItem = () => {
     throw new Error("QuotaExceededError");
@@ -184,6 +184,27 @@ test("a finished run removes a note about itself and keeps one about another run
   put(NOTE, { started_utc: "paused", tab: own, beat: 1 });
   endRun(true);
   assert.deepEqual(keys(), []);
+});
+
+test("a run that does not answer although its page was visible is taken at once", async () => {
+  const now = Date.now();
+  put(RUN + "gone", { started_utc: "gone", tab: "gone", beat: now - 2000, visible: true });
+  const previous = await takeUnfinished({ now, wait: WAIT });
+  assert.equal(previous.started_utc, "gone");
+  assert.equal(previous.visible, undefined);
+  assert.deepEqual(keys(), [NOTE]);
+});
+
+test("a hidden run that does not answer is taken only once its heartbeat is old", async () => {
+  const now = Date.now();
+  put(RUN + "quiet", { started_utc: "quiet", tab: "quiet", beat: now - 20000, visible: false });
+  assert.equal(await takeUnfinished({ now, wait: WAIT }), null);
+  assert.deepEqual(keys(), [RUN + "quiet"]);
+  assert.equal(staleIn(now), 100000);
+  const later = now + 101000;
+  assert.equal((await takeUnfinished({ now: later, wait: WAIT })).started_utc, "quiet");
+  assert.deepEqual(keys(), [NOTE]);
+  assert.equal(staleIn(later), null);
 });
 
 test("a run whose tab still answers is left alone even with an old heartbeat", async () => {

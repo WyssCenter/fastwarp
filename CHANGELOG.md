@@ -19,7 +19,8 @@
   did not record later runs: the page took the record of the stopped run for a run still going on in
   another tab. A page now asks its other open tabs whether they still run, starting a run
   removes the old note, so the note always describes the latest run that stopped, and leaving the
-  page during a run no longer leaves a note. The note at the
+  page during a run no longer leaves a note. A run whose visible page does not answer counts as
+  stopped at once; one last seen in a hidden tab only after two minutes without a heartbeat. The note at the
   top of the demo now says that the browser stopped the run, most likely because the device ran out
   of memory, suggests the 2 mm grid (and selects it after a 1 mm run) or a computer, and offers the
   report.
