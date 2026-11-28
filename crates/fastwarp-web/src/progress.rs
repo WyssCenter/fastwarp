@@ -14,7 +14,7 @@ use fastwarp_reg::field_ops::{InvertParams, InvertStats, VectorField};
 use fastwarp_reg::linear::{LinearEngine, LinearKind, PreparedSamples};
 use fastwarp_reg::optimizer::LinearMetric;
 use fastwarp_reg::stages::StagePlan;
-use fastwarp_reg::transform::{AffineTransform, LinearMovingTransform};
+use fastwarp_reg::transform::{AffineTransform, DisplacementField, LinearMovingTransform};
 use fastwarp_reg::{Backend, Grid, Result, Volume};
 use serde_json::{json, Value};
 
@@ -344,6 +344,10 @@ impl<B: Backend, E: Sync> Backend for Observed<'_, B, E> {
 
     async fn download_field(&self, field: &Self::Field) -> Result<VectorField> {
         self.backend.download_field(field).await
+    }
+
+    async fn download_displacement_field(&self, field: &Self::Field) -> Result<DisplacementField> {
+        self.backend.download_displacement_field(field).await
     }
 
     fn field_grid(&self, field: &Self::Field) -> Grid {

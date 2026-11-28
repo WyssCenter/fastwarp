@@ -45,7 +45,7 @@ use fastwarp_reg::field_ops::{
 use fastwarp_reg::grid::Grid;
 use fastwarp_reg::linalg::{mat3_inverse, mat3_mul, mat3_mul_vec, Mat3, Vec3, IDENTITY3};
 use fastwarp_reg::metric::cc::NO_VOXEL_IN_MASKS;
-use fastwarp_reg::transform::AffineTransform;
+use fastwarp_reg::transform::{AffineTransform, DisplacementField};
 use fastwarp_reg::volume::Volume;
 use rayon::prelude::*;
 
@@ -2004,6 +2004,46 @@ impl Backend for WgpuBackend {
             })
             .collect();
         VectorField::from_vec(field.grid, vectors)
+    }
+
+    async fn download_displacement_field(&self, field: &GpuField) -> RegResult<DisplacementField> {
+        let n = field.grid.num_voxels();
+        self.field_downloads.fetch_add(1, Ordering::Relaxed);
+        if !WEB {
+            let mut values = vec![0.0f32; 3 * n];
+            let out = &mut values;
+            self.ctx
+                .read_bytes_with_async(field.buf.buffer(), (3 * n * 4) as u64, move |bytes| {
+                    let owned: Vec<f32>;
+                    let data: &[f32] = match bytemuck::try_cast_slice(bytes) {
+                        Ok(d) => d,
+                        Err(_) => {
+                            owned = bytemuck::pod_collect_to_vec(bytes);
+                            &owned
+                        }
+                    };
+                    out.par_chunks_mut(3).enumerate().for_each(|(i, v)| {
+                        v[0] = data[i];
+                        v[1] = data[n + i];
+                        v[2] = data[2 * n + i];
+                    });
+                })
+                .await
+                .map_err(gerr)?;
+            return DisplacementField::new(field.grid, values);
+        }
+        let data = self
+            .ctx
+            .read_f32_async(field.buf.buffer(), 3 * n)
+            .await
+            .map_err(gerr)?;
+        let mut values = vec![0.0f32; 3 * n];
+        values.par_chunks_mut(3).enumerate().for_each(|(i, v)| {
+            v[0] = data[i];
+            v[1] = data[n + i];
+            v[2] = data[2 * n + i];
+        });
+        DisplacementField::new(field.grid, values)
     }
 
     async fn copy_field(&self, field: &GpuField) -> RegResult<GpuField> {

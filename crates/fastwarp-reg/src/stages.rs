@@ -54,10 +54,13 @@ use crate::linear::{
 };
 use crate::recipe::SynRecipe;
 use crate::register::{
-    check_winsorize, prepare_channels_with, LinearPlan, PreparedChannels, RegisterTimings,
-    WINSORIZE_LOWER, WINSORIZE_UPPER,
+    check_winsorize, prepare_channels_owned, prepare_channels_with, LinearPlan, PreparedChannels,
+    RegisterTimings, WINSORIZE_LOWER, WINSORIZE_UPPER,
 };
-use crate::syn::{run_syn_stage_cached_async, PriorWarp, SynLevelTrace, SynOptions, SynStart};
+use crate::syn::{
+    run_syn_last_stage_cached_async, run_syn_stage_cached_async, PriorWarp, SynLevelTrace,
+    SynOptions, SynStart,
+};
 use crate::transform::ants_io::{
     with_suffix, AFFINE_SUFFIX, COMPOSITE_SUFFIX, INVERSE_COMPOSITE_SUFFIX, INVERSE_WARP_SUFFIX,
     WARP_SUFFIX,
@@ -292,29 +295,80 @@ pub async fn register_stages_async<B: Backend, E: LinearEngine>(
     iso_mm: Option<f64>,
     options: &SynOptions<'_>,
 ) -> Result<StagesOutput> {
+    check_stage_channels(plan, fixed.len())?;
+    let mut timings = RegisterTimings::default();
+    let prepared = prepare_channels_with(fixed, moving, iso_mm, plan.winsorize, &mut timings)?;
+    run_prepared_stages(backend, engine, plan, prepared, timings, options, true).await
+}
+
+/// [`register_stages_async`] taking the images by value, for a caller with little memory: an
+/// image already on the registration grid is used without a copy, and each input is dropped as
+/// soon as the stages no longer need it. With `warp_moving` false the moving image is not warped
+/// onto the registration grid, so it is dropped after the start transform: `warped` is then a
+/// zero volume of one voxel and `timings.warp_s` is 0. The transforms are the same as those of
+/// [`register_stages_async`].
+#[allow(clippy::too_many_arguments)]
+pub async fn register_stages_owned_async<B: Backend, E: LinearEngine>(
+    backend: &B,
+    engine: &E,
+    plan: &StagePlan,
+    fixed: Vec<Volume<f64>>,
+    moving: Vec<Volume<f64>>,
+    iso_mm: Option<f64>,
+    options: &SynOptions<'_>,
+    warp_moving: bool,
+) -> Result<StagesOutput> {
+    check_stage_channels(plan, fixed.len())?;
+    let mut timings = RegisterTimings::default();
+    let prepared = prepare_channels_owned(fixed, moving, iso_mm, plan.winsorize, &mut timings)?;
+    run_prepared_stages(
+        backend,
+        engine,
+        plan,
+        prepared,
+        timings,
+        options,
+        warp_moving,
+    )
+    .await
+}
+
+fn check_stage_channels(plan: &StagePlan, channels: usize) -> Result<()> {
     plan.validate()?;
     if plan
         .syn
         .iter()
-        .any(|syn| syn.channel_weights.len() != fixed.len())
+        .any(|syn| syn.channel_weights.len() != channels)
     {
         return Err(invalid(
             "stage plan",
             "the number of channels differs from the number of channel weights",
         ));
     }
-    if plan.syn.is_empty() && fixed.len() > 1 {
+    if plan.syn.is_empty() && channels > 1 {
         return Err(invalid(
             "stage plan",
             "a plan without a SyN stage registers one channel; the linear stages use the first",
         ));
     }
-    let mut timings = RegisterTimings::default();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_prepared_stages<B: Backend, E: LinearEngine>(
+    backend: &B,
+    engine: &E,
+    plan: &StagePlan,
+    prepared: PreparedChannels,
+    mut timings: RegisterTimings,
+    options: &SynOptions<'_>,
+    warp_moving: bool,
+) -> Result<StagesOutput> {
     let PreparedChannels {
         channels,
         fixed_raw,
         moving_raw,
-    } = prepare_channels_with(fixed, moving, iso_mm, plan.winsorize, &mut timings)?;
+    } = prepared;
     let t = Stopwatch::start();
     let initial = match plan.initial {
         InitialTransform::CentreOfMass => {
@@ -322,6 +376,11 @@ pub async fn register_stages_async<B: Backend, E: LinearEngine>(
         }
         InitialTransform::Identity => AffineTransform::identity(),
         InitialTransform::Affine(a) => a,
+    };
+    drop(fixed_raw);
+    let moving_first = match moving_raw.into_iter().next() {
+        Some(m) => warp_moving.then_some(m),
+        None => return Err(invalid("register", "no moving channel")),
     };
     let mut cache = SmoothCache::default();
     let (linear, total) = run_linear_stages_async(
@@ -335,13 +394,9 @@ pub async fn register_stages_async<B: Backend, E: LinearEngine>(
     )
     .await?;
     timings.linear_s = t.elapsed().as_secs_f64();
-    drop(fixed_raw);
-    let moving_first = moving_raw
-        .into_iter()
-        .next()
-        .ok_or_else(|| invalid("register", "no moving channel"))?;
     let t = Stopwatch::start();
     let mut prior: Option<PriorWarp> = None;
+    let mut fields = None;
     let mut syn_levels = Vec::with_capacity(plan.syn.len());
     for (i, recipe) in plan.syn.iter().enumerate() {
         if i > 0 || !plan.linear.is_empty() {
@@ -351,44 +406,61 @@ pub async fn register_stages_async<B: Backend, E: LinearEngine>(
             affine: &total,
             prior: prior.as_ref(),
         };
-        let out = run_syn_stage_cached_async(
-            backend,
-            recipe,
-            &channels,
-            start,
-            options,
-            Some(&mut cache),
-        )
-        .await?;
-        prior = Some(PriorWarp {
-            warp: out.warp,
-            inverse_warp: out.inverse_warp,
-        });
-        syn_levels.push(out.levels);
+        if i + 1 == plan.syn.len() {
+            let (warp, inverse_warp, levels) = run_syn_last_stage_cached_async(
+                backend,
+                recipe,
+                &channels,
+                start,
+                options,
+                Some(&mut cache),
+            )
+            .await?;
+            fields = Some((warp, inverse_warp));
+            syn_levels.push(levels);
+        } else {
+            let out = run_syn_stage_cached_async(
+                backend,
+                recipe,
+                &channels,
+                start,
+                options,
+                Some(&mut cache),
+            )
+            .await?;
+            prior = Some(PriorWarp {
+                warp: out.warp,
+                inverse_warp: out.inverse_warp,
+            });
+            syn_levels.push(out.levels);
+        }
     }
+    drop(prior);
     drop(cache);
-    let pair = match prior {
-        Some(p) => {
+    let grid = *channels[0].fixed.grid();
+    drop(channels);
+    let pair = match fields {
+        Some((warp, inverse_warp)) => {
             timings.syn_s = t.elapsed().as_secs_f64();
-            CompositePair::new(
-                &total,
-                p.warp.to_displacement_field()?,
-                p.inverse_warp.to_displacement_field()?,
-            )?
+            CompositePair::new(&total, warp, inverse_warp)?
         }
         None => CompositePair::linear(&total)?,
     };
-    let grid = *channels[0].fixed.grid();
-    drop(channels);
-    let t = Stopwatch::start();
-    let warped = apply_chain(
-        &moving_first,
-        &grid,
-        &pair.forward,
-        Interpolation::Linear,
-        0.0,
-    )?;
-    timings.warp_s = t.elapsed().as_secs_f64();
+    let warped = match moving_first {
+        Some(moving_first) => {
+            let t = Stopwatch::start();
+            let warped = apply_chain(
+                &moving_first,
+                &grid,
+                &pair.forward,
+                Interpolation::Linear,
+                0.0,
+            )?;
+            timings.warp_s = t.elapsed().as_secs_f64();
+            warped
+        }
+        None => Volume::zeros(Grid::new([1, 1, 1], [1.0; 3], [0.0; 3], IDENTITY3)?),
+    };
     Ok(StagesOutput {
         pair,
         warped,
@@ -664,6 +736,53 @@ mod tests {
         assert_eq!(staged.warped, full.warped);
         assert_eq!(staged.syn_levels, vec![full.levels.clone()]);
         assert!(staged.deformable);
+    }
+
+    #[test]
+    fn the_owned_call_gives_the_results_of_the_borrowed_one() {
+        let (fx, mv) = pair();
+        let linear = LinearPlan {
+            rigid: small(LinearRecipe::cohort_rigid()),
+            affine: small(LinearRecipe::cohort_affine()),
+        };
+        let plan = StagePlan::cohort(&linear, &small_syn());
+        let options = SynOptions::default();
+        for mm in [2.0, 3.0] {
+            let borrowed = register_stages(
+                &CpuBackend,
+                &CpuLinearEngine,
+                &plan,
+                &fx,
+                &mv,
+                Some(mm),
+                &options,
+            )
+            .unwrap();
+            let owned = |warp_moving| {
+                block_ready(register_stages_owned_async(
+                    &CpuBackend,
+                    &CpuLinearEngine,
+                    &plan,
+                    fx.clone(),
+                    mv.clone(),
+                    Some(mm),
+                    &options,
+                    warp_moving,
+                ))
+                .unwrap()
+            };
+            let warped = owned(true);
+            assert_eq!(warped.initial, borrowed.initial);
+            assert_eq!(warped.total, borrowed.total);
+            assert_eq!(warped.pair, borrowed.pair);
+            assert_eq!(warped.warped, borrowed.warped);
+            assert_eq!(warped.grid, borrowed.grid);
+            assert_eq!(warped.syn_levels, borrowed.syn_levels);
+            let unwarped = owned(false);
+            assert_eq!(unwarped.pair, borrowed.pair);
+            assert_eq!(unwarped.warped.grid().size(), [1, 1, 1]);
+            assert_eq!(unwarped.timings.warp_s, 0.0);
+        }
     }
 
     #[test]

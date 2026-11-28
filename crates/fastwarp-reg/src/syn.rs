@@ -778,9 +778,56 @@ async fn syn_fields<B: Backend>(
     recipe: &SynRecipe,
     channels: &[SynChannel],
     start: SynStart<'_>,
-    mut cache: Option<&mut SmoothCache>,
+    cache: Option<&mut SmoothCache>,
     cancel: Option<&AtomicBool>,
 ) -> Result<SynFields> {
+    let (forward, inverse, levels) = Box::pin(syn_device_fields(
+        backend, recipe, channels, start, cache, cancel,
+    ))
+    .await?;
+    let warp = backend.download_field(&forward).await?;
+    let inverse_warp = backend.download_field(&inverse).await?;
+    Ok(SynFields {
+        warp,
+        inverse_warp,
+        levels,
+    })
+}
+
+/// The last SyN stage of a stage list from `start`: [`run_syn_stage_cached_async`] with its
+/// collapsed fields brought back as `f32` displacement fields, one at a time; the forward field
+/// is released on the backend before the inverse one is read.
+pub(crate) async fn run_syn_last_stage_cached_async<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    start: SynStart<'_>,
+    options: &SynOptions<'_>,
+    cache: Option<&mut SmoothCache>,
+) -> Result<(DisplacementField, DisplacementField, Vec<SynLevelTrace>)> {
+    let (forward, inverse, levels) = Box::pin(syn_device_fields(
+        backend,
+        recipe,
+        channels,
+        start,
+        cache,
+        options.cancel,
+    ))
+    .await?;
+    let warp = backend.download_displacement_field(&forward).await?;
+    drop(forward);
+    let inverse_warp = backend.download_displacement_field(&inverse).await?;
+    Ok((warp, inverse_warp, levels))
+}
+
+async fn syn_device_fields<B: Backend>(
+    backend: &B,
+    recipe: &SynRecipe,
+    channels: &[SynChannel],
+    start: SynStart<'_>,
+    mut cache: Option<&mut SmoothCache>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(B::Field, B::Field, Vec<SynLevelTrace>)> {
     recipe.validate()?;
     if channels.is_empty() {
         return Err(invalid("syn", "no channels"));
@@ -976,13 +1023,7 @@ async fn syn_fields<B: Backend>(
         }
         _ => (forward, inverse),
     };
-    let warp = backend.download_field(&forward).await?;
-    let inverse_warp = backend.download_field(&inverse).await?;
-    Ok(SynFields {
-        warp,
-        inverse_warp,
-        levels,
-    })
+    Ok((forward, inverse, levels))
 }
 
 #[cfg(test)]

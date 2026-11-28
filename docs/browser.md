@@ -178,9 +178,12 @@ GPUs. One image pair only: several channels, masks and other recipes need the
   ran short, which happens now and then on some phones and computers, the page says that instead:
   run it again. If it happens again on the 1 mm grid, the GPU may be too slow for its longest steps
   (the browser stops a step that takes too long): choose the 2 mm grid.
-- **Computer memory.** The tab holds both images, their resampled and prepared copies and the
-  displacement fields in double precision; WebAssembly in a browser can use at most 4 GiB. A 1 mm
-  registration of the sample used 1.2 GiB of WebAssembly memory, plus the 210 MiB zip file.
+- **Computer memory.** During the registration the tab holds the prepared copies of both images
+  in double precision; afterwards it holds the displacement fields in single precision, the warped
+  image and the zip file. WebAssembly in a browser can use at most 4 GiB, and its memory does not
+  shrink during a visit of the page. A 1 mm registration of the sample used 435 MiB of WebAssembly
+  memory while the GPU worked and 836 MiB in all, with the 210 MiB zip file; phones also share
+  their memory with the GPU, which needs about 1.4 GiB more for the 1 mm grid.
 - **Speed.** Slower than natively: the optimisers wait for many small results from the GPU, and
   each takes longer to come back in a browser, and the CPU parts (reading, resampling, writing
   compressed files) run on one core. On one laptop GPU (Intel Arc 140V) Chrome registered the

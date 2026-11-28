@@ -12,12 +12,12 @@ use fastwarp_gpu::{
     plan_capacity_linear, plan_capacity_syn_stages, CapacityCaps, CapacityError, SynStageCapacity,
 };
 use fastwarp_reg::apply::{apply_chain, Interpolation};
-use fastwarp_reg::linalg::IDENTITY3;
 use fastwarp_reg::linear::LinearEngine;
 use fastwarp_reg::recipe::SynRecipe;
 use fastwarp_reg::register::LinearPlan;
 use fastwarp_reg::stages::{
-    register_stages_async, visit_stage_outputs, OutputLayout, StageContent, StagePlan, StagesOutput,
+    register_stages_owned_async, visit_stage_outputs, OutputLayout, StageContent, StagePlan,
+    StagesOutput,
 };
 use fastwarp_reg::syn::SynOptions;
 use fastwarp_reg::{Backend, Grid, RegError, TransformChain, TransformElem, Volume};
@@ -479,6 +479,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     let tracker = Tracker::new(&plan, report);
     tracker.phase("read");
     let t = Stopwatch::start();
+    let moving_bytes = moving.clone();
     let fixed = Volume::from_nifti_bytes_f64(fixed).map_err(|e| {
         RunError::Invalid(format!("The fixed image is not a usable NIfTI image: {e}"))
     })?;
@@ -502,36 +503,36 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
         return Err(RunError::Cancelled);
     }
     tracker.phase("prepare");
+    let viewer_t = Stopwatch::start();
+    let mut viewer = Viewer::new(&fixed);
+    let mut viewer_s = viewer_t.elapsed().as_secs_f64();
     let observed = Observed::new(backend, engine, &tracker);
-    let fixed = vec![fixed];
-    let moving = vec![moving];
     let options_syn = SynOptions {
         cancel: Some(cancel),
     };
-    let mut out = register_stages_async(
+    let out = register_stages_owned_async(
         &observed,
         &observed,
         &plan,
-        &fixed,
-        &moving,
+        vec![fixed],
+        vec![moving],
         Some(grid_choice.mm()),
         &options_syn,
+        false,
     )
     .await
     .map_err(|e| classify(e, grid_choice))?;
-    let viewer_t = Stopwatch::start();
-    let mut viewer = Viewer::new(&fixed[0]);
-    let mut viewer_s = viewer_t.elapsed().as_secs_f64();
-    drop(fixed);
     let peak = peak_gpu_bytes();
     backend.release_idle_buffers();
     tracker.phase("warp");
     let t = Stopwatch::start();
-    let placeholder = Grid::new([1, 1, 1], [1.0; 3], [0.0; 3], IDENTITY3)
-        .map_err(|e| classify(e, grid_choice))?;
-    out.warped = Volume::zeros(placeholder);
+    let moving = Volume::from_nifti_bytes_f64(moving_bytes).map_err(|e| {
+        RunError::Invalid(format!("The moving image is not a usable NIfTI image: {e}"))
+    })?;
+    let read_again_s = t.elapsed().as_secs_f64();
+    let t = Stopwatch::start();
     let warped = apply_chain(
-        &moving[0],
+        &moving,
         &fixed_grid,
         &out.pair.forward,
         Interpolation::Linear,
@@ -555,7 +556,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
             fixed_grid.direction(),
         )
         .map_err(|e| classify(e, grid_choice))?;
-        let part = apply_chain(&moving[0], &grid, &start, Interpolation::Linear, 0.0)
+        let part = apply_chain(&moving, &grid, &start, Interpolation::Linear, 0.0)
             .map_err(|e| classify(e, grid_choice))?;
         before_bytes.extend(quantize(part.data(), window));
         z0 += slab;
@@ -566,7 +567,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     viewer_s += viewer_t.elapsed().as_secs_f64();
     tracker.phase("write");
     let t = Stopwatch::start();
-    let mut zip = ZipWriter::new();
+    let mut zip = ZipWriter::with_capacity(archive_capacity(&out.grid, &fixed_grid));
     if let Some([y, mo, d, h, mi, s]) = zip_time {
         zip.set_time(y, mo, d, h, mi, s);
     }
@@ -630,7 +631,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
             "preprocess": timings.preprocess_s,
             "linear": timings.linear_s,
             "syn": timings.syn_s,
-            "warp": timings.warp_s,
+            "read_moving_again": read_again_s,
             "warp_to_fixed_grid": warp_native_s,
             "viewer": viewer_s,
             "write": write_s,
@@ -646,6 +647,19 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     let archive = zip.finish().map_err(zip_err)?;
     tracker.phase("done");
     Ok(Finished { archive, viewer })
+}
+
+/// Room for the archive: the gzip-compressed `f32` fields on the registration grid and the
+/// warped image on the fixed grid, each at most a little larger than its raw data, and 1 MiB
+/// for the header, `run.json` and `README.txt`.
+fn archive_capacity(registration: &Grid, fixed: &Grid) -> usize {
+    let raw = registration
+        .num_voxels()
+        .saturating_mul(2 * 3 * 4)
+        .saturating_add(fixed.num_voxels().saturating_mul(4));
+    raw.saturating_add(raw / 16)
+        .saturating_add(1 << 20)
+        .min(isize::MAX as usize)
 }
 
 struct Counted<W> {
@@ -681,6 +695,7 @@ mod tests {
     use std::sync::Mutex;
     use std::task::{Context, Poll, Waker};
 
+    use fastwarp_reg::linalg::IDENTITY3;
     use fastwarp_reg::linear::CpuLinearEngine;
     use fastwarp_reg::stages::{register_stages, stage_output_files};
     use fastwarp_reg::CpuBackend;

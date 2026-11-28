@@ -10,7 +10,7 @@
 use crate::error::Result;
 use crate::field_ops::{InvertParams, InvertStats, VectorField};
 use crate::grid::Grid;
-use crate::transform::AffineTransform;
+use crate::transform::{AffineTransform, DisplacementField};
 use crate::volume::Volume;
 
 /// A metric value with its derivative field.
@@ -64,6 +64,13 @@ pub trait Backend: Sync {
 
     /// Brings a field back to the host.
     async fn download_field(&self, field: &Self::Field) -> Result<VectorField>;
+
+    /// Brings a field back to the host as a `f32` [`DisplacementField`]: the values of
+    /// [`Backend::download_field`] followed by [`VectorField::to_displacement_field`], without the
+    /// `f64` copy on a backend that keeps its fields in `f32`.
+    async fn download_displacement_field(&self, field: &Self::Field) -> Result<DisplacementField> {
+        self.download_field(field).await?.to_displacement_field()
+    }
 
     /// The grid of a field.
     fn field_grid(&self, field: &Self::Field) -> Grid;

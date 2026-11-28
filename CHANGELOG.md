@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Changed: the browser demo needs less memory. A 1 mm registration of the sample now peaks at
+  435 MiB of WebAssembly memory while the GPU works (747 MiB before) and at 836 MiB in all
+  (1145 MiB before); the results are the same. The demo no longer keeps the decoded input images
+  during the registration (it reads the moving image again for the warped image), an image that is
+  already on the registration grid is not copied, the raw images are dropped once the start
+  transform is computed, the displacement fields come back from the GPU in single precision, and
+  the zip archive is allocated once. For Rust callers, `register_stages_owned_async`,
+  `prepare_channels_owned` and `resample_isotropic_owned` take the images by value, and
+  `Backend::download_displacement_field` brings a field back as a `DisplacementField`;
+  `register_stages_async` holds less memory with the same results. In the demo's `run.json`,
+  `timings_s` has `read_moving_again` instead of `warp`, as the demo no longer warps the moving
+  image onto the registration grid.
 - Fixed: after the browser closed the demo page during a run (phones do this when a tab needs too
   much memory), the page showed the note of an older unfinished run instead of the latest one, and
   did not record later runs: the page took the record of the stopped run for a run still going on in
