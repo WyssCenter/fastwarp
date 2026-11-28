@@ -5,9 +5,10 @@ export const REPORT_ADDRESS = "richard.koehler@wysscenter.ch";
 export const MAILTO_LIMIT = 1800;
 
 const RUN_PREFIX = "fastwarp-demo-run:";
-const TAB_KEY = "fastwarp-demo-tab";
 const HEARTBEAT_MS = 120000;
 const UNFINISHED_KEY = "fastwarp-demo-unfinished";
+const CHANNEL = "fastwarp-demo";
+const PING_MS = 400;
 
 function wellFormed(s) {
   if (typeof s.toWellFormed === "function") return s.toWellFormed();
@@ -396,69 +397,91 @@ function attempt(f) {
   }
 }
 
-let tab = null;
+const tab = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+let channel;
 
-function reloaded() {
-  const entry = attempt(() => globalThis.performance.getEntriesByType("navigation")[0]);
-  if (entry) return entry.type === "reload";
-  return attempt(() => globalThis.performance.navigation?.type === 1) ?? false;
+function openChannel() {
+  if (channel !== undefined) return channel;
+  channel = attempt(() => new globalThis.BroadcastChannel(CHANNEL)) ?? null;
+  if (channel) {
+    channel.onmessage = ({ data }) => {
+      if (data?.type === "ping") attempt(() => channel.postMessage({ type: "alive", tab }));
+    };
+  }
+  return channel;
 }
 
-function liveElsewhere(id) {
-  if (reloaded()) return false;
-  const record = attempt(() => JSON.parse(storage()?.getItem(RUN_PREFIX + id) ?? "null"));
-  return Boolean(record && Date.now() - (record.beat ?? 0) < HEARTBEAT_MS);
+function aliveTabs(wait) {
+  const c = openChannel();
+  if (!c) return Promise.resolve(null);
+  const alive = new Set();
+  const listener = ({ data }) => {
+    if (data?.type === "alive" && typeof data.tab === "string") alive.add(data.tab);
+  };
+  c.addEventListener("message", listener);
+  attempt(() => c.postMessage({ type: "ping" }));
+  return new Promise((done) =>
+    setTimeout(() => {
+      c.removeEventListener("message", listener);
+      done(alive);
+    }, wait),
+  );
 }
 
-function tabId() {
-  if (tab) return tab;
-  const fresh = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  tab = attempt(() => {
-    const s = globalThis.sessionStorage;
-    const known = s.getItem(TAB_KEY);
-    if (known && !liveElsewhere(known)) return known;
-    s.setItem(TAB_KEY, fresh);
-    return fresh;
-  }) ?? fresh;
-  return tab;
+function readRecord(text) {
+  const record = attempt(() => JSON.parse(text));
+  return record && typeof record === "object" ? record : null;
 }
 
 export function saveRun(record) {
   const s = storage();
-  const id = tabId();
-  if (s) attempt(() => s.setItem(RUN_PREFIX + id, JSON.stringify({ ...record, tab: id, beat: Date.now() })));
+  openChannel();
+  if (s) attempt(() => s.setItem(RUN_PREFIX + tab, JSON.stringify({ ...record, tab, beat: Date.now() })));
+}
+
+export function beginRun(record) {
+  const s = storage();
+  if (s) attempt(() => s.removeItem(UNFINISHED_KEY));
+  saveRun(record);
 }
 
 export function endRun(success) {
   const s = storage();
   if (!s) return;
-  attempt(() => s.removeItem(RUN_PREFIX + tabId()));
+  attempt(() => s.removeItem(RUN_PREFIX + tab));
   if (success) attempt(() => s.removeItem(UNFINISHED_KEY));
 }
 
-export function takeUnfinished(now = Date.now()) {
+export async function takeUnfinished({ now = Date.now(), wait = PING_MS } = {}) {
   const s = storage();
   if (!s) return null;
-  const own = RUN_PREFIX + tabId();
-  return attempt(() => {
-    const keys = [];
+  openChannel();
+  const runs = attempt(() => {
+    const out = [];
     for (let i = 0; i < s.length; i++) {
       const key = s.key(i);
-      if (key?.startsWith(RUN_PREFIX)) keys.push(key);
+      if (key?.startsWith(RUN_PREFIX) && key !== RUN_PREFIX + tab) out.push({ key, text: s.getItem(key) });
     }
-    for (const key of keys) {
-      const text = s.getItem(key);
-      const record = attempt(() => JSON.parse(text));
-      const live = key !== own && record && now - (record.beat ?? 0) < HEARTBEAT_MS;
-      if (live) continue;
-      if (record) s.setItem(UNFINISHED_KEY, text);
-      s.removeItem(key);
+    return out;
+  }) ?? [];
+  for (const run of runs) run.record = readRecord(run.text);
+  const recent = (r) => now - (r.record.beat ?? 0) < HEARTBEAT_MS;
+  const alive = runs.some((r) => r.record && recent(r)) ? await aliveTabs(wait) : new Set();
+  const live = (r) => r.record && (alive ? alive.has(r.record.tab) : recent(r));
+  const dead = runs.filter((r) => !live(r));
+  let newest = attempt(() => readRecord(s.getItem(UNFINISHED_KEY)));
+  let newestText = null;
+  for (const run of dead) {
+    if (run.record && (run.record.beat ?? 0) >= (newest?.beat ?? -Infinity)) {
+      newest = run.record;
+      newestText = run.text;
     }
-    const text = s.getItem(UNFINISHED_KEY);
-    if (!text) return null;
-    const { tab: _tab, beat: _beat, ...record } = JSON.parse(text);
-    return record;
-  });
+  }
+  const saved = !newestText || attempt(() => s.setItem(UNFINISHED_KEY, newestText) ?? true);
+  if (saved) for (const run of dead) attempt(() => s.removeItem(run.key));
+  if (!newest) return null;
+  const { tab: _tab, beat: _beat, ...record } = newest;
+  return record;
 }
 
 export function dismissUnfinished() {

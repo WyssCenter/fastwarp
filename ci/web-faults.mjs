@@ -123,7 +123,7 @@ class Cdp {
 const STATE = `(() => {
   const text = (id) => document.getElementById(id)?.textContent ?? "";
   const panel = document.getElementById("fw-report");
-  const state = { title: document.title, message: text("fw-message"), visible: Boolean(panel && !panel.hidden) };
+  const state = { title: document.title, search: location.search, message: text("fw-message"), visible: Boolean(panel && !panel.hidden) };
   if (!state.visible) return state;
   const box = document.getElementById("fw-report-box");
   if (!box.open) box.open = true;
@@ -175,6 +175,10 @@ const WORKER_PROBE = `new Promise((resolve) => {
   setTimeout(() => done("timeout"), 120000);
 })`;
 
+const OLD_MARKER = `localStorage.setItem("fastwarp-demo-unfinished", JSON.stringify({ started_utc: "2026-01-01T00:00Z", grid: "1mm", stage: { phase: "syn", level: 3, levels: 4 }, elapsed_s: 15, beat: Date.now() - 86400000, tab: "old" }))`;
+
+const STORAGE_KEYS = "JSON.stringify(Object.keys(localStorage).filter((k) => k.startsWith(\"fastwarp-demo\")))";
+
 const crashed = ["RuntimeError", "WorkerError"];
 const GPU_ERRORS = ["GPUValidationError", "GPUInternalError", "GPUOutOfMemoryError"];
 
@@ -201,8 +205,11 @@ const CASES = [
     suite: "start",
     query: "autorun=sample&grid=2mm&plan=short",
     result: "ok",
-    checks: (r) => [
+    seed: OLD_MARKER,
+    probe: STORAGE_KEYS,
+    checks: (r, probe) => [
       [r.files?.length === 6 && r.zip_bytes > 0, "the zip holds the six output files"],
+      [probe === "[]", `a finished run leaves no run record and no unfinished-run note (got ${probe})`],
       [JSON.stringify(r.registration_grid) === "[99,117,95]", `the registration grid is 99x117x95 (got ${JSON.stringify(r.registration_grid)})`],
       [Array.isArray(r.affine_parameters) && r.affine_parameters.every(Number.isFinite), "the affine parameters are finite"],
       ...gpuClean(r),
@@ -295,6 +302,18 @@ const CASES = [
     ],
   },
   {
+    name: "crash",
+    query: "autorun=sample&grid=2mm&plan=short&fault=crash&fault_at=rigid",
+    reloads: true,
+    seed: OLD_MARKER,
+    kinds: ["UnfinishedRun"],
+    checks: (j, s) => [
+      [j.previous_run != null && j.previous_run.started_utc !== "2026-01-01T00:00Z", "a newer unfinished run replaces the stored note"],
+      [j.previous_run?.grid === "2mm" && j.previous_run?.stage?.phase === "rigid", "the report holds the grid and stage of the unfinished run"],
+      [/browser stopped it/.test(s.message) && /memory/.test(s.message), "the page says the browser stopped the run, most likely for memory"],
+    ],
+  },
+  {
     name: "public",
     query: "autorun=info&fault=nogpu&limits=64&stall=5",
     public: true,
@@ -367,7 +386,7 @@ async function runCase(cdp, session, origin, c, timeout) {
     } catch {
       continue;
     }
-    if (state?.json && c.kinds.includes(state.json.kind)) break;
+    if (state?.json && c.kinds.includes(state.json.kind) && (!c.reloads || !state.search)) break;
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   if (!state?.json) return { seconds, failures: [`no report within ${timeout} s (title ${state?.title}, message: ${state?.message})`], state };
@@ -432,6 +451,7 @@ async function main() {
       await cdp.send("Page.navigate", { url: `${at}/blank` }, sessionId);
       await sleep(300);
       await cdp.send("Runtime.evaluate", { expression: "localStorage.clear(); sessionStorage.clear();" }, sessionId);
+      if (c.seed) await cdp.send("Runtime.evaluate", { expression: c.seed }, sessionId);
       cdp.console.length = 0;
       const go = c.result ? runResult : runCase;
       const { seconds, failures, state } = await go(cdp, sessionId, at, c, opt.timeout);
