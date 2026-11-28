@@ -179,6 +179,26 @@ const OLD_MARKER = `localStorage.setItem("fastwarp-demo-unfinished", JSON.string
 
 const STORAGE_KEYS = "JSON.stringify(Object.keys(localStorage).filter((k) => k.startsWith(\"fastwarp-demo\")))";
 
+const LEFT = `({ report: !document.getElementById("fw-report").hidden, keys: Object.keys(localStorage).filter((k) => k.startsWith("fastwarp-demo")) })`;
+
+function reached(phase) {
+  return `Object.keys(localStorage).some((k) => k.startsWith("fastwarp-demo-run:") && JSON.parse(localStorage.getItem(k))?.stage?.phase === ${JSON.stringify(phase)})`;
+}
+
+async function untilStage(cdp, session, phase, timeout) {
+  const started = Date.now();
+  while (Date.now() - started < timeout * 1000) {
+    await sleep(250);
+    try {
+      const r = await cdp.send("Runtime.evaluate", { expression: reached(phase), returnByValue: true }, session);
+      if (r.result.value === true) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 const crashed = ["RuntimeError", "WorkerError"];
 const GPU_ERRORS = ["GPUValidationError", "GPUInternalError", "GPUOutOfMemoryError"];
 
@@ -292,18 +312,9 @@ const CASES = [
     checks: (j, s) => [[/No progress/.test(s.message), "the panel says there is no progress"]],
   },
   {
-    name: "kill",
-    query: "autorun=sample&grid=2mm&plan=short&fault=kill&fault_at=rigid",
-    reloads: true,
-    kinds: ["UnfinishedRun"],
-    checks: (j, s) => [
-      [j.previous_run?.stage?.phase === "rigid", "the report holds the stage of the unfinished run"],
-      [/did not finish/.test(s.message), "the panel says the last run did not finish"],
-    ],
-  },
-  {
     name: "crash",
-    query: "autorun=sample&grid=2mm&plan=short&fault=crash&fault_at=rigid",
+    query: "autorun=sample&grid=2mm&plan=short",
+    crashAt: "rigid",
     reloads: true,
     seed: OLD_MARKER,
     kinds: ["UnfinishedRun"],
@@ -311,6 +322,17 @@ const CASES = [
       [j.previous_run != null && j.previous_run.started_utc !== "2026-01-01T00:00Z", "a newer unfinished run replaces the stored note"],
       [j.previous_run?.grid === "2mm" && j.previous_run?.stage?.phase === "rigid", "the report holds the grid and stage of the unfinished run"],
       [/browser stopped it/.test(s.message) && /memory/.test(s.message), "the page says the browser stopped the run, most likely for memory"],
+    ],
+  },
+  {
+    name: "leave",
+    leave: { query: "autorun=sample&grid=2mm&plan=short", at: "rigid" },
+    query: "autorun=info",
+    result: "ready",
+    probe: LEFT,
+    checks: (r, probe) => [
+      [probe?.report === false, "leaving the page during a run leaves no unfinished-run note"],
+      [Array.isArray(probe?.keys) && probe.keys.length === 0, `leaving the page removes the run record (got ${JSON.stringify(probe?.keys)})`],
     ],
   },
   {
@@ -347,6 +369,10 @@ function common(c, s) {
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
 async function runResult(cdp, session, origin, c, timeout) {
+  if (c.leave) {
+    await cdp.send("Page.navigate", { url: `${origin}/browser.html?${c.leave.query}` }, session);
+    if (!(await untilStage(cdp, session, c.leave.at, timeout))) return { seconds: 0, failures: [`the run did not reach ${c.leave.at}`], state: null };
+  }
   await cdp.send("Page.navigate", { url: `${origin}/browser.html?${c.query}` }, session);
   const started = Date.now();
   let state = null;
@@ -377,6 +403,12 @@ async function runResult(cdp, session, origin, c, timeout) {
 async function runCase(cdp, session, origin, c, timeout) {
   await cdp.send("Page.navigate", { url: `${origin}/browser.html?${c.query}` }, session);
   const started = Date.now();
+  if (c.crashAt) {
+    if (!(await untilStage(cdp, session, c.crashAt, timeout))) return { seconds: 0, failures: [`the run did not reach ${c.crashAt}`], state: null };
+    await Promise.race([cdp.send("Page.crash", {}, session).catch(() => null), sleep(2000)]);
+    await sleep(500);
+    await cdp.send("Page.navigate", { url: `${origin}/browser.html` }, session);
+  }
   let state = null;
   while (Date.now() - started < timeout * 1000) {
     await sleep(1000);

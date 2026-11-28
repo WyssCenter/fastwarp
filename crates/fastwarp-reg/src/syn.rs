@@ -794,9 +794,6 @@ async fn syn_fields<B: Backend>(
     })
 }
 
-/// The last SyN stage of a stage list from `start`: [`run_syn_stage_cached_async`] with its
-/// collapsed fields brought back as `f32` displacement fields, one at a time; the forward field
-/// is released on the backend before the inverse one is read.
 pub(crate) async fn run_syn_last_stage_cached_async<B: Backend>(
     backend: &B,
     recipe: &SynRecipe,

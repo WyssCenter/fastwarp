@@ -449,7 +449,9 @@ export function endRun(success) {
   const s = storage();
   if (!s) return;
   attempt(() => s.removeItem(RUN_PREFIX + tab));
-  if (success) attempt(() => s.removeItem(UNFINISHED_KEY));
+  if (success && attempt(() => readRecord(s.getItem(UNFINISHED_KEY))?.tab) === tab) {
+    attempt(() => s.removeItem(UNFINISHED_KEY));
+  }
 }
 
 export async function takeUnfinished({ now = Date.now(), wait = PING_MS } = {}) {
@@ -466,7 +468,7 @@ export async function takeUnfinished({ now = Date.now(), wait = PING_MS } = {}) 
   }) ?? [];
   for (const run of runs) run.record = readRecord(run.text);
   const recent = (r) => now - (r.record.beat ?? 0) < HEARTBEAT_MS;
-  const alive = runs.some((r) => r.record && recent(r)) ? await aliveTabs(wait) : new Set();
+  const alive = runs.length ? await aliveTabs(wait) : new Set();
   const live = (r) => r.record && (alive ? alive.has(r.record.tab) : recent(r));
   const dead = runs.filter((r) => !live(r));
   let newest = attempt(() => readRecord(s.getItem(UNFINISHED_KEY)));

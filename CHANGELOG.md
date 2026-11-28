@@ -17,8 +17,9 @@
 - Fixed: after the browser closed the demo page during a run (phones do this when a tab needs too
   much memory), the page showed the note of an older unfinished run instead of the latest one, and
   did not record later runs: the page took the record of the stopped run for a run still going on in
-  another tab. A page now asks its other open tabs whether they still run, and starting a run
-  removes the old note, so the note always describes the latest run that stopped. The note at the
+  another tab. A page now asks its other open tabs whether they still run, starting a run
+  removes the old note, so the note always describes the latest run that stopped, and leaving the
+  page during a run no longer leaves a note. The note at the
   top of the demo now says that the browser stopped the run, most likely because the device ran out
   of memory, suggests the 2 mm grid (and selects it after a 1 mm run) or a computer, and offers the
   report.

@@ -193,11 +193,12 @@ GPUs. One image pair only: several channels, masks and other recipes need the
 ## Problems?
 
 When the page cannot use WebGPU, or a run fails or makes no progress for three minutes, the page
-says what happened and what to try, and offers a diagnostic report. When a run did not finish
-because the browser closed or reloaded the page (phones do this when a tab needs too much memory),
-the page says so the next time you open it, at the top of the demo, and after a 1 mm run selects
-the 2 mm grid. Starting a run removes the note, and a successful run or **Dismiss** removes it
-too. A run in a tab the browser has put to sleep in the background can be reported as stopped.
+says what happened and what to try, and offers a diagnostic report. When the browser
+stopped a run by closing the page (phones do this when a tab needs too much memory), the page says
+so the next time you open it, at the top of the demo, and after a 1 mm run selects the 2 mm grid.
+Closing, reloading or leaving the page yourself during a run leaves no note. Starting a run or
+**Dismiss** removes the note. A run in a tab the browser has put to sleep in the background can be
+reported as stopped.
 
 - **Send report via e-mail** opens your mail app with a short report addressed to the FastWarp
   maintainers. You can read and change it before you send it. Mail apps limit the length of such
@@ -226,7 +227,7 @@ It never contains your images or any part of them, the text fields of their head
 or anything else from your computer. The page sends nothing: the report leaves your device only
 when you send the e-mail or paste the text somewhere yourself. The note about an unfinished run is
 kept in your browser's local storage on your device; it holds the same kind of information and is
-removed when you start the next run, when a run succeeds or when you dismiss it.
+removed when you start the next run or dismiss it.
 
 ## Checking the result
 

@@ -567,7 +567,7 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     viewer_s += viewer_t.elapsed().as_secs_f64();
     tracker.phase("write");
     let t = Stopwatch::start();
-    let mut zip = ZipWriter::with_capacity(archive_capacity(&out.grid, &fixed_grid));
+    let mut zip = ZipWriter::with_capacity(archive_capacity(&out, &fixed_grid));
     if let Some([y, mo, d, h, mi, s]) = zip_time {
         zip.set_time(y, mo, d, h, mi, s);
     }
@@ -649,14 +649,13 @@ pub async fn run_job<B: Backend, E: LinearEngine>(
     Ok(Finished { archive, viewer })
 }
 
-/// Room for the archive: the gzip-compressed `f32` fields on the registration grid and the
-/// warped image on the fixed grid, each at most a little larger than its raw data, and 1 MiB
-/// for the header, `run.json` and `README.txt`.
-fn archive_capacity(registration: &Grid, fixed: &Grid) -> usize {
-    let raw = registration
-        .num_voxels()
-        .saturating_mul(2 * 3 * 4)
-        .saturating_add(fixed.num_voxels().saturating_mul(4));
+fn archive_capacity(out: &StagesOutput, fixed: &Grid) -> usize {
+    let fields = if out.deformable {
+        out.grid.num_voxels().saturating_mul(2 * 3 * 4)
+    } else {
+        0
+    };
+    let raw = fields.saturating_add(fixed.num_voxels().saturating_mul(4));
     raw.saturating_add(raw / 16)
         .saturating_add(1 << 20)
         .min(isize::MAX as usize)

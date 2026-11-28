@@ -174,9 +174,22 @@ test("starting a run replaces the note, ending it removes the run record", async
   assert.deepEqual(keys(), []);
 });
 
-test("a finished run removes the note", async () => {
+test("a finished run removes a note about itself and keeps one about another run", async () => {
   beginRun({ started_utc: "now" });
-  put(NOTE, { started_utc: "note", tab: "a", beat: 1 });
+  const own = keys()[0].slice(RUN.length);
+  put(NOTE, { started_utc: "other", tab: "a", beat: 1 });
+  endRun(true);
+  assert.deepEqual(keys(), [NOTE]);
+  beginRun({ started_utc: "again" });
+  put(NOTE, { started_utc: "paused", tab: own, beat: 1 });
   endRun(true);
   assert.deepEqual(keys(), []);
+});
+
+test("a run whose tab still answers is left alone even with an old heartbeat", async () => {
+  const now = Date.now();
+  otherTab("sleepy");
+  put(RUN + "sleepy", { started_utc: "running", tab: "sleepy", beat: now - 600000 });
+  assert.equal(await takeUnfinished({ now, wait: WAIT }), null);
+  assert.deepEqual(keys(), [RUN + "sleepy"]);
 });

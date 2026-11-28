@@ -530,14 +530,6 @@ function onProgress(p, memory) {
     log(p.levels ? `${name}, level ${p.level} of ${p.levels}${p.grid ? ` (${p.grid.join(" x ")})` : ""}` : name);
     if (run && run.timeline.length < 60) run.timeline.push([seconds(now - run.started), p.phase, p.levels ? p.level : null]);
     crumb();
-    if ((debugParams.fault === "kill" || debugParams.fault === "crash") && p.phase === (debugParams.fault_at || "rigid")) {
-      if (debugParams.fault === "crash") {
-        location.replace(location.pathname);
-      } else {
-        history.replaceState(null, "", location.pathname);
-        location.reload();
-      }
-    }
   } else if (now - state.savedAt > 10000) {
     crumb();
   }
@@ -921,7 +913,7 @@ function showUnfinished(previous) {
     advice = "The 2 mm grid needs much less memory and is selected now; for the 1 mm grid, use a computer.";
   }
   message(
-    `The last run did not finish: the browser stopped it${grid} during "${name}"${after}, most likely because this device ran out of memory. ${advice} If you closed or reloaded the page yourself, dismiss this note; otherwise please send the report below, it helps us find out which devices need a fix.`,
+    `The last run did not finish: the browser stopped it${grid} during "${name}"${after}, most likely because this device ran out of memory. ${advice} If the run was still open in another tab, the browser may only have paused it there. Otherwise please send the report below: it helps us find out which devices need a fix.`,
     "warning",
   );
   showReport("UnfinishedRun", `the page closed during ${stageText(previous.stage)}`, { tone: "warning", dismiss: true });
@@ -938,6 +930,9 @@ function setupReports() {
     if (!document.hidden) state.progressAt = performance.now();
   });
   el("fw-report-box").addEventListener("toggle", refreshReport);
+  window.addEventListener("pagehide", (e) => {
+    if (!e.persisted && state.running) endRun(false);
+  });
   el("fw-dismiss").addEventListener("click", () => {
     dismissUnfinished();
     diag.previous = null;
