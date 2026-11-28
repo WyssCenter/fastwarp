@@ -57,7 +57,7 @@ On real 1 mm brain images, measured on a 28-core AMD EPYC server (one pair, defa
 | GPU (datacenter GPU) | about 2.3 s | |
 | ANTs 2.6.5 (same 28 cores) | about 260-280 s | |
 
-Multi-core use is limited for now: on average about 7-8 of the 28 cores were busy.
+Multi-core use is limited for now: on average about 9.5 of the 28 cores were busy, and 28 threads ran about 4.9 times faster than one.
 `fastwarp bench --engine cpu --size mni-2mm` measures your machine.
 
 The CPU engine uses every logical core, or `RAYON_NUM_THREADS` threads when that variable is
