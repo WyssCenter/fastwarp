@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Changed: the browser demo needs less memory. A 1 mm registration of the sample now peaks at
+  435 MiB of WebAssembly memory while the GPU works (747 MiB before) and at 836 MiB in all
+  (1145 MiB before); the results are the same. The demo no longer keeps the decoded input images
+  during the registration (it reads the moving image again for the warped image), an image that is
+  already on the registration grid is not copied, the raw images are dropped once the start
+  transform is computed, the displacement fields come back from the GPU in single precision, and
+  the zip archive is allocated once. For Rust callers, `register_stages_owned_async`,
+  `prepare_channels_owned` and `resample_isotropic_owned` take the images by value, and
+  `Backend::download_displacement_field` brings a field back as a `DisplacementField`;
+  `register_stages_async` holds less memory with the same results. In the demo's `run.json`,
+  `timings_s` has `read_moving_again` instead of `warp`, as the demo no longer warps the moving
+  image onto the registration grid.
+- Fixed: after the browser closed the demo page during a run (phones do this when a tab needs too
+  much memory), the page showed the note of an older unfinished run instead of the latest one, and
+  did not record later runs: the page took the record of the stopped run for a run still going on in
+  another tab. A page now asks its other open tabs whether they still run, starting a run
+  removes the old note, so the note always describes the latest run that stopped, and leaving the
+  page during a run no longer leaves a note. A run whose visible page does not answer counts as
+  stopped at once; one last seen in a hidden tab only after two minutes without a heartbeat. The note at the
+  top of the demo now says that the browser stopped the run, most likely because the device ran out
+  of memory, suggests the 2 mm grid (and selects it after a 1 mm run) or a computer, and offers the
+  report.
 - New: an opt-in CPU engine for computers without a usable GPU. `engine="cpu"` on
   `register_syn`, `register_atlases`, `linear_session` and `fastwarp.ants.registration`,
   `--engine cpu` on `fastwarp register`, `linear`, `fits` and `bench`, or

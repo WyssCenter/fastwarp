@@ -110,14 +110,31 @@ fn sample_linear_clamped(data: &[f64], size: [usize; 3], c: [f64; 3]) -> f64 {
 /// samples source index `min(i * mm / spacing, n - 1)` trilinearly, the result is rounded to
 /// `f32`. Returns a copy when every axis already has `mm` spacing (within 1e-6 mm).
 pub fn resample_isotropic(vol: &Volume<f64>, mm: f64) -> Result<Volume<f64>> {
+    if is_isotropic_at(vol, mm)? {
+        return Ok(vol.clone());
+    }
+    resample_onto_isotropic(vol, mm)
+}
+
+/// [`resample_isotropic`] taking the volume by value: a volume that already has `mm` spacing
+/// on every axis is returned as it is, without a copy.
+pub fn resample_isotropic_owned(vol: Volume<f64>, mm: f64) -> Result<Volume<f64>> {
+    if is_isotropic_at(&vol, mm)? {
+        return Ok(vol);
+    }
+    resample_onto_isotropic(&vol, mm)
+}
+
+fn is_isotropic_at(vol: &Volume<f64>, mm: f64) -> Result<bool> {
     if !(mm.is_finite() && mm > 0.0) {
         return Err(invalid("register", "isotropic spacing must be positive"));
     }
+    Ok(vol.grid().spacing().iter().all(|s| (s - mm).abs() < 1e-6))
+}
+
+fn resample_onto_isotropic(vol: &Volume<f64>, mm: f64) -> Result<Volume<f64>> {
     let g = *vol.grid();
     let spacing = g.spacing();
-    if spacing.iter().all(|s| (s - mm).abs() < 1e-6) {
-        return Ok(vol.clone());
-    }
     let size = g.size();
     let mut out_n = [1usize; 3];
     let mut coords: [Vec<f64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
@@ -205,8 +222,52 @@ pub fn prepare_channels_with(
     winsorize: Option<(f32, f32)>,
     timings: &mut RegisterTimings,
 ) -> Result<PreparedChannels> {
+    check_inputs(fixed, moving, winsorize)?;
+    let t0 = Stopwatch::start();
+    let resample = |v: &Volume<f64>| match iso_mm {
+        Some(mm) => resample_isotropic(v, mm),
+        None => Ok(v.clone()),
+    };
+    let fixed_raw = fixed.iter().map(resample).collect::<Result<Vec<_>>>()?;
+    let moving_raw = moving.iter().map(resample).collect::<Result<Vec<_>>>()?;
+    timings.resample_s += t0.elapsed().as_secs_f64();
+    preprocess_channels(fixed_raw, moving_raw, winsorize, timings)
+}
+
+/// [`prepare_channels_with`] taking the images by value: an image already on the registration
+/// grid becomes its resampled raw image without a copy, and every other input is dropped once
+/// it is resampled.
+pub fn prepare_channels_owned(
+    fixed: Vec<Volume<f64>>,
+    moving: Vec<Volume<f64>>,
+    iso_mm: Option<f64>,
+    winsorize: Option<(f32, f32)>,
+    timings: &mut RegisterTimings,
+) -> Result<PreparedChannels> {
+    check_inputs(&fixed, &moving, winsorize)?;
+    let t0 = Stopwatch::start();
+    let resample = |v: Volume<f64>| match iso_mm {
+        Some(mm) => resample_isotropic_owned(v, mm),
+        None => Ok(v),
+    };
+    let fixed_raw = fixed
+        .into_iter()
+        .map(resample)
+        .collect::<Result<Vec<_>>>()?;
+    let moving_raw = moving
+        .into_iter()
+        .map(resample)
+        .collect::<Result<Vec<_>>>()?;
+    timings.resample_s += t0.elapsed().as_secs_f64();
+    preprocess_channels(fixed_raw, moving_raw, winsorize, timings)
+}
+
+fn check_inputs(
+    fixed: &[Volume<f64>],
+    moving: &[Volume<f64>],
+    winsorize: Option<(f32, f32)>,
+) -> Result<()> {
     check_winsorize(winsorize)?;
-    let (lower, upper) = winsorize.unwrap_or((0.0, 1.0));
     if fixed.is_empty() || fixed.len() != moving.len() {
         return Err(invalid(
             "register",
@@ -223,14 +284,16 @@ pub fn prepare_channels_with(
             "an input image has non-finite (NaN or infinite) voxels",
         ));
     }
-    let t0 = Stopwatch::start();
-    let resample = |v: &Volume<f64>| match iso_mm {
-        Some(mm) => resample_isotropic(v, mm),
-        None => Ok(v.clone()),
-    };
-    let fixed_raw = fixed.iter().map(resample).collect::<Result<Vec<_>>>()?;
-    let moving_raw = moving.iter().map(resample).collect::<Result<Vec<_>>>()?;
-    timings.resample_s += t0.elapsed().as_secs_f64();
+    Ok(())
+}
+
+fn preprocess_channels(
+    fixed_raw: Vec<Volume<f64>>,
+    moving_raw: Vec<Volume<f64>>,
+    winsorize: Option<(f32, f32)>,
+    timings: &mut RegisterTimings,
+) -> Result<PreparedChannels> {
+    let (lower, upper) = winsorize.unwrap_or((0.0, 1.0));
     let t1 = Stopwatch::start();
     let mut channels = Vec::with_capacity(fixed_raw.len());
     for (f, m) in fixed_raw.iter().zip(&moving_raw) {

@@ -100,6 +100,14 @@ pub(crate) mod testing {
             Backend::download_field(&CpuBackend, field).await
         }
 
+        async fn download_displacement_field(
+            &self,
+            field: &Self::Field,
+        ) -> Result<crate::transform::DisplacementField> {
+            yield_once().await;
+            Backend::download_displacement_field(&CpuBackend, field).await
+        }
+
         async fn copy_field(&self, field: &Self::Field) -> Result<Self::Field> {
             yield_once().await;
             Backend::copy_field(&CpuBackend, field).await

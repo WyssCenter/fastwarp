@@ -3,6 +3,7 @@
 
 import { createViewer } from "./viewer.js";
 import {
+  beginRun,
   clip,
   dismissUnfinished,
   endRun,
@@ -14,6 +15,7 @@ import {
   platformOf,
   reportText,
   saveRun,
+  staleIn,
   stageText,
   supportHint,
   takeUnfinished,
@@ -489,11 +491,11 @@ function fraction(p) {
   return start + (end - start) * (done / total);
 }
 
-function crumb() {
+function crumb(begin = false) {
   const run = diag.run;
   if (!run) return;
   state.savedAt = performance.now();
-  saveRun({
+  (begin ? beginRun : saveRun)({
     started_utc: run.startedUtc,
     grid: run.grid,
     fixed: run.fixed,
@@ -529,10 +531,6 @@ function onProgress(p, memory) {
     log(p.levels ? `${name}, level ${p.level} of ${p.levels}${p.grid ? ` (${p.grid.join(" x ")})` : ""}` : name);
     if (run && run.timeline.length < 60) run.timeline.push([seconds(now - run.started), p.phase, p.levels ? p.level : null]);
     crumb();
-    if (debugParams.fault === "kill" && p.phase === (debugParams.fault_at || "rigid")) {
-      history.replaceState(null, "", location.pathname);
-      location.reload();
-    }
   } else if (now - state.savedAt > 10000) {
     crumb();
   }
@@ -829,6 +827,7 @@ async function run() {
     stage: null,
     timeline: [],
   };
+  crumb(true);
   updateButtons();
   state.timer = setInterval(() => {
     el("fw-elapsed").textContent = clock(performance.now() - state.started);
@@ -908,12 +907,27 @@ function runSample() {
 function showUnfinished(previous) {
   const [name] = PHASES[previous.stage?.phase] ?? [previous.stage?.phase ?? "the start"];
   const after = previous.elapsed_s != null ? ` after ${clock(previous.elapsed_s * 1000)}` : "";
-  const advice = previous.grid === "1mm" ? "Try the 2 mm grid." : "Try smaller images, or a computer with more memory.";
+  const grid = previous.grid === "1mm" || previous.grid === "2mm" ? ` on the ${previous.grid.replace("mm", " mm")} grid` : "";
+  let advice = "Try smaller images, or a computer with more memory.";
+  if (previous.grid === "1mm") {
+    el("fw-grid").value = "2mm";
+    advice = "The 2 mm grid needs much less memory and is selected now; for the 1 mm grid, use a computer.";
+  }
   message(
-    `The last run on this page did not finish: it stopped during "${name}"${after}. If you did not close or reload the page yourself, the browser most likely closed it because it ran out of memory. ${advice} The report below helps us find out which devices need a fix.`,
+    `The last run did not finish: the browser stopped it${grid} during "${name}"${after}, most likely because this device ran out of memory. ${advice} If the run was still open in another tab, the browser may only have paused it there. Otherwise please send the report below: it helps us find out which devices need a fix.`,
     "warning",
   );
   showReport("UnfinishedRun", `the page closed during ${stageText(previous.stage)}`, { tone: "warning", dismiss: true });
+}
+
+async function checkUnfinished() {
+  const previous = await takeUnfinished();
+  if (previous && !state.running && JSON.stringify(previous) !== JSON.stringify(diag.previous)) {
+    diag.previous = previous;
+    showUnfinished(previous);
+  }
+  const wait = staleIn();
+  if (wait != null) setTimeout(checkUnfinished, Math.max(wait, 10000) + 1000);
 }
 
 function setupReports() {
@@ -925,8 +939,12 @@ function setupReports() {
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) state.progressAt = performance.now();
+    if (state.running) crumb();
   });
   el("fw-report-box").addEventListener("toggle", refreshReport);
+  window.addEventListener("pagehide", (e) => {
+    if (!e.persisted && state.running && document.visibilityState === "visible") finish("left");
+  });
   el("fw-dismiss").addEventListener("click", () => {
     dismissUnfinished();
     diag.previous = null;
@@ -992,8 +1010,7 @@ async function main() {
   setupReports();
   updateButtons();
 
-  diag.previous = takeUnfinished();
-  if (diag.previous) showUnfinished(diag.previous);
+  await checkUnfinished();
 
   if (!pageGpu) {
     state.gpu = "failed";

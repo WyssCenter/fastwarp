@@ -123,7 +123,7 @@ class Cdp {
 const STATE = `(() => {
   const text = (id) => document.getElementById(id)?.textContent ?? "";
   const panel = document.getElementById("fw-report");
-  const state = { title: document.title, message: text("fw-message"), visible: Boolean(panel && !panel.hidden) };
+  const state = { title: document.title, search: location.search, message: text("fw-message"), visible: Boolean(panel && !panel.hidden) };
   if (!state.visible) return state;
   const box = document.getElementById("fw-report-box");
   if (!box.open) box.open = true;
@@ -175,6 +175,30 @@ const WORKER_PROBE = `new Promise((resolve) => {
   setTimeout(() => done("timeout"), 120000);
 })`;
 
+const OLD_MARKER = `localStorage.setItem("fastwarp-demo-unfinished", JSON.stringify({ started_utc: "2026-01-01T00:00Z", grid: "1mm", stage: { phase: "syn", level: 3, levels: 4 }, elapsed_s: 15, beat: Date.now() - 86400000, tab: "old" }))`;
+
+const STORAGE_KEYS = "JSON.stringify(Object.keys(localStorage).filter((k) => k.startsWith(\"fastwarp-demo\")))";
+
+const LEFT = `({ report: !document.getElementById("fw-report").hidden, keys: Object.keys(localStorage).filter((k) => k.startsWith("fastwarp-demo")) })`;
+
+function reached(phase) {
+  return `Object.keys(localStorage).some((k) => k.startsWith("fastwarp-demo-run:") && JSON.parse(localStorage.getItem(k))?.stage?.phase === ${JSON.stringify(phase)})`;
+}
+
+async function untilStage(cdp, session, phase, timeout) {
+  const started = Date.now();
+  while (Date.now() - started < timeout * 1000) {
+    await sleep(250);
+    try {
+      const r = await cdp.send("Runtime.evaluate", { expression: reached(phase), returnByValue: true }, session);
+      if (r.result.value === true) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 const crashed = ["RuntimeError", "WorkerError"];
 const GPU_ERRORS = ["GPUValidationError", "GPUInternalError", "GPUOutOfMemoryError"];
 
@@ -201,8 +225,11 @@ const CASES = [
     suite: "start",
     query: "autorun=sample&grid=2mm&plan=short",
     result: "ok",
-    checks: (r) => [
+    seed: OLD_MARKER,
+    probe: STORAGE_KEYS,
+    checks: (r, probe) => [
       [r.files?.length === 6 && r.zip_bytes > 0, "the zip holds the six output files"],
+      [probe === "[]", `a finished run leaves no run record and no unfinished-run note (got ${probe})`],
       [JSON.stringify(r.registration_grid) === "[99,117,95]", `the registration grid is 99x117x95 (got ${JSON.stringify(r.registration_grid)})`],
       [Array.isArray(r.affine_parameters) && r.affine_parameters.every(Number.isFinite), "the affine parameters are finite"],
       ...gpuClean(r),
@@ -285,13 +312,27 @@ const CASES = [
     checks: (j, s) => [[/No progress/.test(s.message), "the panel says there is no progress"]],
   },
   {
-    name: "kill",
-    query: "autorun=sample&grid=2mm&plan=short&fault=kill&fault_at=rigid",
+    name: "crash",
+    query: "autorun=sample&grid=2mm&plan=short",
+    crashAt: "rigid",
     reloads: true,
+    seed: OLD_MARKER,
     kinds: ["UnfinishedRun"],
     checks: (j, s) => [
-      [j.previous_run?.stage?.phase === "rigid", "the report holds the stage of the unfinished run"],
-      [/did not finish/.test(s.message), "the panel says the last run did not finish"],
+      [j.previous_run != null && j.previous_run.started_utc !== "2026-01-01T00:00Z", "a newer unfinished run replaces the stored note"],
+      [j.previous_run?.grid === "2mm" && j.previous_run?.stage?.phase === "rigid", "the report holds the grid and stage of the unfinished run"],
+      [/browser stopped it/.test(s.message) && /memory/.test(s.message), "the page says the browser stopped the run, most likely for memory"],
+    ],
+  },
+  {
+    name: "leave",
+    leave: { query: "autorun=sample&grid=2mm&plan=short", at: "rigid" },
+    query: "autorun=info",
+    result: "ready",
+    probe: LEFT,
+    checks: (r, probe) => [
+      [probe?.report === false, "leaving the page during a run leaves no unfinished-run note"],
+      [Array.isArray(probe?.keys) && probe.keys.length === 0, `leaving the page removes the run record (got ${JSON.stringify(probe?.keys)})`],
     ],
   },
   {
@@ -328,6 +369,10 @@ function common(c, s) {
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
 async function runResult(cdp, session, origin, c, timeout) {
+  if (c.leave) {
+    await cdp.send("Page.navigate", { url: `${origin}/browser.html?${c.leave.query}` }, session);
+    if (!(await untilStage(cdp, session, c.leave.at, timeout))) return { seconds: 0, failures: [`the run did not reach ${c.leave.at}`], state: null };
+  }
   await cdp.send("Page.navigate", { url: `${origin}/browser.html?${c.query}` }, session);
   const started = Date.now();
   let state = null;
@@ -358,6 +403,12 @@ async function runResult(cdp, session, origin, c, timeout) {
 async function runCase(cdp, session, origin, c, timeout) {
   await cdp.send("Page.navigate", { url: `${origin}/browser.html?${c.query}` }, session);
   const started = Date.now();
+  if (c.crashAt) {
+    if (!(await untilStage(cdp, session, c.crashAt, timeout))) return { seconds: 0, failures: [`the run did not reach ${c.crashAt}`], state: null };
+    await Promise.race([cdp.send("Page.crash", {}, session).catch(() => null), sleep(2000)]);
+    await sleep(500);
+    await cdp.send("Page.navigate", { url: `${origin}/browser.html` }, session);
+  }
   let state = null;
   while (Date.now() - started < timeout * 1000) {
     await sleep(1000);
@@ -367,7 +418,7 @@ async function runCase(cdp, session, origin, c, timeout) {
     } catch {
       continue;
     }
-    if (state?.json && c.kinds.includes(state.json.kind)) break;
+    if (state?.json && c.kinds.includes(state.json.kind) && (!c.reloads || !state.search)) break;
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   if (!state?.json) return { seconds, failures: [`no report within ${timeout} s (title ${state?.title}, message: ${state?.message})`], state };
@@ -432,6 +483,7 @@ async function main() {
       await cdp.send("Page.navigate", { url: `${at}/blank` }, sessionId);
       await sleep(300);
       await cdp.send("Runtime.evaluate", { expression: "localStorage.clear(); sessionStorage.clear();" }, sessionId);
+      if (c.seed) await cdp.send("Runtime.evaluate", { expression: c.seed }, sessionId);
       cdp.console.length = 0;
       const go = c.result ? runResult : runCase;
       const { seconds, failures, state } = await go(cdp, sessionId, at, c, opt.timeout);

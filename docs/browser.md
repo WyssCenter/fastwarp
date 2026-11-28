@@ -178,9 +178,12 @@ GPUs. One image pair only: several channels, masks and other recipes need the
   ran short, which happens now and then on some phones and computers, the page says that instead:
   run it again. If it happens again on the 1 mm grid, the GPU may be too slow for its longest steps
   (the browser stops a step that takes too long): choose the 2 mm grid.
-- **Computer memory.** The tab holds both images, their resampled and prepared copies and the
-  displacement fields in double precision; WebAssembly in a browser can use at most 4 GiB. A 1 mm
-  registration of the sample used 1.2 GiB of WebAssembly memory, plus the 210 MiB zip file.
+- **Computer memory.** During the registration the tab holds the prepared copies of both images
+  in double precision; afterwards it holds the displacement fields in single precision, the warped
+  image and the zip file. WebAssembly in a browser can use at most 4 GiB, and its memory does not
+  shrink during a visit of the page. A 1 mm registration of the sample used 435 MiB of WebAssembly
+  memory while the GPU worked and 836 MiB in all, with the 210 MiB zip file; phones also share
+  their memory with the GPU, which needs about 1.4 GiB more for the 1 mm grid.
 - **Speed.** Slower than natively: the optimisers wait for many small results from the GPU, and
   each takes longer to come back in a browser, and the CPU parts (reading, resampling, writing
   compressed files) run on one core. On one laptop GPU (Intel Arc 140V) Chrome registered the
@@ -190,9 +193,14 @@ GPUs. One image pair only: several channels, masks and other recipes need the
 ## Problems?
 
 When the page cannot use WebGPU, or a run fails or makes no progress for three minutes, the page
-says what happened and what to try, and offers a diagnostic report. When a run did not finish
-because the browser closed or reloaded the page (phones do this when a tab needs too much memory),
-the page says so the next time you open it, until a run succeeds or you dismiss the note.
+says what happened and what to try, and offers a diagnostic report. When the browser
+stopped a run by closing the page (phones do this when a tab needs too much memory), the page says
+so at the top of the demo when you open it again, and after a 1 mm run selects the 2 mm grid. A
+run that was last seen in a hidden tab is reported once it has been quiet for two minutes, as such
+a tab may only be paused.
+Closing, reloading or leaving the page yourself during a run leaves no note. Starting a run or
+**Dismiss** removes the note. A run in a tab the browser has put to sleep in the background can be
+reported as stopped.
 
 - **Send report via e-mail** opens your mail app with a short report addressed to the FastWarp
   maintainers. You can read and change it before you send it. Mail apps limit the length of such
@@ -221,7 +229,7 @@ It never contains your images or any part of them, the text fields of their head
 or anything else from your computer. The page sends nothing: the report leaves your device only
 when you send the e-mail or paste the text somewhere yourself. The note about an unfinished run is
 kept in your browser's local storage on your device; it holds the same kind of information and is
-removed after the next successful run or when you dismiss it.
+removed when you start the next run or dismiss it.
 
 ## Checking the result
 

@@ -53,6 +53,17 @@ impl ZipWriter {
         }
     }
 
+    /// An empty archive like [`ZipWriter::new`] with room for `bytes` bytes, so that an archive
+    /// that stays within them is never moved while it grows; without room when that much memory
+    /// cannot be had, like [`ZipWriter::new`].
+    pub fn with_capacity(bytes: usize) -> Self {
+        let mut buf = Vec::new();
+        if buf.try_reserve_exact(bytes).is_err() {
+            return Self::new();
+        }
+        Self { buf, ..Self::new() }
+    }
+
     /// Sets the modification time of the entries added after it (local time, 1980 to 2107).
     pub fn set_time(
         &mut self,

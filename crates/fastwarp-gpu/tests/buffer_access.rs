@@ -122,6 +122,21 @@ fn message(e: impl std::fmt::Display) -> String {
 }
 
 #[test]
+fn a_field_comes_back_as_a_displacement_field_like_its_f64_download() {
+    let Some(b) = backend() else { return };
+    let host = sample_field(grid());
+    let field = block_on(b.upload_field(&host)).unwrap();
+    let direct = block_on(b.download_displacement_field(&field)).unwrap();
+    let through_f64 = block_on(b.download_field(&field))
+        .unwrap()
+        .to_displacement_field()
+        .unwrap();
+    assert_eq!(direct.grid(), through_f64.grid());
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(direct.data()), bits(through_f64.data()));
+}
+
+#[test]
 fn custom_kernel_scales_a_backend_field_like_the_cpu() {
     let Some(b) = backend() else { return };
     let host = sample_field(grid());
