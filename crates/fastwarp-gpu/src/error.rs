@@ -6,6 +6,10 @@
 pub enum GpuError {
     #[error("no usable GPU adapter: {0}")]
     NoAdapter(String),
+    /// The adapter name filter (`FASTWARP_GPU_ADAPTER` or an `adapter` argument) matches no
+    /// adapter that exists; the message lists the adapters found and a close match.
+    #[error("{0}")]
+    AdapterNotFound(String),
     #[error("insufficient limit {limit}: have {have}, need {need}")]
     LimitsInsufficient {
         limit: &'static str,

@@ -447,6 +447,53 @@ fn register(args: Vec<String>) -> Output {
 }
 
 #[test]
+fn fastwarp_engine_cpu_runs_ants_registration_without_a_gpu() {
+    let d = tmp("cpu_engine");
+    let (f, m) = blob_pair(&d);
+    let args = [
+        argv(&["ants-registration", "-d", "3"]),
+        com(&f, &m),
+        linear_stages(&f, &m),
+        syn_stage(&f, &m),
+        argv(&["-o", &s(&d.join("o_")), "-v", "1"]),
+    ]
+    .concat();
+    let o = Command::new(exe())
+        .env("FASTWARP_ENGINE", "cpu")
+        .args(&args)
+        .output()
+        .unwrap();
+    ok(&o, "CPU engine");
+    let report = text(&o.stdout);
+    assert!(
+        report.contains("compatibility mode on cpu (f64, "),
+        "{report}"
+    );
+    assert!(report.contains("syn level"), "{report}");
+    assert_eq!(
+        files_in(&d),
+        names(&[
+            "f.nii.gz",
+            "m.nii.gz",
+            "o_0GenericAffine.mat",
+            "o_1InverseWarp.nii.gz",
+            "o_1Warp.nii.gz"
+        ])
+    );
+    let o = Command::new(exe())
+        .env("FASTWARP_ENGINE", "quantum")
+        .args(&args)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(
+        text(&o.stderr).contains("FASTWARP_ENGINE"),
+        "{}",
+        text(&o.stderr)
+    );
+}
+
+#[test]
 fn registration_writes_the_files_ants_writes() {
     if !gpu() {
         return;

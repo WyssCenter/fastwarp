@@ -551,8 +551,7 @@ pub struct JointFusionOptions {
 }
 
 fn open_gpu(adapter: Option<String>) -> Result<GpuContext, CliError> {
-    let unavailable =
-        |e: fastwarp_gpu::GpuError| CliError::new(ExitStatus::GpuUnavailable, e.to_string());
+    let unavailable = |e: fastwarp_gpu::GpuError| CliError::from(crate::engine::gpu_failure(e));
     let mut sel = BackendSelect::from_env().map_err(unavailable)?;
     if adapter.is_some() {
         sel.adapter_substring = adapter;

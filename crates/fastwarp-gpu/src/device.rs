@@ -455,6 +455,7 @@ impl GpuContext {
     {
         let mut tried = Vec::new();
         let mut failures = Vec::new();
+        let mut seen: Vec<(String, String)> = Vec::new();
         for backends in sel.backend.candidates() {
             let instance = new_instance(backends);
             let adapters = match enumerate_async(&instance, backends, sel.force_software).await {
@@ -469,6 +470,10 @@ impl GpuContext {
                 }
             };
             let count = adapters.len();
+            seen.extend(adapters.iter().map(|a| {
+                let i = a.get_info();
+                (i.name, format!("{:?}", i.backend))
+            }));
             match pick(adapters, sel) {
                 Some(adapter) => {
                     let name = adapter.get_info().name;
@@ -496,6 +501,15 @@ impl GpuContext {
         let mut why = tried.join("; ");
         if let Some(first) = failures.first() {
             return Err(combined_failure(first, why));
+        }
+        if let Some(s) = &sel.adapter_substring {
+            let needle = s.to_ascii_lowercase();
+            if !seen
+                .iter()
+                .any(|(name, _)| name.to_ascii_lowercase().contains(&needle))
+            {
+                return Err(GpuError::AdapterNotFound(adapter_not_found(s, &seen)));
+            }
         }
         if let Some(s) = &sel.adapter_substring {
             why.push_str(&format!("; adapter filter '{s}'"));
@@ -809,9 +823,86 @@ fn vulkan_heap_size(adapter: &wgpu::Adapter) -> Option<DeviceMemory> {
         })
 }
 
+/// The message of an adapter filter `filter` that matches none of `seen` (name, graphics API):
+/// the adapters found and, when one is close, a suggestion.
+pub fn adapter_not_found(filter: &str, seen: &[(String, String)]) -> String {
+    let mut found: Vec<String> = Vec::new();
+    for (name, backend) in seen {
+        let entry = format!("{name} ({backend})");
+        if !found.contains(&entry) {
+            found.push(entry);
+        }
+    }
+    let mut text = format!("the adapter name '{filter}' matches no GPU adapter; ");
+    if found.is_empty() {
+        text.push_str("no adapter was found at all");
+    } else {
+        text.push_str(&format!("adapters found: {}", found.join(", ")));
+    }
+    let names: Vec<&str> = seen.iter().map(|(n, _)| n.as_str()).collect();
+    if let Some(close) = similar_adapter(filter, &names) {
+        text.push_str(&format!("; did you mean '{close}'?"));
+    }
+    text
+}
+
+/// The adapter name of `names` closest to `filter` when one is close: the same letters and
+/// digits in the same order with other spacing or punctuation, every word of `filter` in the
+/// name, or a part of the name within a small edit distance of `filter` (ignoring case).
+pub fn similar_adapter<'a>(filter: &str, names: &[&'a str]) -> Option<&'a str> {
+    let squash = |s: &str| -> Vec<char> {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let needle = squash(filter);
+    if needle.len() < 2 {
+        return None;
+    }
+    let words: Vec<String> = filter
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+    let limit = (needle.len() / 4).max(1);
+    let mut best: Option<(usize, &'a str)> = None;
+    for &name in names {
+        let hay = squash(name);
+        let lower = name.to_lowercase();
+        let distance = if hay.windows(needle.len()).any(|w| w == needle.as_slice())
+            || (!words.is_empty() && words.iter().all(|w| lower.contains(w.as_str())))
+        {
+            0
+        } else {
+            window_distance(&needle, &hay)
+        };
+        if distance <= limit && best.is_none_or(|(d, _)| distance < d) {
+            best = Some((distance, name));
+        }
+    }
+    best.map(|(_, n)| n)
+}
+
+/// The smallest edit distance between `needle` and any run of `hay` (a run of any length).
+fn window_distance(needle: &[char], hay: &[char]) -> usize {
+    let mut prev: Vec<usize> = (0..=needle.len()).collect();
+    let mut best = prev[needle.len()];
+    for &h in hay {
+        let mut cur = vec![0; needle.len() + 1];
+        for (j, &n) in needle.iter().enumerate() {
+            let substitute = prev[j] + usize::from(n != h);
+            cur[j + 1] = substitute.min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        best = best.min(cur[needle.len()]);
+        prev = cur;
+    }
+    best
+}
+
 fn combined_failure(kind: &GpuError, text: String) -> GpuError {
     match kind {
         GpuError::NoAdapter(_) => GpuError::NoAdapter(text),
+        GpuError::AdapterNotFound(_) => GpuError::AdapterNotFound(text),
         GpuError::Validation(_) => GpuError::Validation(text),
         GpuError::Internal(_) => GpuError::Internal(text),
         GpuError::DeviceLost(_) => GpuError::DeviceLost(text),
@@ -840,6 +931,44 @@ fn wait_timeout() -> std::time::Duration {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_close_adapter_name_is_suggested_and_a_far_one_is_not() {
+        let names = [
+            "NVIDIA RTX PRO 6000 Blackwell",
+            "Intel(R) Arc(TM) 140V GPU (16GB)",
+            "llvmpipe (LLVM 21.1.8, 256 bits)",
+        ];
+        for (filter, want) in [
+            ("nvidai rtx", Some(names[0])),
+            ("rtx nvidia", Some(names[0])),
+            ("NVIDIA-RTX", Some(names[0])),
+            ("Arc 140V", Some(names[1])),
+            ("intel arcc", Some(names[1])),
+            ("lvmpipe", Some(names[2])),
+            ("quantum", None),
+            ("radeon 7900", None),
+            ("", None),
+            ("x", None),
+        ] {
+            assert_eq!(similar_adapter(filter, &names), want, "{filter:?}");
+        }
+        let seen = vec![
+            (names[0].to_string(), "Vulkan".to_string()),
+            (names[0].to_string(), "Vulkan".to_string()),
+            (names[2].to_string(), "Vulkan".to_string()),
+        ];
+        let text = adapter_not_found("nvidai rtx", &seen);
+        assert_eq!(
+            text,
+            "the adapter name 'nvidai rtx' matches no GPU adapter; adapters found: NVIDIA RTX \
+             PRO 6000 Blackwell (Vulkan), llvmpipe (LLVM 21.1.8, 256 bits) (Vulkan); did you \
+             mean 'NVIDIA RTX PRO 6000 Blackwell'?"
+        );
+        let text = adapter_not_found("quantum", &seen);
+        assert!(!text.contains("did you mean"), "{text}");
+        assert!(adapter_not_found("x", &[]).ends_with("no adapter was found at all"));
+    }
 
     #[test]
     fn env_var_reads_the_new_name_then_the_old_name() {

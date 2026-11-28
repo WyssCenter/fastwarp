@@ -15,8 +15,10 @@ resampling around it. If you need something on this list, use ANTs or ANTsPy for
 
 ## Registration
 
-- **A GPU is required.** The registration functions do not run on the CPU. Without a usable GPU
-  they raise {class}`~fastwarp.GpuUnavailableError` (see [Falling back to ANTs](gpu.md#fall-back-to-ants)).
+- **The GPU is the default engine.** Without a usable GPU the registration functions raise
+  {class}`~fastwarp.GpuUnavailableError` (see [Falling back to ANTs](gpu.md#fall-back-to-ants)),
+  unless the [CPU engine](cpu.md) is chosen: it is much slower than the GPU, and its results
+  agree with the GPU's within tolerance, not bit for bit.
 - **Three transforms, in a fixed order.** {term}`Rigid`, {term}`affine` and {term}`SyN`: any
   number of rigid and affine stages, then any number of SyN stages that end with the same shrink
   factor (see [Stage lists](recipes.md#stage-lists)). ANTs' other transforms, such as

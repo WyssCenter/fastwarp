@@ -19,8 +19,8 @@ use rayon::prelude::*;
 use serde_json::{json, Value};
 
 use crate::args::BenchArgs;
-use crate::commands::{load_recipe, print, print_json};
-use crate::engine::{self, GpuInfo};
+use crate::commands::{common_engine, load_recipe, print, print_json};
+use crate::engine::{self, EngineChoice, EngineRequest, GpuInfo};
 use crate::image;
 use crate::recipe::Recipe;
 use crate::{CliError, ExitStatus};
@@ -168,6 +168,9 @@ pub struct Case {
 /// The machine a benchmark ran on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Machine {
+    /// The engine that ran: `gpu` or `cpu`.
+    pub engine: String,
+    /// The GPU's name, or `none` on the CPU engine (whose GPU fields are then empty).
     pub gpu: String,
     pub driver: String,
     pub backend: String,
@@ -215,11 +218,12 @@ pub fn report_json(r: &Report) -> Value {
     json!({
         "fastwarp_version": m.fastwarp_version,
         "machine": {
+            "engine": m.engine,
             "gpu": m.gpu,
             "driver": m.driver,
             "backend": m.backend,
             "device_type": m.device_type,
-            "memory_budget_bytes": m.memory_budget_bytes,
+            "memory_budget_bytes": (m.engine != "cpu").then_some(m.memory_budget_bytes),
             "cpu": m.cpu,
             "logical_cores": m.logical_cores,
             "threads": m.threads,
@@ -258,18 +262,23 @@ pub fn report_json(r: &Report) -> Value {
 pub fn report_text(r: &Report) -> String {
     let m = &r.machine;
     let mut s = format!("fastwarp {} bench\n", m.fastwarp_version);
-    s.push_str(&format!(
-        "gpu            {} ({}, {}), driver {}\n",
-        m.gpu,
-        m.backend,
-        m.device_type,
-        if m.driver.is_empty() {
-            "unknown"
-        } else {
-            &m.driver
-        }
-    ));
-    s.push_str(&format!("memory budget  {}\n", gib(m.memory_budget_bytes)));
+    s.push_str(&format!("engine         {}\n", m.engine));
+    if m.engine == "cpu" {
+        s.push_str("gpu            none (CPU engine, f64)\n");
+    } else {
+        s.push_str(&format!(
+            "gpu            {} ({}, {}), driver {}\n",
+            m.gpu,
+            m.backend,
+            m.device_type,
+            if m.driver.is_empty() {
+                "unknown"
+            } else {
+                &m.driver
+            }
+        ));
+        s.push_str(&format!("memory budget  {}\n", gib(m.memory_budget_bytes)));
+    }
     s.push_str(&format!(
         "cpu            {}, {} logical cores, {} threads ({})\n",
         m.cpu, m.logical_cores, m.threads, m.threads_source
@@ -442,13 +451,15 @@ fn set_threads(threads: Option<u32>) -> Result<String, CliError> {
     })
 }
 
-fn machine(gpu: &GpuInfo, threads_source: String) -> Machine {
+fn machine(gpu: Option<&GpuInfo>, threads_source: String) -> Machine {
+    let text = |f: fn(&GpuInfo) -> &String| gpu.map(|g| f(g).clone()).unwrap_or_default();
     Machine {
-        gpu: gpu.name.clone(),
-        driver: gpu.driver.clone(),
-        backend: gpu.backend.clone(),
-        device_type: gpu.device_type.clone(),
-        memory_budget_bytes: gpu.memory_budget_bytes,
+        engine: if gpu.is_some() { "gpu" } else { "cpu" }.into(),
+        gpu: gpu.map_or_else(|| "none".into(), |g| g.name.clone()),
+        driver: text(|g| &g.driver),
+        backend: text(|g| &g.backend),
+        device_type: text(|g| &g.device_type),
+        memory_budget_bytes: gpu.map_or(0, |g| g.memory_budget_bytes),
         cpu: cpu_model(),
         logical_cores: std::thread::available_parallelism()
             .map(|n| n.get())
@@ -469,7 +480,7 @@ fn time_case(
     moving: &Volume<f64>,
     iso_mm: f64,
     recipe: &Recipe,
-    adapter: &Option<String>,
+    engine: &EngineRequest,
     warmup: u32,
     repeat: u32,
     err: &mut dyn Write,
@@ -490,7 +501,7 @@ fn time_case(
             vec![m],
             None,
             iso_mm,
-            adapter.clone(),
+            engine.clone(),
             None,
             recipe.clone(),
         )?;
@@ -523,7 +534,12 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
     let threads_source = set_threads(a.threads)?;
     let warmup = a.warmup.unwrap_or(if a.repeat > 1 { 1 } else { 0 });
     let recipe = load_recipe(a.recipe.as_deref(), 1)?;
-    let adapter = a.common.adapter.clone();
+    let mut request = common_engine(&a.common)?;
+    if request.choice == EngineChoice::Cpu && request.adapter.is_some() {
+        return Err(CliError::usage(
+            "--adapter picks a GPU and cannot be used with --engine cpu",
+        ));
+    }
     let user = match (&a.fixed, &a.moving) {
         (Some(f), Some(m)) => {
             if let Some(mm) = a.iso_mm {
@@ -535,8 +551,31 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
         }
         _ => None,
     };
-    let gpu = engine::gpu_info(adapter.clone())?;
-    let machine = machine(&gpu, threads_source);
+    let gpu = match request.choice {
+        EngineChoice::Cpu => None,
+        EngineChoice::Gpu => Some(engine::gpu_info(request.adapter.clone())?),
+        EngineChoice::Auto => match engine::settle_engine(&request, &recipe)? {
+            ("gpu", _) => Some(engine::gpu_info(request.adapter.clone())?),
+            (_, why) => {
+                if let Some(w) = why {
+                    let _ = writeln!(err, "fastwarp bench: warning: {w}");
+                }
+                None
+            }
+        },
+    };
+    if gpu.is_some() {
+        request.choice = EngineChoice::Gpu;
+    } else {
+        request.choice = EngineChoice::Cpu;
+        request.adapter = None;
+    }
+    let fit_target = if gpu.is_some() {
+        "the GPU"
+    } else {
+        "the host memory"
+    };
+    let machine = machine(gpu.as_ref(), threads_source);
     let mut cases = Vec::new();
     if let Some((f, m)) = user {
         let fixed = image::load(&f, "fixed image")?;
@@ -558,14 +597,16 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
             dims,
             Some(moving_dims),
             1,
-            adapter.clone(),
+            &request,
             &recipe,
             &engine::MaskDims::default(),
-        )? {
-            Err(why) => case.skipped = Some(format!("does not fit the GPU: {why}")),
+        )?
+        .1
+        {
+            Err(why) => case.skipped = Some(format!("does not fit {fit_target}: {why}")),
             Ok(()) => {
                 let runs = time_case(
-                    "images", &fixed, &moving, iso_mm, &recipe, &adapter, warmup, a.repeat, err,
+                    "images", &fixed, &moving, iso_mm, &recipe, &request, warmup, a.repeat, err,
                 );
                 record(&mut case, runs)?;
             }
@@ -590,11 +631,13 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
                 size.dims(),
                 None,
                 1,
-                adapter.clone(),
+                &request,
                 &recipe,
                 &engine::MaskDims::default(),
-            )? {
-                Err(why) => case.skipped = Some(format!("does not fit the GPU: {why}")),
+            )?
+            .1
+            {
+                Err(why) => case.skipped = Some(format!("does not fit {fit_target}: {why}")),
                 Ok(()) => {
                     let (fixed, moving) = phantom(size)?;
                     let runs = time_case(
@@ -603,7 +646,7 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
                         &moving,
                         size.spacing(),
                         &recipe,
-                        &adapter,
+                        &request,
                         warmup,
                         a.repeat,
                         err,
@@ -629,6 +672,8 @@ pub fn run(a: BenchArgs, out: &mut dyn Write, err: &mut dyn Write) -> Result<Exi
     }
     Ok(if any_failed {
         ExitStatus::Registration
+    } else if all_skipped && request.choice == EngineChoice::Cpu {
+        ExitStatus::HostMemory
     } else if all_skipped {
         ExitStatus::GpuCapacity
     } else {
@@ -644,6 +689,7 @@ mod tests {
     fn sample() -> Report {
         Report {
             machine: Machine {
+                engine: "gpu".into(),
                 gpu: "Test GPU".into(),
                 driver: "test driver".into(),
                 backend: "Vulkan".into(),
@@ -735,6 +781,7 @@ mod tests {
     fn the_json_report_has_every_field() {
         let v = report_json(&sample());
         for key in [
+            "engine",
             "gpu",
             "driver",
             "backend",

@@ -39,9 +39,11 @@ import numpy as np
 from . import _core
 from ._api import _grid_args, _image_args, _prepared_prefix
 from ._core import (
+    AdapterNotFoundError,
     CancelToken,
     GpuCapacityError,
     GpuUnavailableError,
+    HostMemoryError,
     UnsupportedArgument,
 )
 
@@ -1045,6 +1047,7 @@ def registration(
     adapter: str | None = None,
     cancel: CancelToken | None = None,
     fallback: str | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any] | int:
     """Register ``moving`` onto ``fixed`` on the GPU, as ``ants.registration`` does.
 
@@ -1137,9 +1140,18 @@ def registration(
         Keyword only, FastWarp only. A token that another thread can use to stop the run.
     fallback : {None, "ants"}, optional
         Keyword only, FastWarp only. With ``"ants"``, an argument FastWarp refuses, no usable
-        GPU, or a registration that does not fit the GPU runs ANTsPy's ``ants.registration``
-        with the same arguments instead, with a ``UserWarning``; the result then holds
-        ``"engine"``.
+        GPU, or a registration that does not fit the GPU (or the host memory on the CPU engine)
+        runs ANTsPy's ``ants.registration`` with the same arguments instead, with a
+        ``UserWarning``; the result then holds ``"engine"``. With ``engine="auto"``, no usable
+        GPU falls back to FastWarp's CPU engine first. An ``adapter`` that matches no GPU
+        adapter is an error, not a reason to fall back.
+    engine : {"gpu", "cpu", "auto"}, optional
+        Keyword only, FastWarp only. FastWarp's engine, as for :func:`fastwarp.register_syn`:
+        ``"cpu"`` is much slower than the GPU, and its results agree with the GPU's within
+        tolerance, not bit for bit; ``"auto"`` uses the GPU, or the CPU engine with a
+        ``UserWarning`` when there is no usable GPU. By default the ``FASTWARP_ENGINE``
+        environment variable applies, if set, and otherwise ``"gpu"``. The result's
+        ``"fastwarp_engine"`` key names the engine that ran.
 
     Returns
     -------
@@ -1148,8 +1160,9 @@ def registration(
         ``moving``'s grid), both ``ANTsImage`` of ``fixed``'s pixel type, linear interpolation;
         ``fwdtransforms`` and ``invtransforms``, lists of the transform files in the order
         ``apply_transforms`` takes them, or the composite file names with
-        ``write_composite_transform``. With ``fallback="ants"`` also ``engine``: ``"fastwarp"``
-        or ``"ants"``. An argument list returns 0.
+        ``write_composite_transform``. When FastWarp ran, ``fastwarp_engine``: ``"gpu"`` or
+        ``"cpu"``, the engine that ran. With ``fallback="ants"`` also ``engine``: ``"fastwarp"`` or
+        ``"ants"`` (no ``fastwarp_engine`` when ANTs ran). An argument list returns 0.
 
     Raises
     ------
@@ -1163,8 +1176,13 @@ def registration(
         ANTsPy is not installed.
     GpuUnavailableError
         No usable GPU. Raised before any work.
+    AdapterNotFoundError
+        ``adapter`` matches no GPU adapter, whatever the engine. Raised before any work.
     GpuCapacityError
         The registration does not fit the GPU's memory. Raised before any work.
+    HostMemoryError
+        On the CPU engine, the registration needs more memory than the host has available.
+        Raised before any work.
     RegistrationCancelled
         ``cancel`` was cancelled.
     RegistrationError
@@ -1210,9 +1228,11 @@ def registration(
                 _ignored(_REG, name, given[name], "with an argument list", 3)
         try:
             argv = _raw_argv(fixed)
-            out = _core.ants_registration(argv, iso_mm=iso, adapter=adapter, cancel=cancel)
-        except (UnsupportedArgument, GpuUnavailableError, GpuCapacityError) as e:
-            if fallback != "ants":
+            out = _core.ants_registration(
+                argv, iso_mm=iso, adapter=adapter, cancel=cancel, engine=engine
+            )
+        except (UnsupportedArgument, GpuUnavailableError, GpuCapacityError, HostMemoryError) as e:
+            if fallback != "ants" or isinstance(e, AdapterNotFoundError):
                 raise
             _fall_back(_REG, e)
             return _ants().registration(fixed, None)
@@ -1270,12 +1290,14 @@ def registration(
             iso_mm=iso,
             adapter=adapter,
             cancel=cancel,
+            engine=engine,
         )
     except BaseException as e:
         if made is not None:
             _remove_empty(made)
-        refused = (UnsupportedArgument, GpuUnavailableError, GpuCapacityError)
-        if isinstance(e, refused) and fallback == "ants":
+        refused = (UnsupportedArgument, GpuUnavailableError, GpuCapacityError, HostMemoryError)
+        missing = isinstance(e, AdapterNotFoundError)
+        if isinstance(e, refused) and fallback == "ants" and not missing:
             _fall_back(_REG, _relabel(e))
             return {**ants.registration(fixed, moving, **_antspy_args(given)), "engine": "ants"}
         if isinstance(e, (ValueError, RuntimeError)):
@@ -1303,6 +1325,7 @@ def registration(
         inverse = [f for f in files if f.endswith("InverseWarp.nii.gz")]
         result["fwdtransforms"] = warp + affine
         result["invtransforms"] = affine + inverse
+    result["fastwarp_engine"] = out["engine"]
     if fallback == "ants":
         result["engine"] = "fastwarp"
     return result

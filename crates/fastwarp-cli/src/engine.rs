@@ -16,7 +16,9 @@ use fastwarp_gpu::{
     plan_capacity_linear, plan_capacity_syn_stages, BackendSelect, CapacityCaps, CapacityError,
     SynStageCapacity, WgpuBackend,
 };
+use fastwarp_reg::cpu::CpuBackend;
 use fastwarp_reg::init::{initial_transform, InitFeature};
+use fastwarp_reg::linear::CpuLinearEngine;
 use fastwarp_reg::mask::MaskVolume;
 use fastwarp_reg::preprocess::preprocess_volume;
 use fastwarp_reg::recipe::SynMetric;
@@ -31,7 +33,7 @@ use fastwarp_reg::{Grid, RegError, Volume};
 
 use crate::post;
 use crate::recipe::{kind_name, Recipe};
-use crate::session::Session;
+use crate::session::{LinearDevice, Session};
 
 /// Why an engine call failed.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,8 +42,12 @@ pub enum Failure {
     Invalid(String),
     /// No usable GPU adapter.
     GpuUnavailable(String),
+    /// The requested adapter name matches no GPU adapter; never a reason to fall back.
+    AdapterNotFound(String),
     /// The registration grid does not fit the GPU's memory budget or binding limit.
     GpuCapacity(String),
+    /// The registration on the CPU engine would need more memory than the host has available.
+    HostMemory(String),
     /// The registration itself failed.
     Registration(String),
     /// The run was cancelled through its cancel flag.
@@ -58,7 +64,9 @@ impl fmt::Display for Failure {
             Failure::Cancelled => f.write_str("registration cancelled"),
             Failure::Invalid(m)
             | Failure::GpuUnavailable(m)
+            | Failure::AdapterNotFound(m)
             | Failure::GpuCapacity(m)
+            | Failure::HostMemory(m)
             | Failure::Registration(m)
             | Failure::Read(m)
             | Failure::Write(m) => f.write_str(m),
@@ -116,11 +124,20 @@ pub fn finest_spacing(grid: &Grid) -> f64 {
 /// `FASTWARP_GPU_ALLOW_SOFTWARE`, `WGPU_FORCE_FALLBACK_ADAPTER`) selects; `adapter_substring`
 /// overrides `FASTWARP_GPU_ADAPTER`.
 pub fn open_gpu(adapter_substring: Option<String>) -> Result<WgpuBackend, Failure> {
-    let mut sel = BackendSelect::from_env().map_err(|e| Failure::GpuUnavailable(e.to_string()))?;
+    let mut sel = BackendSelect::from_env().map_err(gpu_failure)?;
     if adapter_substring.is_some() {
         sel.adapter_substring = adapter_substring;
     }
-    WgpuBackend::new(&sel).map_err(|e| Failure::GpuUnavailable(e.to_string()))
+    WgpuBackend::new(&sel).map_err(gpu_failure)
+}
+
+/// A failure to open the GPU: [`Failure::AdapterNotFound`] for an adapter name that matches no
+/// adapter, else [`Failure::GpuUnavailable`].
+pub fn gpu_failure(e: fastwarp_gpu::GpuError) -> Failure {
+    match e {
+        fastwarp_gpu::GpuError::AdapterNotFound(m) => Failure::AdapterNotFound(m),
+        other => Failure::GpuUnavailable(other.to_string()),
+    }
 }
 
 /// GPU backends of finished registrations, by key of [`gpu_key`], at most [`MAX_IDLE_GPUS`],
@@ -210,6 +227,277 @@ fn checkout_gpu(adapter: Option<String>) -> Result<GpuCheckout, Failure> {
         None => open_gpu(adapter)?,
     };
     Ok(GpuCheckout { key, gpu })
+}
+
+/// The environment variable that picks the engine when a call does not: `gpu`, `cpu` or `auto`.
+pub const ENGINE_ENV: &str = "FASTWARP_ENGINE";
+
+/// The engine a registration asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EngineChoice {
+    /// The GPU; no usable GPU is an error.
+    #[default]
+    Gpu,
+    /// The `f64` CPU reference engine on all host threads: much slower than the GPU, with results
+    /// that agree with the GPU's within the parity tolerances, not bit for bit.
+    Cpu,
+    /// The GPU, or the CPU engine with a warning when there is no usable GPU.
+    Auto,
+}
+
+impl EngineChoice {
+    /// The choice of a name: `gpu`, `cpu` or `auto` (case and surrounding spaces ignored).
+    pub fn parse(name: &str) -> Result<Self, Failure> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "gpu" => Ok(Self::Gpu),
+            "cpu" => Ok(Self::Cpu),
+            "auto" => Ok(Self::Auto),
+            _ => Err(Failure::Invalid(format!(
+                "engine must be 'gpu', 'cpu' or 'auto', not {name:?}"
+            ))),
+        }
+    }
+
+    /// The name [`EngineChoice::parse`] takes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Gpu => "gpu",
+            Self::Cpu => "cpu",
+            Self::Auto => "auto",
+        }
+    }
+
+    /// `name` when given, else [`ENGINE_ENV`] (or its former `DBSLOC_ENGINE` name) when set and
+    /// not empty, else [`EngineChoice::Gpu`].
+    pub fn resolve(name: Option<&str>) -> Result<Self, Failure> {
+        if let Some(n) = name {
+            return Self::parse(n);
+        }
+        let var = fastwarp_gpu::device::env_var_name(ENGINE_ENV);
+        match fastwarp_gpu::device::env_var_os(ENGINE_ENV).map(|v| v.into_string()) {
+            None => Ok(Self::Gpu),
+            Some(Ok(v)) if v.trim().is_empty() => Ok(Self::Gpu),
+            Some(Ok(v)) => Self::parse(&v).map_err(|_| {
+                Failure::Invalid(format!(
+                    "{var}={v:?}: the engine must be 'gpu', 'cpu' or 'auto'"
+                ))
+            }),
+            Some(Err(_)) => Err(Failure::Invalid(format!(
+                "{var} is not valid text: the engine must be 'gpu', 'cpu' or 'auto'"
+            ))),
+        }
+    }
+}
+
+/// Called once, before any work, when [`EngineChoice::Auto`] falls back to the CPU engine, with
+/// the warning to show; an error stops the run before any work.
+pub type FallbackHook = Arc<dyn Fn(&str) -> Result<(), Failure> + Send + Sync>;
+
+/// The engine a run asks for: the choice, the GPU adapter filter and where a fall back to the CPU
+/// is reported. Without a hook, the fall-back warning is the first entry of the run's warnings.
+#[derive(Clone, Default)]
+pub struct EngineRequest {
+    pub choice: EngineChoice,
+    /// The GPU whose name contains this text (overrides `FASTWARP_GPU_ADAPTER`); refused with
+    /// [`EngineChoice::Cpu`].
+    pub adapter: Option<String>,
+    pub on_fallback: Option<FallbackHook>,
+}
+
+impl EngineRequest {
+    /// The GPU engine with an optional adapter filter.
+    pub fn gpu(adapter: Option<String>) -> Self {
+        Self::new(EngineChoice::Gpu, adapter)
+    }
+
+    /// `choice` with an optional adapter filter and no fall-back hook.
+    pub fn new(choice: EngineChoice, adapter: Option<String>) -> Self {
+        Self {
+            choice,
+            adapter,
+            on_fallback: None,
+        }
+    }
+}
+
+impl fmt::Debug for EngineRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EngineRequest")
+            .field("choice", &self.choice)
+            .field("adapter", &self.adapter)
+            .field("on_fallback", &self.on_fallback.is_some())
+            .finish()
+    }
+}
+
+/// The warning of a fall back to the CPU engine for `why` the GPU is not usable.
+pub fn fallback_warning(why: &str) -> String {
+    format!(
+        "no usable GPU ({why}); engine 'auto' runs on the CPU engine instead, which is much \
+         slower than the GPU and whose results agree with the GPU's within tolerance, not bit \
+         for bit"
+    )
+}
+
+/// The device of one run.
+enum Device {
+    Gpu(Box<GpuCheckout>),
+    Cpu,
+}
+
+impl Device {
+    fn engine(&self) -> &'static str {
+        match self {
+            Device::Gpu(_) => "gpu",
+            Device::Cpu => "cpu",
+        }
+    }
+
+    fn adapter(&self) -> String {
+        match self {
+            Device::Gpu(g) => adapter_name(g),
+            Device::Cpu => cpu_adapter_name(),
+        }
+    }
+
+    fn finish(self) {
+        if let Device::Gpu(g) = self {
+            g.finish();
+        }
+    }
+}
+
+/// The adapter name of the CPU engine: `cpu (f64, N threads)`.
+pub fn cpu_adapter_name() -> String {
+    format!("cpu (f64, {} threads)", rayon::current_num_threads())
+}
+
+/// Refuses an adapter filter with the CPU engine.
+fn check_cpu_adapter(adapter: Option<&str>) -> Result<(), Failure> {
+    match adapter {
+        Some(a) => Err(Failure::Invalid(format!(
+            "adapter {a:?} picks a GPU and cannot be used with engine 'cpu'"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The device `request` asks for, checked for `plan` (a GPU whose dense MI kernels failed their
+/// known-answer check is unusable for SyN stages with Mattes MI), and the fall-back warning when
+/// [`EngineChoice::Auto`] fell back to the CPU engine (the hook has had it).
+fn open_device(
+    request: &EngineRequest,
+    plan: &StagePlan,
+) -> Result<(Device, Option<String>), Failure> {
+    let gpu = || -> Result<GpuCheckout, Failure> {
+        let g = checkout_gpu(request.adapter.clone())?;
+        check_mi_available(&g, plan)?;
+        Ok(g)
+    };
+    match request.choice {
+        EngineChoice::Cpu => {
+            check_cpu_adapter(request.adapter.as_deref())?;
+            Ok((Device::Cpu, None))
+        }
+        EngineChoice::Gpu => Ok((Device::Gpu(Box::new(gpu()?)), None)),
+        EngineChoice::Auto => match gpu() {
+            Ok(g) => Ok((Device::Gpu(Box::new(g)), None)),
+            Err(Failure::GpuUnavailable(why)) => {
+                let warning = fallback_warning(&why);
+                if let Some(hook) = &request.on_fallback {
+                    hook(&warning)?;
+                }
+                Ok((Device::Cpu, Some(warning)))
+            }
+            Err(e) => Err(e),
+        },
+    }
+}
+
+/// Host bytes per voxel of the registration grid that the CPU engine needs for a SyN stage with
+/// one channel, the moving image's share included: 512, the measured registration of about
+/// 450 B/voxel above a 0.48 GiB baseline of import and image loading, plus a margin. An estimate.
+const CPU_SYN_BYTES_PER_VOXEL: u64 = 512 - CPU_MOVING_BYTES_PER_VOXEL;
+/// What each further channel adds per voxel of the registration grid.
+const CPU_SYN_BYTES_PER_VOXEL_PER_CHANNEL: u64 = 2 * 20 + 16;
+/// Host bytes per voxel of the registration grid of a plan without a SyN stage: the resampled
+/// pair, its smoothed copies and the sample buffers. An estimate.
+const CPU_LINEAR_BYTES_PER_VOXEL: u64 = 64;
+/// Per voxel of a mask's own grid, and what a mask adds per voxel of the registration grid.
+const CPU_MASK_BYTES_PER_VOXEL: u64 = 8;
+const CPU_MASKED_LEVEL_BYTES_PER_VOXEL: u64 = 2 * 13;
+/// The collapsed field of earlier SyN stages, which a later SyN stage holds.
+const CPU_PRIOR_FIELD_BYTES_PER_VOXEL: u64 = 24;
+/// Per voxel of the moving grid: the resampled moving image and its smoothed copy, per channel.
+const CPU_MOVING_BYTES_PER_VOXEL: u64 = 16;
+
+/// An estimate of the host memory the CPU engine needs for `plan` on a `dims` registration grid,
+/// a `moving_dims` moving grid and `channels` channels, with the masks of each SyN stage
+/// (`syn_masks`, as for [`check_plan_capacity`]). It does not count the input images, which
+/// the caller already holds.
+pub fn cpu_registration_bytes(
+    plan: &StagePlan,
+    dims: [usize; 3],
+    moving_dims: [usize; 3],
+    channels: usize,
+    syn_masks: &[Vec<[usize; 3]>],
+) -> u64 {
+    let voxels = |d: [usize; 3]| d.iter().map(|&n| n as u64).product::<u64>();
+    let n = voxels(dims);
+    let channels = channels.max(1) as u64;
+    let moving = voxels(moving_dims)
+        .saturating_mul(CPU_MOVING_BYTES_PER_VOXEL)
+        .saturating_mul(channels);
+    if plan.syn.is_empty() {
+        return n
+            .saturating_mul(CPU_LINEAR_BYTES_PER_VOXEL)
+            .saturating_add(moving);
+    }
+    let level =
+        CPU_SYN_BYTES_PER_VOXEL + CPU_SYN_BYTES_PER_VOXEL_PER_CHANNEL.saturating_mul(channels - 1);
+    let stage = (0..plan.syn.len())
+        .map(|i| {
+            let masks = syn_masks.get(i).map(Vec::as_slice).unwrap_or(&[]);
+            let masked = if masks.is_empty() {
+                0
+            } else {
+                n.saturating_mul(CPU_MASKED_LEVEL_BYTES_PER_VOXEL)
+            };
+            let own = masks
+                .iter()
+                .map(|d| voxels(*d).saturating_mul(CPU_MASK_BYTES_PER_VOXEL))
+                .fold(0u64, u64::saturating_add);
+            let prior = if i > 0 {
+                n.saturating_mul(CPU_PRIOR_FIELD_BYTES_PER_VOXEL)
+            } else {
+                0
+            };
+            masked.saturating_add(own).saturating_add(prior)
+        })
+        .max()
+        .unwrap_or(0);
+    n.saturating_mul(level)
+        .saturating_add(stage)
+        .saturating_add(moving)
+}
+
+fn gib(bytes: u64) -> String {
+    format!("{:.1} GiB", bytes as f64 / (1u64 << 30) as f64)
+}
+
+/// The host-memory check of the CPU engine: refuses `need` bytes when the host reports less
+/// available memory (`available`; `None`, where the platform does not report it, passes).
+pub fn check_host_memory(need: u64, available: Option<u64>) -> Result<(), String> {
+    match available {
+        Some(free) if need > free => Err(format!(
+            "the CPU engine needs about {} of memory for this registration (an estimate), but \
+             the host has {} available; use a coarser registration grid (iso_mm), free memory, \
+             or the GPU engine",
+            gib(need),
+            gib(free)
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// `name (backend, device type)` of the GPU in use.
@@ -306,9 +594,12 @@ pub struct LevelSummary {
 #[derive(Clone, Debug)]
 pub struct SynRun {
     pub recipe: Recipe,
+    /// The engine that ran: `gpu` or `cpu`.
+    pub engine: &'static str,
+    /// The GPU, or `cpu (f64, N threads)` on the CPU engine.
     pub adapter: String,
     pub grid: [usize; 3],
-    /// From opening the GPU to the outputs written.
+    /// From opening the device to the outputs written.
     pub total_s: f64,
     pub write_s: f64,
     pub timings: RegisterTimings,
@@ -329,8 +620,10 @@ pub struct SynRun {
     pub warnings: Vec<String>,
     /// The files written, in the order composites, affine, warps, warped image.
     pub files: Vec<PathBuf>,
-    pub peak_gpu_bytes: u64,
-    pub memory_budget_bytes: u64,
+    /// The GPU's peak allocation; `None` on the CPU engine.
+    pub peak_gpu_bytes: Option<u64>,
+    /// The GPU memory budget of the capacity check; `None` on the CPU engine.
+    pub memory_budget_bytes: Option<u64>,
 }
 
 /// The grid sizes of the masks of a run, for the capacity check: each mask stays on its own grid
@@ -483,14 +776,15 @@ pub fn check_plan_capacity(
 }
 
 /// Registers `moving` to `fixed` (any number of channels, checked by the caller with
-/// [`check_channels`]) with `recipe` on the GPU, the registration grid isotropic at `iso_mm`.
-/// Checks the capacity of every stage first. Writes `outputs` when given.
+/// [`check_channels`]) with `recipe` on the engine `engine` asks for, the registration grid
+/// isotropic at `iso_mm`. Checks the capacity of every stage first (the GPU's memory budget, or
+/// the host memory on the CPU engine). Writes `outputs` when given.
 pub fn register_syn(
     fixed: Vec<Volume<f64>>,
     moving: Vec<Volume<f64>>,
     outputs: Option<SynOutputs>,
     iso_mm: f64,
-    adapter: Option<String>,
+    engine: EngineRequest,
     cancel: Option<Arc<AtomicBool>>,
     recipe: Recipe,
 ) -> Result<SynRun, Failure> {
@@ -498,7 +792,7 @@ pub fn register_syn(
         fixed,
         moving,
         iso_mm,
-        adapter,
+        engine,
         cancel,
         recipe,
         move |out, fixed, moving| {
@@ -521,7 +815,7 @@ pub fn register_with<W>(
     fixed: Vec<Volume<f64>>,
     moving: Vec<Volume<f64>>,
     iso_mm: f64,
-    adapter: Option<String>,
+    engine: EngineRequest,
     cancel: Option<Arc<AtomicBool>>,
     recipe: Recipe,
     write: W,
@@ -535,9 +829,7 @@ where
 {
     guarded(move || {
         let t_all = Instant::now();
-        let g = checkout_gpu(adapter)?;
-        check_mi_available(&g, &recipe.plan)?;
-        let caps = CapacityCaps::from_context(g.context());
+        let (device, fallback) = open_device(&engine, &recipe.plan)?;
         let dims = iso_dims(fixed[0].grid(), iso_mm);
         let moving_dims = moving
             .iter()
@@ -545,20 +837,44 @@ where
             .max_by_key(|d| d.iter().map(|n| *n as u128).product::<u128>())
             .unwrap_or(dims);
         let masks = syn_stage_mask_dims(&recipe.plan);
-        check_plan_capacity(&recipe.plan, dims, moving_dims, fixed.len(), &masks, &caps)
-            .map_err(|e| Failure::GpuCapacity(format!("{e} (at {iso_mm} mm)")))?;
+        let caps = match &device {
+            Device::Gpu(g) => {
+                let caps = CapacityCaps::from_context(g.context());
+                check_plan_capacity(&recipe.plan, dims, moving_dims, fixed.len(), &masks, &caps)
+                    .map_err(|e| Failure::GpuCapacity(format!("{e} (at {iso_mm} mm)")))?;
+                Some(caps)
+            }
+            Device::Cpu => {
+                let need =
+                    cpu_registration_bytes(&recipe.plan, dims, moving_dims, fixed.len(), &masks);
+                check_host_memory(need, fastwarp_gpu::host_available_bytes()).map_err(|e| {
+                    Failure::HostMemory(format!(
+                        "{e} (a {}x{}x{} grid at {iso_mm} mm)",
+                        dims[0], dims[1], dims[2]
+                    ))
+                })?;
+                None
+            }
+        };
         let options = SynOptions {
             cancel: cancel.as_deref(),
         };
-        let out = register_stages(
-            &*g,
-            &*g,
-            &recipe.plan,
-            &fixed,
-            &moving,
-            Some(iso_mm),
-            &options,
-        )
+        let plan = &recipe.plan;
+        let out = match &device {
+            Device::Gpu(g) => {
+                let gpu: &WgpuBackend = g;
+                register_stages(gpu, gpu, plan, &fixed, &moving, Some(iso_mm), &options)
+            }
+            Device::Cpu => register_stages(
+                &CpuBackend,
+                &CpuLinearEngine,
+                plan,
+                &fixed,
+                &moving,
+                Some(iso_mm),
+                &options,
+            ),
+        }
         .map_err(reg_err)?;
         let (files, write_s) = write(&out, fixed, moving)?;
         let linear_stages = recipe
@@ -572,19 +888,29 @@ where
                 metric: s.final_metric(),
             })
             .collect();
-        let warnings = recipe
-            .plan
-            .linear
-            .iter()
-            .zip(&out.linear)
-            .enumerate()
-            .flat_map(|(i, (r, s))| {
-                s.warnings(&format!("linear stage {} ({})", i + 1, kind_name(r.kind)))
-            })
+        let unreported = fallback.filter(|_| engine.on_fallback.is_none());
+        let warnings = unreported
+            .into_iter()
+            .chain(
+                recipe
+                    .plan
+                    .linear
+                    .iter()
+                    .zip(&out.linear)
+                    .enumerate()
+                    .flat_map(|(i, (r, s))| {
+                        s.warnings(&format!("linear stage {} ({})", i + 1, kind_name(r.kind)))
+                    }),
+            )
             .collect();
+        let peak_gpu_bytes = match &device {
+            Device::Gpu(g) => Some(g.peak_allocated_bytes()),
+            Device::Cpu => None,
+        };
         let run = SynRun {
             recipe,
-            adapter: adapter_name(&g),
+            engine: device.engine(),
+            adapter: device.adapter(),
             grid: out.grid.size(),
             total_s: t_all.elapsed().as_secs_f64(),
             write_s,
@@ -612,10 +938,10 @@ where
             deformable: out.deformable,
             warnings,
             files,
-            peak_gpu_bytes: g.peak_allocated_bytes(),
-            memory_budget_bytes: caps.memory_budget,
+            peak_gpu_bytes,
+            memory_budget_bytes: caps.map(|c| c.memory_budget),
         };
-        g.finish();
+        device.finish();
         Ok(run)
     })
 }
@@ -664,7 +990,12 @@ pub fn fits(
     recipe: &Recipe,
     masks: &MaskDims,
 ) -> Result<bool, Failure> {
-    Ok(capacity_check(dims, moving_dims, channels, adapter, recipe, masks)?.is_ok())
+    let gpu = EngineRequest::gpu(adapter);
+    Ok(
+        capacity_check(dims, moving_dims, channels, &gpu, recipe, masks)?
+            .1
+            .is_ok(),
+    )
 }
 
 const DEVICE_OVERHEAD_BYTES: u64 = 256 << 20;
@@ -686,15 +1017,21 @@ pub fn registrations_at_once(
     dims: [usize; 3],
     moving_dims: Option<[usize; 3]>,
     channels: usize,
-    adapter: Option<String>,
+    engine: &EngineRequest,
     recipe: &Recipe,
     masks: &MaskDims,
     native_voxels: u64,
     max: usize,
 ) -> Result<usize, Failure> {
     check_masks_used(recipe, masks.fixed.is_some(), masks.moving.is_some())?;
-    let g = checkout_gpu(adapter)?;
-    check_mi_available(&g, &recipe.plan)?;
+    let quiet = EngineRequest {
+        on_fallback: None,
+        ..engine.clone()
+    };
+    let g = match open_device(&quiet, &recipe.plan)?.0 {
+        Device::Gpu(g) => g,
+        Device::Cpu => return Ok(max.min(1)),
+    };
     let ctx = g.context();
     let shared = matches!(ctx.info.device_type.as_str(), "IntegratedGpu" | "Cpu");
     if shared || CapacityCaps::budget_is_guess(ctx) {
@@ -731,30 +1068,53 @@ pub fn registrations_at_once(
     Ok(n)
 }
 
-/// The capacity check of [`fits`], with the reason when the grid does not fit.
+/// The engine `request` settles on for `recipe` (`gpu` or `cpu`) and, when
+/// [`EngineChoice::Auto`] fell back to the CPU, its warning (not passed to the hook), for a caller
+/// that runs several registrations on one engine. The GPU goes to the idle pool for them.
+pub fn settle_engine(
+    request: &EngineRequest,
+    recipe: &Recipe,
+) -> Result<(&'static str, Option<String>), Failure> {
+    let quiet = EngineRequest {
+        on_fallback: None,
+        ..request.clone()
+    };
+    let (device, fallback) = open_device(&quiet, &recipe.plan)?;
+    let engine = device.engine();
+    device.finish();
+    Ok((engine, fallback))
+}
+
+/// The capacity check of [`fits`] on the engine `engine` asks for (the host memory on the CPU
+/// engine): the engine that was checked (`gpu` or `cpu`) and the reason when the grid does not
+/// fit.
 pub fn capacity_check(
     dims: [usize; 3],
     moving_dims: Option<[usize; 3]>,
     channels: usize,
-    adapter: Option<String>,
+    engine: &EngineRequest,
     recipe: &Recipe,
     masks: &MaskDims,
-) -> Result<Result<(), String>, Failure> {
+) -> Result<(&'static str, Result<(), String>), Failure> {
     check_masks_used(recipe, masks.fixed.is_some(), masks.moving.is_some())?;
-    let g = checkout_gpu(adapter)?;
-    check_mi_available(&g, &recipe.plan)?;
-    let caps = CapacityCaps::from_context(g.context());
-    let fits = check_plan_capacity(
-        &recipe.plan,
-        dims,
-        moving_dims.unwrap_or(dims),
-        channels,
-        &masks.per_syn_stage(recipe),
-        &caps,
-    )
-    .map_err(|e| e.to_string());
-    g.finish();
-    Ok(fits)
+    let moving_dims = moving_dims.unwrap_or(dims);
+    let syn_masks = masks.per_syn_stage(recipe);
+    let (device, _) = open_device(engine, &recipe.plan)?;
+    let fits = match &device {
+        Device::Gpu(g) => {
+            let caps = CapacityCaps::from_context(g.context());
+            check_plan_capacity(&recipe.plan, dims, moving_dims, channels, &syn_masks, &caps)
+                .map_err(|e| e.to_string())
+        }
+        Device::Cpu => {
+            let need =
+                cpu_registration_bytes(&recipe.plan, dims, moving_dims, channels, &syn_masks);
+            check_host_memory(need, fastwarp_gpu::host_available_bytes())
+        }
+    };
+    let engine = device.engine();
+    device.finish();
+    Ok((engine, fits))
 }
 
 /// The chain `ants.apply_transforms(transformlist=transforms, whichtoinvert=invert)` and
@@ -889,27 +1249,56 @@ pub fn interpolator(name: &str) -> Result<post::Interp, Failure> {
     })
 }
 
-/// A prepared linear session: the pair converted, winsorized and on the GPU, with its
-/// centre-of-mass start and the adapter name.
+/// A prepared linear session: the pair converted, winsorized and on its device, with its
+/// centre-of-mass start, the engine (`gpu` or `cpu`) and the adapter name.
 pub struct LinearStart {
     pub session: Session,
     pub com: AffineTransform,
+    pub engine: &'static str,
     pub adapter: String,
+    /// The fall-back warning of [`EngineChoice::Auto`] when the request had no hook for it.
+    pub warnings: Vec<String>,
 }
 
-/// Opens the GPU and prepares `fixed` / `moving` for linear fits: the centre-of-mass start on the
-/// images as given (as ANTs initialises), then winsorizing (`(lower, upper)` quantiles, rescaled
-/// to [0, 1]).
+/// The device of a linear session that `request` asks for, and the fall-back warning when
+/// [`EngineChoice::Auto`] fell back to the CPU engine (the hook has had it).
+fn open_linear_device(request: &EngineRequest) -> Result<(LinearDevice, Option<String>), Failure> {
+    match request.choice {
+        EngineChoice::Cpu => {
+            check_cpu_adapter(request.adapter.as_deref())?;
+            Ok((LinearDevice::Cpu, None))
+        }
+        EngineChoice::Gpu => Ok((
+            LinearDevice::Gpu(Box::new(open_gpu(request.adapter.clone())?)),
+            None,
+        )),
+        EngineChoice::Auto => match open_gpu(request.adapter.clone()) {
+            Ok(g) => Ok((LinearDevice::Gpu(Box::new(g)), None)),
+            Err(Failure::GpuUnavailable(why)) => {
+                let warning = fallback_warning(&why);
+                if let Some(hook) = &request.on_fallback {
+                    hook(&warning)?;
+                }
+                Ok((LinearDevice::Cpu, Some(warning)))
+            }
+            Err(e) => Err(e),
+        },
+    }
+}
+
+/// Opens the device `engine` asks for and prepares `fixed` / `moving` for linear fits: the
+/// centre-of-mass start on the images as given (as ANTs initialises), then winsorizing
+/// (`(lower, upper)` quantiles, rescaled to [0, 1]).
 pub fn open_linear(
     fixed: Volume<f64>,
     moving: Volume<f64>,
     mask: Option<MaskVolume>,
     winsorize: Option<(f32, f32)>,
-    adapter: Option<String>,
+    engine: EngineRequest,
 ) -> Result<LinearStart, Failure> {
     check_winsorize(winsorize)?;
     guarded(move || {
-        let gpu = open_gpu(adapter)?;
+        let (device, fallback) = open_linear_device(&engine)?;
         let com = initial_transform(&fixed, &moving, InitFeature::CentreOfMass).map_err(reg_err)?;
         let (fixed, moving) = match winsorize {
             Some((lo, hi)) => (
@@ -918,17 +1307,25 @@ pub fn open_linear(
             ),
             None => (fixed, moving),
         };
-        let adapter = adapter_name(&gpu);
+        let (engine_name, adapter) = match &device {
+            LinearDevice::Gpu(g) => ("gpu", adapter_name(g)),
+            LinearDevice::Cpu => ("cpu", cpu_adapter_name()),
+        };
         Ok(LinearStart {
             session: Session {
-                gpu,
+                device,
                 fixed,
                 moving,
                 mask,
                 cache: Default::default(),
             },
             com,
+            engine: engine_name,
             adapter,
+            warnings: fallback
+                .filter(|_| engine.on_fallback.is_none())
+                .into_iter()
+                .collect(),
         })
     })
 }
@@ -978,6 +1375,7 @@ mod tests {
 
     #[test]
     fn mattes_on_a_gpu_that_failed_its_dense_check_is_refused_before_any_work() {
+        let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let cc = Recipe::cohort(1);
         let mut mattes = cc.clone();
         mattes.plan.syn[0].channel_metrics = vec![SynMetric::Mattes];
@@ -985,26 +1383,13 @@ mod tests {
         let Some(adapter) = idle_gpu_without_dense_mi() else {
             return;
         };
-        let fits = capacity_check([8; 3], None, 1, Some(adapter.clone()), &cc, &none);
-        assert!(matches!(fits, Ok(Ok(()))), "{fits:?}");
-        assert_refused(capacity_check(
-            [8; 3],
-            None,
-            1,
-            Some(adapter.clone()),
-            &mattes,
-            &none,
-        ));
+        let gpu = EngineRequest::gpu(Some(adapter.clone()));
+        let fits = capacity_check([8; 3], None, 1, &gpu, &cc, &none);
+        assert!(matches!(fits, Ok(("gpu", Ok(())))), "{fits:?}");
+        assert_refused(capacity_check([8; 3], None, 1, &gpu, &mattes, &none));
         idle_gpu_without_dense_mi().unwrap();
         assert_refused(registrations_at_once(
-            [8; 3],
-            None,
-            1,
-            Some(adapter.clone()),
-            &mattes,
-            &none,
-            512,
-            4,
+            [8; 3], None, 1, &gpu, &mattes, &none, 512, 4,
         ));
         idle_gpu_without_dense_mi().unwrap();
         let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
@@ -1014,7 +1399,7 @@ mod tests {
             image(),
             image(),
             1.0,
-            Some(adapter),
+            EngineRequest::gpu(Some(adapter)),
             None,
             mattes,
             |_, _, _| {
@@ -1023,6 +1408,210 @@ mod tests {
             },
         ));
         assert!(!wrote);
+    }
+
+    #[test]
+    fn engine_names_parse_and_an_unknown_one_is_refused() {
+        for (name, choice) in [
+            ("gpu", EngineChoice::Gpu),
+            (" CPU ", EngineChoice::Cpu),
+            ("Auto", EngineChoice::Auto),
+        ] {
+            assert_eq!(EngineChoice::parse(name), Ok(choice));
+            assert_eq!(EngineChoice::parse(choice.name()), Ok(choice));
+            assert_eq!(EngineChoice::resolve(Some(name)), Ok(choice));
+        }
+        assert!(matches!(
+            EngineChoice::parse("tpu"),
+            Err(Failure::Invalid(m)) if m.contains("'gpu', 'cpu' or 'auto'")
+        ));
+        assert_eq!(EngineChoice::default(), EngineChoice::Gpu);
+    }
+
+    #[test]
+    fn an_adapter_with_the_cpu_engine_is_refused() {
+        let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let image = || vec![Volume::from_vec(g, vec![0.0; 512]).unwrap()];
+        let r = register_with(
+            image(),
+            image(),
+            1.0,
+            EngineRequest::new(EngineChoice::Cpu, Some("Arc".into())),
+            None,
+            Recipe::cohort(1),
+            |_, _, _| Ok((Vec::new(), 0.0)),
+        );
+        assert!(matches!(r, Err(Failure::Invalid(m)) if m.contains("engine 'cpu'")));
+    }
+
+    #[test]
+    fn the_host_memory_estimate_grows_with_the_grid_and_refuses_what_does_not_fit() {
+        let plan = &Recipe::cohort(1).plan;
+        let one = cpu_registration_bytes(plan, [182, 218, 182], [182, 218, 182], 1, &[]);
+        let gib = one as f64 / (1u64 << 30) as f64;
+        assert!((2.0..4.0).contains(&gib), "{gib} GiB at 1 mm");
+        let half = cpu_registration_bytes(plan, [364, 436, 364], [364, 436, 364], 1, &[]);
+        assert!(half > 7 * one, "{half} vs {one}");
+        let two = cpu_registration_bytes(
+            &Recipe::cohort(2).plan,
+            [182, 218, 182],
+            [182, 218, 182],
+            2,
+            &[],
+        );
+        assert!(two > one);
+        let masked =
+            cpu_registration_bytes(plan, [182, 218, 182], [182, 218, 182], 1, &[vec![[91; 3]]]);
+        assert!(masked > one);
+        let mut linear = Recipe::cohort(1).plan;
+        linear.syn.clear();
+        assert!(cpu_registration_bytes(&linear, [182, 218, 182], [182, 218, 182], 1, &[]) < one);
+        assert!(check_host_memory(one, Some(one)).is_ok());
+        assert!(check_host_memory(one, None).is_ok());
+        let why = check_host_memory(one + 1, Some(one)).unwrap_err();
+        assert!(why.contains("the CPU engine needs about"), "{why}");
+        assert!(why.contains("iso_mm"), "{why}");
+    }
+
+    static GPU_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct NoGpu {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl NoGpu {
+        fn new() -> Self {
+            let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
+            let old = std::env::var_os("FASTWARP_GPU_BACKEND");
+            std::env::set_var("FASTWARP_GPU_BACKEND", "none-such");
+            Self { _lock, old }
+        }
+    }
+
+    impl Drop for NoGpu {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(v) => std::env::set_var("FASTWARP_GPU_BACKEND", v),
+                None => std::env::remove_var("FASTWARP_GPU_BACKEND"),
+            }
+        }
+    }
+
+    #[test]
+    fn auto_falls_back_to_the_cpu_and_reports_it_once() {
+        use std::sync::Mutex;
+        let _no_gpu = NoGpu::new();
+        let g = Grid::new([12; 3], [4.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let blob = |c: f64| {
+            let data = (0..g.num_voxels())
+                .map(|i| {
+                    let [x, y, z] = g.ijk(i);
+                    let d2 = [x as f64 - c, y as f64 - 6.0, z as f64 - 6.0]
+                        .iter()
+                        .map(|v| v * v)
+                        .sum::<f64>();
+                    (-d2 / 8.0).exp()
+                })
+                .collect();
+            vec![Volume::from_vec(g, data).unwrap()]
+        };
+        let mut recipe = Recipe::cohort(1);
+        recipe.plan.syn.clear();
+        for stage in &mut recipe.plan.linear {
+            stage.iterations = vec![5];
+            stage.shrink_factors = vec![1];
+            stage.smoothing_sigmas = vec![0.0];
+        }
+        let heard = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = Arc::clone(&heard);
+        let request = EngineRequest {
+            on_fallback: Some(Arc::new(move |m: &str| {
+                sink.lock().unwrap().push(m.to_string());
+                Ok(())
+            })),
+            ..EngineRequest::new(EngineChoice::Auto, None)
+        };
+        let run = register_with(
+            blob(6.0),
+            blob(6.5),
+            4.0,
+            request.clone(),
+            None,
+            recipe.clone(),
+            |_, _, _| Ok((Vec::new(), 0.0)),
+        )
+        .unwrap();
+        assert_eq!(run.engine, "cpu");
+        assert!(run.adapter.starts_with("cpu (f64, "), "{}", run.adapter);
+        assert_eq!(run.peak_gpu_bytes, None);
+        assert!(run.warnings.is_empty(), "{:?}", run.warnings);
+        let heard = heard.lock().unwrap().clone();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert!(heard[0].starts_with("no usable GPU"), "{}", heard[0]);
+        let quiet = EngineRequest {
+            on_fallback: None,
+            ..request.clone()
+        };
+        let run = register_with(
+            blob(6.0),
+            blob(6.5),
+            4.0,
+            quiet,
+            None,
+            recipe.clone(),
+            |_, _, _| Ok((Vec::new(), 0.0)),
+        )
+        .unwrap();
+        assert!(
+            run.warnings[0].starts_with("no usable GPU"),
+            "{:?}",
+            run.warnings
+        );
+        let stop = EngineRequest {
+            on_fallback: Some(Arc::new(|_: &str| Err(Failure::Cancelled))),
+            ..request
+        };
+        let mut wrote = false;
+        let r = register_with(blob(6.0), blob(6.5), 4.0, stop, None, recipe, |_, _, _| {
+            wrote = true;
+            Ok((Vec::new(), 0.0))
+        });
+        assert!(matches!(r, Err(Failure::Cancelled)), "{r:?}");
+        assert!(!wrote);
+    }
+
+    #[test]
+    fn a_missing_adapter_is_an_error_for_every_engine_choice() {
+        let _lock = GPU_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let g = Grid::new([8; 3], [1.0; 3], [0.0; 3], IDENTITY3).unwrap();
+        let image = || vec![Volume::from_vec(g, vec![0.0; 512]).unwrap()];
+        let heard = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for choice in [EngineChoice::Gpu, EngineChoice::Auto] {
+            let sink = Arc::clone(&heard);
+            let request = EngineRequest {
+                on_fallback: Some(Arc::new(move |_: &str| {
+                    sink.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                })),
+                ..EngineRequest::new(choice, Some("zzqx 9000 7f3c".into()))
+            };
+            let r = register_with(
+                image(),
+                image(),
+                1.0,
+                request,
+                None,
+                Recipe::cohort(1),
+                |_, _, _| Ok((Vec::new(), 0.0)),
+            );
+            assert!(
+                matches!(&r, Err(Failure::AdapterNotFound(m)) if m.contains("'zzqx 9000 7f3c'")),
+                "{choice:?}: {r:?}"
+            );
+        }
+        assert!(!heard.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

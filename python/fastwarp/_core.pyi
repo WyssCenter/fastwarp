@@ -18,10 +18,20 @@ VERSION: str
 class GpuUnavailableError(RuntimeError):
     """No usable GPU.
 
-    Raised before any work when no hardware GPU opens for the graphics APIs tried, when the
-    ``adapter`` filter matches none, when ``FASTWARP_GPU_BACKEND`` has an unknown value, or when
-    the device or its self-test fails. Software adapters count only with
-    ``FASTWARP_GPU_ALLOW_SOFTWARE=1``. A caller can catch it and run ANTs instead.
+    Raised before any work when no hardware GPU opens for the graphics APIs tried, when
+    ``FASTWARP_GPU_BACKEND`` has an unknown value, or when the device or its self-test fails; an
+    ``adapter`` name that matches no adapter raises the subclass ``AdapterNotFoundError``.
+    Software adapters count only with ``FASTWARP_GPU_ALLOW_SOFTWARE=1``. A caller can catch it and
+    run ANTs instead.
+    """
+
+class AdapterNotFoundError(GpuUnavailableError):
+    """The requested adapter name matches no GPU adapter.
+
+    Raised before any work when ``adapter=`` or ``FASTWARP_GPU_ADAPTER`` names no adapter that
+    exists, for every engine choice: ``engine="auto"`` does not fall back to the CPU for it.
+    The message lists the adapters found and suggests a close match. A subclass of
+    ``GpuUnavailableError``.
     """
 
 class GpuCapacityError(RuntimeError):
@@ -30,6 +40,14 @@ class GpuCapacityError(RuntimeError):
     Raised by ``register_syn`` before any work when the registration grid needs more GPU memory
     than the budget, or a larger buffer than the device allows. Use a larger ``iso_mm``, another
     GPU, or ANTs.
+    """
+
+class HostMemoryError(RuntimeError):
+    """The registration does not fit the host memory on the CPU engine.
+
+    Raised by ``register_syn`` with ``engine="cpu"`` (or ``"auto"`` without a usable GPU)
+    before any work when the estimated memory of the registration exceeds the memory the host
+    has available. Use a larger ``iso_mm``, free memory, or the GPU engine.
     """
 
 class RegistrationError(RuntimeError):
@@ -83,6 +101,7 @@ def register_syn(
     outputs: str = "composite",
     fixed_mask: _Image | None = None,
     moving_mask: _Image | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any]: ...
 def release_idle_gpus() -> None:
     """Free the GPU devices that finished registrations keep for the next one.
@@ -133,7 +152,15 @@ def registrations_at_once(
     adapter: str | None = None,
     moving_dims: tuple[int, int, int] | None = None,
     recipe: dict[str, Any] | None = None,
+    native_voxels: int = 0,
+    engine: str | None = None,
 ) -> int: ...
+def settle_engine(
+    engine: str | None = None,
+    adapter: str | None = None,
+    recipe: dict[str, Any] | None = None,
+    channels: int = 1,
+) -> tuple[str, str | None]: ...
 def compose_field(
     transforms: list[str],
     reference: tuple[
@@ -169,9 +196,12 @@ class LinearSession:
         fixed_mask: _Image | None = None,
         winsorize: tuple[float, float] | None = None,
         adapter: str | None = None,
+        engine: str | None = None,
     ) -> None: ...
     @property
     def adapter(self) -> str: ...
+    @property
+    def engine(self) -> str: ...
     @property
     def com_initial(self) -> tuple[tuple[float, ...], tuple[float, float, float]]: ...
     def register(
@@ -216,6 +246,7 @@ def ants_registration(
     iso_mm: float | None = None,
     adapter: str | None = None,
     cancel: CancelToken | None = None,
+    engine: str | None = None,
 ) -> dict[str, Any]: ...
 def ants_apply_transforms(
     argv: list[str],

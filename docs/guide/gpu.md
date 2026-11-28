@@ -14,6 +14,9 @@ small.
   refused unless `FASTWARP_GPU_ALLOW_SOFTWARE=1` is set. They work but are slow; the tests use
   them on machines without a GPU.
 
+Without a usable GPU, the opt-in [CPU engine](cpu.md) (`engine="cpu"`, `--engine cpu`) runs
+the same registrations on the CPU, much more slowly.
+
 FastWarp requires no optional GPU feature: it uses timestamp queries only when the GPU offers
 them, and it adapts its buffer and workgroup limits to what the GPU reports
 (`crates/fastwarp-gpu/src/device.rs`). When it opens a GPU it compiles its compute shaders and
@@ -68,7 +71,9 @@ print(fastwarp.gpu_info(adapter="arc")["name"])
 Intel(R) Arc(TM) 140V GPU (16GB)
 ```
 
-With a name that matches no adapter, the call raises {class}`~fastwarp.GpuUnavailableError`.
+With a name that matches no adapter, the call raises {class}`~fastwarp.AdapterNotFoundError`
+(exit status 8 on the command line), whatever the engine; its message lists the adapters found
+and suggests a close match.
 
 All environment variables are listed under [Environment variables](../environment.md).
 
@@ -219,6 +224,10 @@ def normalize(fixed, moving, out_prefix, run_ants):
 `run_ants` stands for your own ANTs call, for example {func}`ants.registration` or
 `antsRegistration` with the [same schedule](recipes.md#the-same-schedule-in-ants). Other
 failures raise {class}`~fastwarp.RegistrationError`; see [Errors](../errors.md).
+
+Instead of ANTs, `engine="auto"` falls back to FastWarp's own [CPU engine](cpu.md) when there is
+no usable GPU, with a warning; it is much slower than the GPU, and its results agree with the
+GPU's within tolerance, not bit for bit.
 
 ## Waiting for the GPU
 

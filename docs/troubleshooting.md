@@ -14,11 +14,11 @@ except fastwarp.GpuUnavailableError as error:
     print(error)
 ```
 
-A message for a machine where the name filter matched no GPU looks like this:
+A message for a machine that has only software adapters looks like this:
 
 ```{code-block} text
 :class: fw-output
-no usable GPU adapter: Backends(VULKAN): 1 adapter(s), none eligible; Backends(DX12): 2 adapter(s), none eligible; adapter filter 'no-such-gpu'; software adapters not allowed (FASTWARP_GPU_ALLOW_SOFTWARE=1)
+no usable GPU adapter: Backends(VULKAN): 1 adapter(s), none eligible; Backends(DX12): 2 adapter(s), none eligible; software adapters not allowed (FASTWARP_GPU_ALLOW_SOFTWARE=1)
 ```
 
 What the parts of the message mean:
@@ -31,8 +31,9 @@ What the parts of the message mean:
   `FASTWARP_GPU_ADAPTER`.
 
 `adapter filter '...'`
-: A name filter was set. Compare it with the names {func}`~fastwarp.gpu_info` shows without the
-  filter.
+: A name filter was set and matches an adapter that cannot be used. A name that matches no
+  adapter at all raises {class}`~fastwarp.AdapterNotFoundError` (exit status 8) instead; its
+  message lists the adapters found and suggests a close match ("did you mean ...?").
 
 `software adapters not allowed`
 : The only adapters are software ones, such as Mesa's lavapipe. Install a driver for the real
@@ -40,6 +41,9 @@ What the parts of the message mean:
 
 `FASTWARP_GPU_BACKEND: ... unknown graphics API`
 : The variable has a value other than `vulkan`, `dx12`, `metal` or `auto`. Fix or unset it.
+
+On a computer without a GPU you can use, the [CPU engine](guide/cpu.md) (`engine="cpu"`,
+`--engine cpu` or `FASTWARP_ENGINE=cpu`) runs the registration without one, much more slowly.
 
 ### Linux
 

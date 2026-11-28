@@ -631,6 +631,261 @@ fn register_tiny(name: &str) -> Registered {
     }
 }
 
+fn run_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut c = Command::new(exe());
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    c.args(args).output().unwrap()
+}
+
+fn tiny_pair(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let (fixed, moving) = phantom(Size::Tiny).unwrap();
+    let fixed_path = dir.join("fixed.nii.gz");
+    let moving_path = dir.join("moving.nii.gz");
+    save_f32(&fixed, &fixed_path);
+    save_f32(&moving, &moving_path);
+    let recipe = dir.join("recipe.json");
+    std::fs::write(&recipe, small_recipe().to_string()).unwrap();
+    (fixed_path, moving_path, recipe)
+}
+
+/// Whether the host reports its available memory, so that the CPU engine's memory check can
+/// refuse a grid (Linux and Windows).
+fn host_memory_known() -> bool {
+    cfg!(any(target_os = "linux", windows))
+}
+
+#[test]
+fn the_cpu_engine_registers_and_records_itself_without_a_gpu() {
+    let dir = tmp("cpu_engine");
+    let (f, m, recipe) = tiny_pair(&dir);
+    let prefix = dir.join("out").join("sub_");
+    let register = |engine_env: &[(&str, &str)], extra: &[&str]| {
+        let mut args = vec![
+            "register",
+            s(&f),
+            s(&m),
+            "-o",
+            s(&prefix),
+            "--recipe",
+            s(&recipe),
+            "--json",
+        ];
+        args.extend_from_slice(extra);
+        run_env(&args, engine_env)
+    };
+    let o = register(&[], &["--engine", "cpu", "--write-warped"]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["engine"], "cpu");
+    assert!(
+        v["adapter"].as_str().unwrap().starts_with("cpu (f64, "),
+        "{}",
+        v["adapter"]
+    );
+    assert_eq!(v["peak_gpu_bytes"], Value::Null);
+    assert_eq!(v["memory_budget_bytes"], Value::Null);
+    assert_eq!(v["grid"], json!([30, 36, 30]));
+    for f in v["outputs"].as_array().unwrap() {
+        assert!(Path::new(f.as_str().unwrap()).is_file(), "{f}");
+    }
+    let fixed = Volume::<f32>::load_nifti(&f).unwrap();
+    let moving = Volume::<f32>::load_nifti(&m).unwrap();
+    let warped = Volume::<f32>::load_nifti(&dir.join("out").join("sub__Warped.nii.gz")).unwrap();
+    let before = ncc(fixed.data(), moving.data());
+    let after = ncc(fixed.data(), warped.data());
+    assert!(after > before + 0.02, "NCC {before} -> {after}");
+
+    let o = register(&[("FASTWARP_ENGINE", "cpu")], &[]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let w: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(w["engine"], "cpu");
+    assert_eq!(w["affine_parameters"], v["affine_parameters"]);
+
+    let o = register(
+        &[
+            ("FASTWARP_ENGINE", "gpu"),
+            ("FASTWARP_GPU_BACKEND", "none-such"),
+        ],
+        &["--engine", "auto"],
+    );
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let a: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(a["engine"], "cpu");
+    assert_eq!(a["affine_parameters"], v["affine_parameters"]);
+    let err = text(&o.stderr);
+    assert_eq!(
+        err.matches("fastwarp: warning: no usable GPU").count(),
+        1,
+        "{err}"
+    );
+    assert!(err.contains("much slower"), "{err}");
+    assert!(a["warnings"].as_array().unwrap().is_empty(), "{a}");
+
+    let o = run(&[
+        "linear",
+        s(&f),
+        s(&m),
+        "--transform",
+        "affine",
+        "--engine",
+        "cpu",
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let l: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(l["engine"], "cpu");
+    assert!(l["adapter"].as_str().unwrap().starts_with("cpu (f64, "));
+
+    let o = run(&["fits", s(&f), s(&m), "--engine", "cpu", "--json"]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let fit: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(fit["fits"], json!(true));
+}
+
+#[test]
+fn engine_mistakes_and_a_host_memory_overrun_are_refused_before_any_work() {
+    let dir = tmp("cpu_engine_errors");
+    let (f, m, _) = tiny_pair(&dir);
+    let prefix = dir.join("out").join("sub_");
+    let o = run(&[
+        "register",
+        s(&f),
+        s(&m),
+        "-o",
+        s(&prefix),
+        "--engine",
+        "cpu",
+        "--adapter",
+        "Arc",
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(text(&o.stderr).contains("cannot be used with engine 'cpu'"));
+    let o = run(&[
+        "register",
+        s(&f),
+        s(&m),
+        "-o",
+        s(&prefix),
+        "--engine",
+        "tpu",
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    let o = run_env(
+        &["register", s(&f), s(&m), "-o", s(&prefix)],
+        &[("FASTWARP_ENGINE", "tpu")],
+    );
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
+    assert!(
+        text(&o.stderr).contains("FASTWARP_ENGINE"),
+        "{}",
+        text(&o.stderr)
+    );
+    if host_memory_known() {
+        let o = run(&[
+            "register",
+            s(&f),
+            s(&m),
+            "-o",
+            s(&prefix),
+            "--engine",
+            "cpu",
+            "--iso-mm",
+            "0.01",
+        ]);
+        assert_eq!(code(&o), 7, "{}", text(&o.stderr));
+        let err = text(&o.stderr);
+        assert!(err.contains("the CPU engine needs about"), "{err}");
+        assert!(err.contains("at 0.01 mm"), "{err}");
+        let o = run(&["fits", s(&f), "--engine", "cpu", "--iso-mm", "0.01"]);
+        assert_eq!(code(&o), 7, "{}", text(&o.stderr));
+        assert!(text(&o.stdout).starts_with("does not fit"));
+        let o = run_env(
+            &[
+                "fits",
+                s(&f),
+                "--engine",
+                "auto",
+                "--iso-mm",
+                "0.01",
+                "--json",
+            ],
+            &[("FASTWARP_GPU_BACKEND", "none-such")],
+        );
+        assert_eq!(code(&o), 7, "{}", text(&o.stderr));
+        let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+        assert_eq!(v["engine"], "cpu");
+        assert_eq!(v["fits"], json!(false));
+        assert!(text(&o.stderr).contains("warning: no usable GPU"));
+    }
+    assert!(!prefix.parent().unwrap().join("sub_Composite.h5").exists());
+}
+
+/// The first word of `name` with its second character replaced: a close miss.
+fn misspelled(name: &str) -> String {
+    let word: Vec<char> = name
+        .split_whitespace()
+        .next()
+        .unwrap_or(name)
+        .chars()
+        .collect();
+    let mut out = word.clone();
+    out[1] = if word[1].eq_ignore_ascii_case(&'q') {
+        'z'
+    } else {
+        'q'
+    };
+    out.into_iter().collect()
+}
+
+#[test]
+fn a_missing_adapter_is_an_error_with_the_adapters_found_and_a_suggestion() {
+    let dir = tmp("adapter_not_found");
+    let (f, m, recipe) = tiny_pair(&dir);
+    let prefix = dir.join("out").join("sub_");
+    let o = run(&["fits", s(&f), "--adapter", "zzqx 9000 7f3c"]);
+    assert_eq!(code(&o), 8, "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    assert!(
+        err.contains("the adapter name 'zzqx 9000 7f3c' matches no GPU adapter"),
+        "{err}"
+    );
+    assert!(!err.contains("did you mean"), "{err}");
+    for engine in ["auto", "gpu"] {
+        let o = run(&[
+            "register",
+            s(&f),
+            s(&m),
+            "-o",
+            s(&prefix),
+            "--recipe",
+            s(&recipe),
+            "--engine",
+            engine,
+            "--adapter",
+            "zzqx 9000 7f3c",
+        ]);
+        assert_eq!(code(&o), 8, "{engine}: {}", text(&o.stderr));
+        assert!(!text(&o.stderr).contains("warning"), "{}", text(&o.stderr));
+    }
+    assert!(!prefix.parent().unwrap().join("sub_Composite.h5").exists());
+    if !gpu() {
+        return;
+    }
+    let info: Value = serde_json::from_slice(&run(&["gpu-info"]).stdout).unwrap();
+    let name = info["name"].as_str().unwrap().to_string();
+    let typo = misspelled(&name);
+    let o = run(&["fits", s(&f), "--engine", "auto", "--adapter", &typo]);
+    assert_eq!(code(&o), 8, "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    assert!(
+        err.contains(&format!("did you mean '{name}'?")),
+        "{typo}: {err}"
+    );
+    assert!(err.contains("adapters found: "), "{err}");
+}
+
 #[test]
 fn register_then_apply_aligns_the_phantom() {
     if !gpu() {
@@ -780,6 +1035,39 @@ fn bench_runs_a_tiny_case() {
     let out = text(&o.stdout);
     assert!(out.contains("2 threads (--threads)"), "{out}");
     assert!(out.contains("tiny        30x36x30"), "{out}");
+}
+
+#[test]
+fn bench_runs_a_tiny_case_on_the_cpu_engine() {
+    let d = tmp("bench_cpu");
+    let recipe = d.join("recipe.json");
+    std::fs::write(&recipe, small_recipe().to_string()).unwrap();
+    let o = run(&[
+        "bench",
+        "--size",
+        "tiny",
+        "--recipe",
+        s(&recipe),
+        "--engine",
+        "cpu",
+        "--json",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o.stderr));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["machine"]["engine"], "cpu");
+    assert_eq!(v["machine"]["gpu"], "none");
+    assert_eq!(v["machine"]["memory_budget_bytes"], Value::Null);
+    assert_eq!(v["cases"][0]["status"], "ok");
+    let o = run(&[
+        "bench",
+        "--size",
+        "tiny",
+        "--engine",
+        "cpu",
+        "--adapter",
+        "Arc",
+    ]);
+    assert_eq!(code(&o), 2, "{}", text(&o.stderr));
 }
 
 fn ants_exe() -> Option<PathBuf> {
